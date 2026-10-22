@@ -1,0 +1,103 @@
+gap = 8.0
+overlay = true
+overlay_delay_ms = 120
+magnetic = true
+gestures = true
+ignored_apps = []
+
+[overlay_modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 126
+action = "previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 125
+action = "next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 123
+action = "app_previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 124
+action = "app_next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 49
+action = "toggle_mode"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 126
+action = "snap_full"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 125
+action = "restore"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 123
+action = "snap_left"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 124
+action = "snap_right"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+

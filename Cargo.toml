@@ -1,0 +1,27 @@
+[package]
+name = "magnetic"
+version = "0.2.7"
+edition = "2024"
+rust-version = "1.85"
+description = "A native macOS focus and magnetic window manager"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString", "NSObject", "NSNotification", "NSGeometry"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication", "NSWorkspace", "NSScreen", "NSPanel", "NSWindow", "NSTextField", "NSFont", "NSColor", "NSView", "NSResponder", "NSMenu", "NSMenuItem", "NSStatusBar", "NSStatusItem", "NSButton", "NSControl", "NSGraphics", "NSImage", "NSImageView", "NSBezierPath", "NSAccessibilityProtocols"] }
+libc = "0.2"
+block2 = "0.6"
+objc2-core-graphics = "0.3"
+objc2-quartz-core = { version = "0.3", features = ["CALayer"] }
+objc2-screen-capture-kit = "0.3"
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Magnetic</string>
+<key>CFBundleDisplayName</key><string>Magnetic</string>
+<key>CFBundleIdentifier</key><string>dev.danileph.magnetic</string>
+<key>CFBundleExecutable</key><string>magnetic</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.2.7</string>
+<key>CFBundleVersion</key><string>18</string>
+<key>LSMinimumSystemVersion</key><string>14.2</string>
+<key>CFBundleIconFile</key><string>Magnetic</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>

@@ -1,0 +1,263 @@
+use magnetic::{
+    core::{Command, Effect, Engine, Mode, Window},
+    geometry::Rect,
+    gestures::{Axis, Contact, GestureEvent as Event, SwipeRecognizer},
+    navigation::ScrubSession,
+};
+fn contacts(n: usize, dx: f64, dy: f64) -> Vec<Contact> {
+    (0..n)
+        .map(|i| Contact {
+            id: i as i32,
+            x: 0.3 + i as f64 * 0.08 + dx,
+            y: 0.35 + dy,
+        })
+        .collect()
+}
+fn trace(n: usize, dx: f64, dy: f64) -> Vec<Event> {
+    let mut r = SwipeRecognizer::new(0.12);
+    let mut events = vec![];
+    for i in 0..6 {
+        events.extend(r.feed(
+            i as f64 * 0.04,
+            &contacts(n, dx * i as f64 / 5., dy * i as f64 / 5.),
+        ));
+    }
+    events.extend(r.feed(0.26, &[]));
+    events
+}
+#[test]
+fn directions_start_and_update_before_release() {
+    for (dx, dy, axis, sign) in [
+        (0.25, 0., Axis::Horizontal, 1),
+        (-0.25, 0., Axis::Horizontal, -1),
+        (0., 0.25, Axis::Vertical, -1),
+        (0., -0.25, Axis::Vertical, 1),
+    ] {
+        let events = trace(3, dx, dy);
+        assert_eq!(events.first(), Some(&Event::Begin(axis)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e,Event::Update(i) if i.signum()==sign&&i.abs()>=2))
+        );
+        assert_eq!(events.last(), Some(&Event::End { cancelled: false }));
+    }
+}
+#[test]
+fn continuous_scrub_can_move_several_entries_and_reverse_without_lifting() {
+    let mut r = SwipeRecognizer::new(0.12);
+    let mut events = vec![];
+    for (t, x) in [
+        (0., 0.),
+        (0.04, 0.03),
+        (0.08, 0.08),
+        (0.12, 0.2),
+        (0.16, 0.32),
+        (0.2, 0.44),
+        (0.24, 0.28),
+        (0.28, 0.12),
+        (0.32, -0.16),
+    ] {
+        events.extend(r.feed(t, &contacts(3, x, 0.)));
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Begin(_)))
+            .count(),
+        1
+    );
+    assert!(events.contains(&Event::Update(4)));
+    assert!(events.contains(&Event::Update(-1)));
+    assert!(!events.iter().any(|e| matches!(e, Event::End { .. })));
+    assert_eq!(r.feed(0.4, &[]), vec![Event::End { cancelled: false }]);
+    assert!(r.feed(0.5, &[]).is_empty());
+}
+#[test]
+fn holding_fingers_keeps_session_open_and_jitter_does_not_repeat() {
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    r.feed(0.04, &contacts(3, 0.04, 0.));
+    r.feed(0.08, &contacts(3, 0.1, 0.));
+    for t in [1., 3., 20.] {
+        assert!(r.feed(t, &contacts(3, 0.11, 0.)).is_empty());
+    }
+    assert_eq!(r.feed(20.1, &contacts(3, 0.24, 0.)), vec![Event::Update(2)]);
+    assert_eq!(r.feed(20.2, &[]), vec![Event::End { cancelled: false }]);
+}
+#[test]
+fn two_and_four_finger_gestures_never_open_a_session() {
+    for n in [1, 2, 4, 5] {
+        assert!(trace(n, 0.25, 0.).is_empty());
+        assert!(trace(n, 0., 0.25).is_empty());
+    }
+}
+#[test]
+fn normal_four_finger_landing_cancels_before_overview_appears() {
+    let mut r = SwipeRecognizer::default();
+    assert!(r.feed(0., &contacts(3, 0., 0.)).is_empty());
+    assert!(r.feed(0.02, &contacts(3, 0.1, 0.)).is_empty());
+    assert!(r.feed(0.04, &contacts(4, 0.2, 0.)).is_empty());
+    assert!(r.feed(0.1, &[]).is_empty());
+}
+#[test]
+fn a_fourth_finger_cancels_an_existing_session_once() {
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    r.feed(0.04, &contacts(3, 0.04, 0.));
+    assert!(
+        r.feed(0.08, &contacts(3, 0.15, 0.))
+            .contains(&Event::Begin(Axis::Horizontal))
+    );
+    assert_eq!(
+        r.feed(0.12, &contacts(4, 0.2, 0.)),
+        vec![Event::End { cancelled: true }]
+    );
+    assert!(r.feed(0.2, &contacts(3, 0.2, 0.)).is_empty());
+    assert!(r.feed(0.3, &[]).is_empty());
+}
+#[test]
+fn partial_release_waits_for_all_fingers_to_lift() {
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    r.feed(0.04, &contacts(3, 0.04, 0.));
+    r.feed(0.08, &contacts(3, 0.1, 0.));
+    assert!(r.feed(0.1, &contacts(2, 0.1, 0.)).is_empty());
+    assert!(r.feed(0.12, &contacts(1, 0.1, 0.)).is_empty());
+    assert_eq!(r.feed(0.14, &[]), vec![Event::End { cancelled: false }]);
+}
+#[test]
+fn pinches_diagonals_and_scrolls_do_not_open_sessions() {
+    assert!(trace(3, 0.02, 0.02).is_empty());
+    assert!(trace(3, 0.2, 0.2).is_empty());
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(2, 0., 0.));
+    for i in 0..5 {
+        assert!(
+            r.feed(0.5 + i as f64 * 0.04, &contacts(3, i as f64 * 0.04, 0.))
+                .is_empty()
+        );
+    }
+    assert!(r.feed(0.8, &[]).is_empty());
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    for i in 1..5 {
+        let mut p = contacts(3, 0., 0.);
+        p[0].x -= 0.03 * i as f64;
+        p[2].x += 0.03 * i as f64;
+        assert!(r.feed(i as f64 * 0.04, &p).is_empty());
+    }
+}
+#[test]
+fn invalid_data_cancels_active_overview() {
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    r.feed(0.04, &contacts(3, 0.04, 0.));
+    r.feed(0.08, &contacts(3, 0.1, 0.));
+    let mut bad = contacts(3, 0.2, 0.);
+    bad[0].x = f64::NAN;
+    assert_eq!(r.feed(0.12, &bad), vec![Event::End { cancelled: true }]);
+    assert!(r.feed(0.2, &[]).is_empty());
+}
+fn engine() -> Engine {
+    let mut e = Engine::new(8.);
+    for id in 1..=5 {
+        e.windows.insert(
+            id,
+            Window {
+                id,
+                app_id: if id <= 3 {
+                    "Editor".into()
+                } else {
+                    "Other".into()
+                },
+                app_name: "App".into(),
+                title: format!("{id}"),
+                display: 1,
+                frame: Rect::new(id as f64 * 100., 0., 400., 300.),
+                mode: Mode::Magnetic,
+                last_floating_frame: None,
+                snap: None,
+                restore_frame: None,
+            },
+        );
+    }
+    e.set_visible(1, &[1, 2, 3, 4, 5], Some(1));
+    e.focus(3);
+    e.focus(1);
+    e
+}
+#[test]
+fn vertical_scrub_visits_every_window_and_reverses() {
+    let e = engine();
+    let mut s = ScrubSession::new(&e, Axis::Vertical).unwrap();
+    assert_eq!(s.update(1), Some(2));
+    assert_eq!(s.update(2), Some(3));
+    assert_eq!(s.update(3), Some(4));
+    assert_eq!(s.update(4), Some(5));
+    assert_eq!(s.update(3), Some(4));
+    assert_eq!(s.update(0), Some(1));
+    assert_eq!(s.original, Some(1));
+}
+#[test]
+fn scrub_clamps_at_edges_and_reverses_immediately_after_overshoot() {
+    let e = engine();
+    let mut s = ScrubSession::new(&e, Axis::Vertical).unwrap();
+    assert_eq!(s.update(20), Some(5));
+    assert_eq!(s.update(21), None);
+    assert_eq!(s.update(20), Some(4));
+    assert_eq!(s.update(-20), Some(1));
+    assert_eq!(s.update(-21), None);
+    assert_eq!(s.update(-20), Some(2));
+}
+#[test]
+fn horizontal_scrub_stays_in_the_original_app() {
+    let mut e = engine();
+    let mut s = ScrubSession::new(&e, Axis::Horizontal).unwrap();
+    assert_eq!(s.update(1), Some(2));
+    e.focus(2);
+    assert_eq!(s.update(2), Some(3));
+    assert_eq!(s.update(3), None);
+    assert_eq!(s.update(2), Some(2));
+}
+#[test]
+fn unfocused_space_is_entered_without_skipping_first_entry() {
+    let mut e = engine();
+    e.set_visible(2, &[1, 2, 3, 4, 5], None);
+    let mut s = ScrubSession::new(&e, Axis::Vertical).unwrap();
+    assert_eq!(s.update(1), Some(1));
+    assert_eq!(s.update(2), Some(2));
+}
+#[test]
+fn live_focus_does_not_reorder_scrub_targets_or_change_rectangles() {
+    let mut e = engine();
+    let before: Vec<_> = e.windows.values().map(|w| w.frame).collect();
+    let mut s = ScrubSession::new(&e, Axis::Vertical).unwrap();
+    for offset in [1, 2, 3, 2, 1, 0] {
+        if let Some(id) = s.update(offset) {
+            e.focus(id);
+        }
+    }
+    assert_eq!(
+        e.windows.values().map(|w| w.frame).collect::<Vec<_>>(),
+        before
+    );
+    assert_eq!(e.focused(), Some(1));
+    assert_eq!(e.command(Command::FocusNext), vec![Effect::Focus(2)]);
+}
+
+#[test]
+fn edge_hold_traverses_a_long_list_without_lifting_and_stops_when_reversed() {
+    let mut r = SwipeRecognizer::default();
+    r.feed(0., &contacts(3, 0., 0.));
+    r.feed(0.04, &contacts(3, 0., 0.1));
+    r.feed(0.08, &contacts(3, 0., 0.2));
+    r.feed(0.12, &contacts(3, 0., 0.56));
+    let a = r.feed(0.55, &contacts(3, 0., 0.56));
+    let b = r.feed(0.8, &contacts(3, 0., 0.56));
+    assert!(a.iter().any(|e| matches!(e,Event::Update(i) if *i<=-6)));
+    assert!(b.iter().any(|e| matches!(e,Event::Update(i) if *i<=-7)));
+    r.feed(0.85, &contacts(3, 0., 0.54));
+    assert!(r.feed(1.5, &contacts(3, 0., 0.54)).is_empty());
+    assert_eq!(r.feed(1.6, &[]), vec![Event::End { cancelled: false }]);
+}
