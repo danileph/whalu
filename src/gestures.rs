@@ -32,6 +32,12 @@ pub struct SwipeRecognizer {
     edge: Option<(i32, f64)>,
     edge_blocked: bool,
     last_position: Option<f64>,
+    activated_at: Option<f64>,
+    continuation_anchor: f64,
+    sustained: bool,
+    scroll_position: f64,
+    edge_started: Option<f64>,
+    motion_time: f64,
 }
 impl Default for SwipeRecognizer {
     fn default() -> Self {
@@ -49,6 +55,12 @@ impl Default for SwipeRecognizer {
             edge: None,
             edge_blocked: false,
             last_position: None,
+            activated_at: None,
+            continuation_anchor: 0.,
+            sustained: false,
+            scroll_position: 0.,
+            edge_started: None,
+            motion_time: 0.,
         }
     }
 }
@@ -62,6 +74,21 @@ impl SwipeRecognizer {
             },
             ..Default::default()
         }
+    }
+    pub fn active(&self) -> bool {
+        self.axis.is_some()
+    }
+    pub fn eligible(&self) -> bool {
+        !self.blocked
+    }
+    pub fn sustained(&self) -> bool {
+        self.sustained
+    }
+    /// Finger-driven movement for release velocity. Deliberate continuation after
+    /// the overview appears unlocks traversal; automatic edge steps are excluded
+    /// so a stationary edge hold cannot manufacture a fast release velocity.
+    pub fn progress(&self) -> Option<f64> {
+        self.axis.map(|_| self.scroll_position / self.step)
     }
     pub fn cancel(&mut self) -> Vec<GestureEvent> {
         self.blocked = true;
@@ -157,6 +184,7 @@ impl SwipeRecognizer {
                 return self.cancel();
             }
             self.axis = Some(axis);
+            self.activated_at = Some(time);
             events.push(GestureEvent::Begin(axis));
         }
         let axis = self.axis.unwrap();
@@ -173,17 +201,41 @@ impl SwipeRecognizer {
         }) {
             return self.cancel();
         }
-        // Vertical up chooses the previous window; horizontal right chooses the next app window.
+        // Natural scrolling: fingers up advance down the list; fingers down go up.
         let position = match axis {
             Axis::Horizontal => dx,
-            Axis::Vertical => -dy,
+            Axis::Vertical => dy,
         };
+        let delta = self.last_position.map(|last| position - last).unwrap_or(0.);
+        let dt = time - self.motion_time;
+        self.motion_time = time;
+        if !self.sustained {
+            // Keep refreshing the anchor while the overview is appearing. Holding
+            // still after a quick swipe cannot turn it into repeated scrolling.
+            if time - self.activated_at.unwrap() < 0.24 {
+                self.continuation_anchor = position;
+            } else if (position - self.continuation_anchor).abs() >= self.step * 0.45 {
+                self.sustained = true;
+                self.scroll_position = self.offset.clamp(-1, 1) as f64 * self.step;
+            }
+        }
+        if self.sustained {
+            let speed = if dt > 0. && dt <= 0.15 {
+                delta.abs() / self.step / dt
+            } else {
+                0.
+            };
+            let gain = 1. + 2.2 * (speed / 12.).clamp(0., 1.).powf(1.2);
+            self.scroll_position += delta * gain;
+        } else {
+            self.scroll_position = position.clamp(-self.step, self.step);
+        }
         let mut offset = self.offset;
         // Schmitt thresholds prevent selection oscillation around cell boundaries.
-        while position - offset as f64 * self.step > self.step * 0.65 {
+        while self.scroll_position - offset as f64 * self.step > self.step * 0.65 {
             offset += 1;
         }
-        while position - offset as f64 * self.step < -self.step * 0.65 {
+        while self.scroll_position - offset as f64 * self.step < -self.step * 0.65 {
             offset -= 1;
         }
         let previous = self.offset + self.edge_offset;
@@ -198,17 +250,21 @@ impl SwipeRecognizer {
             })
             .sum::<f64>()
             / 3.;
-        let edge_dir = match axis {
-            Axis::Horizontal if center > 0.88 => 1,
-            Axis::Horizontal if center < 0.12 => -1,
-            Axis::Vertical if center > 0.88 => -1,
-            Axis::Vertical if center < 0.12 => 1,
-            _ => 0,
+        let edge_dir = if !self.sustained {
+            0
+        } else {
+            match axis {
+                Axis::Horizontal if center > 0.88 => 1,
+                Axis::Horizontal if center < 0.12 => -1,
+                Axis::Vertical if center > 0.88 => 1,
+                Axis::Vertical if center < 0.12 => -1,
+                _ => 0,
+            }
         };
-        let delta = self.last_position.map(|last| position - last).unwrap_or(0.);
         self.last_position = Some(position);
         if edge_dir == 0 {
             self.edge = None;
+            self.edge_started = None;
             self.edge_blocked = false;
         } else {
             if delta * (edge_dir as f64) < -0.003 {
@@ -222,10 +278,15 @@ impl SwipeRecognizer {
                 match self.edge {
                     Some((direction, due)) if direction == edge_dir && time >= due => {
                         self.edge_offset += edge_dir;
-                        self.edge = Some((edge_dir, time + 0.22));
+                        let held = time - self.edge_started.unwrap_or(time);
+                        let interval = (0.22 / (1. + held * 1.5)).max(0.075);
+                        self.edge = Some((edge_dir, time + interval));
                     }
                     Some((direction, _)) if direction == edge_dir => {}
-                    _ => self.edge = Some((edge_dir, time + 0.4)),
+                    _ => {
+                        self.edge_started = Some(time);
+                        self.edge = Some((edge_dir, time + 0.3));
+                    }
                 }
             }
         }

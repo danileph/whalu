@@ -27,6 +27,13 @@ pub fn preview(path: &str, hold: bool) -> Result<(), String> {
             800.,
         ),
         (4, "Notes", "A quieter desktop", 300.),
+        (5, "Finder", "Projects", 100.),
+        (6, "Safari", "Documentation", 400.),
+        (7, "Mail", "Inbox", 500.),
+        (8, "Calendar", "Today", 600.),
+        (9, "Preview", "Reference", 700.),
+        (10, "Music", "Library", 900.),
+        (11, "Settings", "Preferences", 1000.),
     ] {
         e.windows.insert(
             id,
@@ -48,13 +55,25 @@ pub fn preview(path: &str, hold: bool) -> Result<(), String> {
             },
         );
     }
-    e.set_visible(1, &[1, 2, 3, 4], Some(3));
+    e.set_visible(1, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], Some(6));
     let ui = Ui::new(mtm);
+    ui.verify_wheel_animation(&mut e)?;
+    e.focus(6);
+    ui.hide();
     ui.show(&e);
     let result = ui.snapshot(path);
     if hold {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        let mut next = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        let sequence = [7, 8, 7, 6, 5, 4, 5, 6, 1, 11, 6];
+        let mut index = 0;
         while std::time::Instant::now() < until {
+            if std::time::Instant::now() >= next {
+                e.focus(sequence[index % sequence.len()]);
+                ui.show(&e);
+                index += 1;
+                next = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            }
             unsafe {
                 CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
             }
@@ -293,13 +312,13 @@ pub fn smoke() -> Result<(), String> {
             1,
             0,
             0,
-            1 << 12,
+            (1 << 12) | (1 << 22),
             super::event_callback,
             std::ptr::null_mut(),
         ))
         .ok_or("Global keyboard event tap denied")?;
         CGEventTapEnable(tap.0, false);
-        println!("PASS: global keyboard event tap can be created");
+        println!("PASS: global keyboard and scroll event tap can be created");
         ui.show(&e);
         if ui_is_key(&ui) {
             return Err("HUD stole keyboard focus".into());
@@ -311,6 +330,7 @@ pub fn smoke() -> Result<(), String> {
         ui.snapshot(&path.to_string_lossy())?;
         ui.hide();
         println!("PASS: AppKit HUD renders without becoming key");
+        super::input_probe::run(e, discovery, ui, tap, mtm)?;
         constrained_smoke(mtm)?;
         println!("Native smoke test passed; fixture windows closed automatically.");
         Ok(())

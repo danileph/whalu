@@ -30,15 +30,15 @@ fn directions_start_and_update_before_release() {
     for (dx, dy, axis, sign) in [
         (0.25, 0., Axis::Horizontal, 1),
         (-0.25, 0., Axis::Horizontal, -1),
-        (0., 0.25, Axis::Vertical, -1),
-        (0., -0.25, Axis::Vertical, 1),
+        (0., 0.25, Axis::Vertical, 1),
+        (0., -0.25, Axis::Vertical, -1),
     ] {
         let events = trace(3, dx, dy);
         assert_eq!(events.first(), Some(&Event::Begin(axis)));
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e,Event::Update(i) if i.signum()==sign&&i.abs()>=2))
+                .any(|e| matches!(e,Event::Update(i) if i.signum()==sign&&i.abs()==1))
         );
         assert_eq!(events.last(), Some(&Event::End { cancelled: false }));
     }
@@ -51,12 +51,14 @@ fn continuous_scrub_can_move_several_entries_and_reverse_without_lifting() {
         (0., 0.),
         (0.04, 0.03),
         (0.08, 0.08),
-        (0.12, 0.2),
-        (0.16, 0.32),
-        (0.2, 0.44),
-        (0.24, 0.28),
-        (0.28, 0.12),
-        (0.32, -0.16),
+        (0.2, 0.12),
+        (0.3, 0.16),
+        (0.34, 0.24),
+        (0.4, 0.36),
+        (0.46, 0.44),
+        (0.52, 0.28),
+        (0.58, 0.12),
+        (0.64, -0.16),
     ] {
         events.extend(r.feed(t, &contacts(3, x, 0.)));
     }
@@ -67,11 +69,20 @@ fn continuous_scrub_can_move_several_entries_and_reverse_without_lifting() {
             .count(),
         1
     );
-    assert!(events.contains(&Event::Update(4)));
-    assert!(events.contains(&Event::Update(-1)));
+    assert!(r.sustained());
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Update(i) if *i >= 3))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Update(i) if *i <= -1))
+    );
     assert!(!events.iter().any(|e| matches!(e, Event::End { .. })));
-    assert_eq!(r.feed(0.4, &[]), vec![Event::End { cancelled: false }]);
-    assert!(r.feed(0.5, &[]).is_empty());
+    assert_eq!(r.feed(0.7, &[]), vec![Event::End { cancelled: false }]);
+    assert!(r.feed(0.8, &[]).is_empty());
 }
 #[test]
 fn holding_fingers_keeps_session_open_and_jitter_does_not_repeat() {
@@ -82,7 +93,8 @@ fn holding_fingers_keeps_session_open_and_jitter_does_not_repeat() {
     for t in [1., 3., 20.] {
         assert!(r.feed(t, &contacts(3, 0.11, 0.)).is_empty());
     }
-    assert_eq!(r.feed(20.1, &contacts(3, 0.24, 0.)), vec![Event::Update(2)]);
+    assert_eq!(r.feed(20.1, &contacts(3, 0.24, 0.)), vec![Event::Update(4)]);
+    assert!(r.sustained());
     assert_eq!(r.feed(20.2, &[]), vec![Event::End { cancelled: false }]);
 }
 #[test]
@@ -252,12 +264,103 @@ fn edge_hold_traverses_a_long_list_without_lifting_and_stops_when_reversed() {
     r.feed(0., &contacts(3, 0., 0.));
     r.feed(0.04, &contacts(3, 0., 0.1));
     r.feed(0.08, &contacts(3, 0., 0.2));
-    r.feed(0.12, &contacts(3, 0., 0.56));
-    let a = r.feed(0.55, &contacts(3, 0., 0.56));
-    let b = r.feed(0.8, &contacts(3, 0., 0.56));
-    assert!(a.iter().any(|e| matches!(e,Event::Update(i) if *i<=-6)));
-    assert!(b.iter().any(|e| matches!(e,Event::Update(i) if *i<=-7)));
-    r.feed(0.85, &contacts(3, 0., 0.54));
+    r.feed(0.2, &contacts(3, 0., 0.24));
+    r.feed(0.3, &contacts(3, 0., 0.30));
+    r.feed(0.34, &contacts(3, 0., 0.45));
+    r.feed(0.4, &contacts(3, 0., 0.56));
+    assert!(r.sustained());
+    let a = r.feed(0.75, &contacts(3, 0., 0.56));
+    let b = r.feed(0.95, &contacts(3, 0., 0.56));
+    assert!(a.iter().any(|e| matches!(e,Event::Update(i) if *i>=6)));
+    assert!(b.iter().any(|e| matches!(e,Event::Update(i) if *i>=7)));
+    r.feed(1., &contacts(3, 0., 0.54));
     assert!(r.feed(1.5, &contacts(3, 0., 0.54)).is_empty());
     assert_eq!(r.feed(1.6, &[]), vec![Event::End { cancelled: false }]);
+}
+
+#[test]
+fn ordinary_swipes_move_one_slot_at_any_speed_or_distance() {
+    for distance in [0.10, 0.25, 0.55, -0.10, -0.25, -0.30] {
+        let mut recognizer = SwipeRecognizer::default();
+        let mut changes = vec![];
+        for i in 0..=6 {
+            changes.extend(
+                recognizer.feed(i as f64 * 0.04, &contacts(3, 0., distance * i as f64 / 6.)),
+            );
+        }
+        assert!(!recognizer.sustained());
+        let updates: Vec<_> = changes
+            .iter()
+            .filter_map(|event| {
+                if let Event::Update(offset) = event {
+                    Some(*offset)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(!updates.is_empty());
+        assert!(
+            updates
+                .iter()
+                .all(|offset| *offset == distance.signum() as i32)
+        );
+        // A long stationary hold, even at the edge, never arms acceleration.
+        for time in [0.5, 1., 2., 3.] {
+            assert!(recognizer.feed(time, &contacts(3, 0., distance)).is_empty());
+            assert!(!recognizer.sustained());
+        }
+    }
+}
+
+#[test]
+fn acceleration_requires_continued_motion_and_scales_with_speed() {
+    let travel = |interval: f64| {
+        let mut recognizer = SwipeRecognizer::default();
+        for (time, position) in [
+            (0., 0.),
+            (0.04, 0.04),
+            (0.08, 0.10),
+            (0.2, 0.12),
+            (0.3, 0.12),
+        ] {
+            recognizer.feed(time, &contacts(3, 0., position));
+        }
+        assert!(!recognizer.sustained());
+        for i in 1..=4 {
+            recognizer.feed(
+                0.3 + interval * i as f64,
+                &contacts(3, 0., 0.12 + i as f64 * 0.06),
+            );
+        }
+        assert!(recognizer.sustained());
+        recognizer.progress().unwrap()
+    };
+    let slow = travel(0.12);
+    let fast = travel(0.025);
+    assert!(slow > 1.);
+    assert!(fast > slow * 1.5, "fast={fast}, slow={slow}");
+}
+
+#[test]
+fn rapid_separate_swipes_each_move_one_slot_without_carrying_acceleration() {
+    let mut recognizer = SwipeRecognizer::default();
+    for stroke in 0..8 {
+        let start = stroke as f64 * 0.3;
+        let mut updates = vec![];
+        for i in 0..=4 {
+            for event in recognizer.feed(start + i as f64 * 0.04, &contacts(3, 0., i as f64 * 0.09))
+            {
+                if let Event::Update(offset) = event {
+                    updates.push(offset);
+                }
+            }
+            assert!(!recognizer.sustained());
+        }
+        assert_eq!(updates, vec![1]);
+        assert_eq!(
+            recognizer.feed(start + 0.18, &[]),
+            vec![Event::End { cancelled: false }]
+        );
+    }
 }

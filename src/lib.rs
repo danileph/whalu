@@ -4,5 +4,7 @@ pub mod geometry;
 pub mod gestures;
 pub mod input;
 pub mod navigation;
+pub mod overview;
 pub mod persistence;
+pub mod scroll;
 pub mod visibility;

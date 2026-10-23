@@ -2,6 +2,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 mod discovery;
 mod ffi;
+mod input_probe;
 mod onboarding;
 mod previews;
 pub mod probe;
@@ -12,10 +13,11 @@ use ffi::*;
 use magnetic::{
     config::{Config, config_dir},
     core::{Command, Effect, Engine},
-    gestures::GestureEvent,
+    gestures::{Axis, GestureEvent},
     input::{Modifiers, route},
     navigation::ScrubSession,
     persistence::SavedState,
+    scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
     visibility::ContextTracker,
 };
 use objc2::{MainThreadMarker, sel};
@@ -45,7 +47,10 @@ pub(super) enum Event {
     Modifiers(Modifiers),
     Mouse(bool),
     Drag,
-    Gesture(usize, GestureEvent),
+    Gesture(usize, GestureEvent, f64),
+    GestureMotion(usize, f64, f64, bool),
+    ContactBegan,
+    Wheel(f64, f64),
     TogglePause,
     Settings,
     PreviewAccess,
@@ -59,6 +64,9 @@ struct Queue {
     source: Ref,
     bindings: Vec<magnetic::config::Binding>,
     runtime: *mut Runtime,
+    scroll_modifiers: Modifiers,
+    wheel: WheelRouter,
+    clock: Instant,
 }
 pub(super) fn enqueue(event: Event) {
     if let Ok(dispatch) = DISPATCH.lock() {
@@ -83,18 +91,39 @@ impl Drop for Observer {
         }
     }
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScrollSource {
+    Trackpad(usize),
+    Wheel,
+}
+struct ActiveScroll {
+    source: ScrollSource,
+    session: ScrubSession,
+    motion: KineticScroll,
+    wheel: WheelScroll,
+    position: f64,
+    last_time: f64,
+    last_input: Instant,
+    released: bool,
+    changed: bool,
+    sustained: bool,
+}
 struct Runtime {
     mtm: MainThreadMarker,
     rx: Receiver<Event>,
     config: Config,
     config_path: std::path::PathBuf,
+    state_path: Option<std::path::PathBuf>,
     engine: Engine,
     discovery: Discovery,
     ui: ui::Ui,
     observers: BTreeMap<i32, Observer>,
     tap: Owned,
     gestures: Option<trackpad::Monitor>,
-    gesture: Option<(usize, ScrubSession)>,
+    gesture: Option<ActiveScroll>,
+    motion_due: Option<Instant>,
+    linger_until: Option<Instant>,
+    motion_tick: Instant,
     _tap_source: Owned,
     timer: Option<Owned>,
     deadline: Option<Instant>,
@@ -125,10 +154,16 @@ impl Runtime {
             } else {
                 None
             };
-            let due = [scan_due, self.overlay_deadline, self.space_until]
-                .into_iter()
-                .flatten()
-                .min();
+            let due = [
+                scan_due,
+                self.overlay_deadline,
+                self.space_until,
+                self.motion_due,
+                self.linger_until,
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             let Some(due) = due else {
                 return;
             };
@@ -159,7 +194,7 @@ impl Runtime {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
                 Event::SpaceChanged => {
                     // Native Space navigation wins over an in-progress scrub.
-                    self.gesture = None;
+                    self.clear_scroll();
                     self.switched_space = true;
                     self.manual_until = None;
                     self.space_until = Some(Instant::now() + Duration::from_millis(850));
@@ -180,10 +215,25 @@ impl Runtime {
                     self.held = held;
                     self.render();
                 }
-                Event::Gesture(device, event) => self.gesture_event(device, event),
+                Event::Gesture(device, event, time) => self.gesture_event(device, event, time),
+                Event::GestureMotion(device, position, time, sustained) => {
+                    if let Some(active) = self.gesture.as_mut().filter(|active| {
+                        active.source == ScrollSource::Trackpad(device) && !active.released
+                    }) {
+                        active.sustained = sustained;
+                        active.motion.sample(position, time);
+                        active.position = position;
+                        active.last_time = time;
+                        active.last_input = Instant::now();
+                    }
+                }
+                Event::ContactBegan => self.contact_began(),
+                Event::Wheel(delta, time) => self.wheel_event(delta, time),
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
+                        self.clear_scroll();
+                        self.render();
                         self.dragging = false;
                     }
                     if !down && self.dragging {
@@ -206,6 +256,8 @@ impl Runtime {
                     if self.mouse {
                         continue;
                     }
+                    // Explicit keyboard input takes over from a scroll or its coast.
+                    self.clear_scroll();
                     // Navigation is explicit intent: bypass the modifier-only HUD delay.
                     self.overlay_deadline = None;
                     self.reconcile(false);
@@ -267,6 +319,13 @@ impl Runtime {
                     NSApplication::sharedApplication(self.mtm).terminate(None);
                 }
                 Event::TapDisabled => {
+                    self.clear_scroll();
+                    unsafe {
+                        let q = QUEUE.load(Ordering::Acquire);
+                        if !q.is_null() {
+                            (*q).wheel.reset();
+                        }
+                    }
                     self.held = false;
                     self.overlay_deadline = None;
                     self.render();
@@ -292,76 +351,234 @@ impl Runtime {
             self.overlay_deadline = None;
             self.render();
         }
+        self.advance_scroll(now);
         self.schedule();
     }
-    fn gesture_event(&mut self, device: usize, event: GestureEvent) {
-        match event {
-            GestureEvent::Begin(axis) => {
-                if self.gesture.is_some() || self.space_until.is_some() || self.mouse {
-                    return;
-                }
-                self.reconcile(false);
-                if self.engine.frozen {
-                    return;
-                }
-                if let Some(session) = ScrubSession::new(&self.engine, axis) {
-                    self.gesture = Some((device, session));
-                    self.overlay_deadline = None;
-                    self.render();
-                    if std::env::var_os("MAGNETIC_TRACE").is_some() {
-                        eprintln!("Continuous gesture started: {axis:?}");
-                    }
-                }
+    fn clear_scroll(&mut self) {
+        self.gesture = None;
+        self.motion_due = None;
+        self.linger_until = None;
+    }
+    fn contact_began(&mut self) {
+        let catch = self
+            .gesture
+            .as_ref()
+            .is_some_and(|active| active.released || active.source == ScrollSource::Wheel);
+        let bridge = catch || self.linger_until.is_some();
+        if catch {
+            self.gesture = None;
+            self.motion_due = None;
+            self.save();
+        }
+        if bridge {
+            // Keep the same panel/cards visible through the recognition gap of
+            // the next swipe, even if the old feedback deadline is almost over.
+            self.linger_until = self
+                .linger_until
+                .max(Some(Instant::now() + Duration::from_millis(250)));
+        }
+        self.render();
+    }
+    fn begin_scroll(&mut self, source: ScrollSource, axis: Axis) {
+        // A new touch/wheel movement immediately catches an existing coast.
+        if self.gesture.as_ref().is_some_and(|active| !active.released) {
+            return;
+        }
+        if self.space_until.is_some() || self.mouse {
+            return;
+        }
+        let reuse = self
+            .linger_until
+            .is_some_and(|until| until > Instant::now())
+            && self.deadline.is_none()
+            && !self.switched_space;
+        self.gesture = None;
+        self.motion_due = None;
+        // Do not clear feedback before reconciliation: it can render, and a
+        // momentary hidden panel would restart all animations between swipes.
+        if !reuse {
+            self.reconcile(false);
+            self.deadline = None;
+        }
+        if self.engine.frozen {
+            return;
+        }
+        if let Some(session) = ScrubSession::new(&self.engine, axis) {
+            self.gesture = Some(ActiveScroll {
+                source,
+                session,
+                motion: KineticScroll::default(),
+                wheel: WheelScroll::default(),
+                position: 0.,
+                last_time: 0.,
+                last_input: Instant::now(),
+                released: false,
+                changed: false,
+                sustained: false,
+            });
+            self.overlay_deadline = None;
+            self.linger_until = None;
+            self.render();
+        }
+    }
+    fn select_scroll(&mut self, offset: i32) -> bool {
+        let target = self.gesture.as_mut().and_then(|active| {
+            active.motion.offset = offset;
+            (active.session.context == self.engine.current)
+                .then(|| active.session.update(offset))
+                .flatten()
+        });
+        if let Some(id) = target {
+            if let Some(active) = self.gesture.as_mut() {
+                active.changed = true;
             }
+            if !self.engine.frozen
+                && self
+                    .engine
+                    .context()
+                    .is_some_and(|ctx| ctx.order.contains(&id))
+            {
+                self.apply(vec![Effect::Focus(id)]);
+            }
+        }
+        self.render();
+        target.is_some()
+    }
+    fn gesture_event(&mut self, device: usize, event: GestureEvent, time: f64) {
+        match event {
+            GestureEvent::Begin(axis) => self.begin_scroll(ScrollSource::Trackpad(device), axis),
             GestureEvent::Update(offset) => {
-                let target = match self.gesture.as_mut() {
-                    Some((active, session))
-                        if *active == device && session.context == self.engine.current =>
-                    {
-                        session.update(offset)
-                    }
-                    _ => return,
-                };
-                if let Some(id) = target {
-                    if self.engine.context().is_some_and(|c| c.order.contains(&id))
-                        && !self.engine.frozen
-                    {
-                        self.apply(vec![Effect::Focus(id)]);
-                        if std::env::var_os("MAGNETIC_TRACE").is_some() {
-                            eprintln!("Continuous gesture selection: offset={offset}, window={id}");
-                        }
-                    }
+                if self.gesture.as_ref().is_some_and(|active| {
+                    active.source == ScrollSource::Trackpad(device) && !active.released
+                }) {
+                    self.select_scroll(offset);
                 }
-                self.render();
             }
             GestureEvent::End { cancelled } => {
                 if self
                     .gesture
                     .as_ref()
-                    .is_none_or(|(active, _)| *active != device)
+                    .is_none_or(|active| active.source != ScrollSource::Trackpad(device))
                 {
                     return;
                 }
-                let (_, session) = self.gesture.take().unwrap();
                 if cancelled {
-                    if session.context == self.engine.current && self.space_until.is_none() {
-                        // Refresh visibility before restoring; never jump back across Spaces.
+                    let active = self.gesture.take().unwrap();
+                    self.clear_scroll();
+                    if active.session.context == self.engine.current && self.space_until.is_none() {
                         self.reconcile(false);
-                        if session.context == self.engine.current {
-                            if let Some(id) = session.original {
+                        if active.session.context == self.engine.current {
+                            if let Some(id) = active.session.original {
                                 self.apply(vec![Effect::Focus(id)]);
                             }
                         }
                     }
+                    self.render();
+                    self.save();
                 } else {
-                    self.reflow();
-                }
-                self.render();
-                self.save();
-                if std::env::var_os("MAGNETIC_TRACE").is_some() {
-                    eprintln!("Continuous gesture ended: cancelled={cancelled}");
+                    // A deliberate short swipe should still make one visible selection.
+                    let nudge = self
+                        .gesture
+                        .as_ref()
+                        .and_then(|active| {
+                            (!active.changed && active.motion.offset == 0)
+                                .then_some(active.motion.direction())
+                        })
+                        .filter(|direction| *direction != 0);
+                    if let Some(offset) = nudge {
+                        self.select_scroll(offset);
+                    }
+                    self.release_scroll(time);
                 }
             }
+        }
+    }
+    fn wheel_event(&mut self, delta: f64, time: f64) {
+        if self
+            .gesture
+            .as_ref()
+            .is_none_or(|active| active.source != ScrollSource::Wheel || active.released)
+        {
+            self.begin_scroll(ScrollSource::Wheel, Axis::Vertical);
+        }
+        let Some(active) = self
+            .gesture
+            .as_mut()
+            .filter(|active| active.source == ScrollSource::Wheel)
+        else {
+            return;
+        };
+        active.position = active.wheel.sample(delta, time);
+        active.sustained = active.wheel.sustained();
+        active.motion.sample(active.position, time);
+        active.last_time = time;
+        active.last_input = Instant::now();
+        // Wheel packets have no finger-up event. A short quiet interval ends the burst.
+        self.motion_due = Some(active.last_input + Duration::from_millis(110));
+        let offset = active.position.round() as i32;
+        self.select_scroll(offset);
+    }
+    fn release_scroll(&mut self, time: f64) {
+        let coast = self.gesture.as_mut().is_some_and(|active| {
+            active.released = true;
+            match active.source {
+                ScrollSource::Trackpad(_) => active.motion.release(time, active.sustained),
+                ScrollSource::Wheel => active.motion.release_wheel(time, active.sustained),
+            }
+        });
+        self.motion_tick = Instant::now();
+        if coast {
+            self.motion_due = Some(self.motion_tick + Duration::from_millis(16));
+        } else {
+            self.finish_scroll();
+        }
+    }
+    fn finish_scroll(&mut self) {
+        self.gesture = None;
+        self.motion_due = None;
+        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        self.reflow();
+        self.render();
+        self.save();
+    }
+    fn advance_scroll(&mut self, now: Instant) {
+        if self.motion_due.is_some_and(|due| due <= now) {
+            if let Some(active) = self
+                .gesture
+                .as_ref()
+                .filter(|active| !active.released && active.source == ScrollSource::Wheel)
+            {
+                let time = active.last_time + now.duration_since(active.last_input).as_secs_f64();
+                self.release_scroll(time);
+            } else if self.gesture.as_ref().is_some_and(|active| active.released) {
+                let dt = now.duration_since(self.motion_tick).as_secs_f64();
+                self.motion_tick = now;
+                let offset = self
+                    .gesture
+                    .as_mut()
+                    .and_then(|active| active.motion.step(dt));
+                if let Some(offset) = offset {
+                    if !self.select_scroll(offset) {
+                        self.finish_scroll();
+                        return;
+                    }
+                }
+                if self
+                    .gesture
+                    .as_ref()
+                    .is_some_and(|active| active.motion.coasting())
+                {
+                    self.motion_due = Some(now + Duration::from_millis(16));
+                } else {
+                    self.finish_scroll();
+                }
+            } else {
+                self.motion_due = None;
+            }
+        }
+        if self.linger_until.is_some_and(|until| until <= now) {
+            self.linger_until = None;
+            self.render();
         }
     }
     fn reload(&mut self) {
@@ -369,8 +586,10 @@ impl Runtime {
             Ok(c) => {
                 self.engine.gap = c.gap;
                 if c.gestures != self.config.gestures {
-                    if let Some((device, _)) = self.gesture.as_ref() {
-                        self.gesture_event(*device, GestureEvent::End { cancelled: true });
+                    if let Some(ScrollSource::Trackpad(device)) =
+                        self.gesture.as_ref().map(|active| active.source)
+                    {
+                        self.gesture_event(device, GestureEvent::End { cancelled: true }, 0.);
                     }
                     self.gestures = None;
                     if c.gestures {
@@ -384,7 +603,10 @@ impl Runtime {
                 unsafe {
                     let q = QUEUE.load(Ordering::Acquire);
                     (*q).bindings = self.config.bindings.clone();
+                    (*q).scroll_modifiers = self.config.overlay_modifiers;
+                    (*q).wheel.reset();
                 }
+                self.clear_scroll();
                 self.held = false;
                 self.overlay_deadline = None;
                 self.render();
@@ -457,9 +679,12 @@ impl Runtime {
         if self
             .gesture
             .as_ref()
-            .is_some_and(|(_, s)| s.context != context)
+            .is_some_and(|active| active.session.context != context)
         {
-            self.gesture = None;
+            self.clear_scroll();
+        }
+        if context_changed {
+            self.linger_until = None;
         }
         self.switched_space = false;
         self.observe();
@@ -639,22 +864,29 @@ impl Runtime {
     }
     fn render(&self) {
         let keyboard = self.held && self.overlay_deadline.is_none();
-        if (keyboard || self.gesture.is_some()) && self.space_until.is_none() && self.config.overlay
+        if (keyboard || self.gesture.is_some() || self.linger_until.is_some())
+            && self.space_until.is_none()
+            && self.config.overlay
         {
             self.ui.sync_sources(&self.discovery);
-            self.ui
-                .show_navigation(&self.engine, self.gesture.as_ref().map(|(_, s)| s.axis));
+            self.ui.show_navigation(
+                &self.engine,
+                self.gesture.as_ref().map(|active| active.session.axis),
+            );
         } else {
             self.ui.hide();
         }
     }
     fn save(&mut self) {
+        let Some(path) = self.state_path.as_ref() else {
+            return;
+        };
         let state = SavedState::capture(&self.engine);
         if let Ok(data) = serde_json::to_string(&state) {
             if self.last_saved.as_ref() == Some(&data) {
                 return;
             }
-            match state.write(&config_dir().join("state.json")) {
+            match state.write(path) {
                 Ok(()) => self.last_saved = Some(data),
                 Err(e) => eprintln!("Recovery write failed: {e}"),
             }
@@ -689,6 +921,38 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         return event;
     }
     let modifiers = Modifiers::from_flags(CGEventGetFlags(event));
+    if ty == 22 {
+        let continuous = CGEventGetIntegerValueField(event, 88) != 0;
+        let momentum = CGEventGetIntegerValueField(event, 123);
+        if trackpad::suppress_scroll(continuous, momentum) {
+            return null_mut();
+        }
+        let q = QUEUE.load(Ordering::Acquire);
+        if !q.is_null() {
+            let delta = if continuous {
+                CGEventGetDoubleValueField(event, 96)
+            } else {
+                CGEventGetIntegerValueField(event, 11) as f64
+            };
+            let now = (*q).clock.elapsed().as_secs_f64();
+            match (*q).wheel.route(
+                modifiers.overlay((*q).scroll_modifiers),
+                delta,
+                continuous,
+                momentum,
+                CGEventGetIntegerValueField(event, 99),
+                now,
+            ) {
+                WheelRoute::Pass => {}
+                WheelRoute::Consume => return null_mut(),
+                WheelRoute::Navigate(delta) => {
+                    enqueue(Event::Modifiers(modifiers));
+                    enqueue(Event::Wheel(delta, now));
+                    return null_mut();
+                }
+            }
+        }
+    }
     if ty == 12 {
         enqueue(Event::Modifiers(modifiers));
     }
@@ -727,7 +991,7 @@ pub fn doctor() -> bool {
             "Native Space IDs: unavailable through public APIs; conservative visible-window contexts"
         );
         println!(
-            "Global three-finger gestures: read-only trackpad listener (experimental private framework)"
+            "Three-finger contact listener: experimental private framework; owned scroll packets suppressed by the public event tap"
         );
         println!("Config: {}", config_dir().join("config.toml").display());
         trusted
@@ -772,7 +1036,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
-        let mask = (1 << 1) | (1 << 2) | (1 << 6) | (1 << 10) | (1 << 11) | (1 << 12);
+        let mask = (1 << 22) | (1 << 1) | (1 << 2) | (1 << 6) | (1 << 10) | (1 << 11) | (1 << 12);
         let Some(tap) = onboarding::wait(mtm, mask) else {
             return Ok(());
         };
@@ -782,6 +1046,9 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             source: null(),
             bindings: config.bindings.clone(),
             runtime: null_mut(),
+            scroll_modifiers: config.overlay_modifiers,
+            wheel: WheelRouter::default(),
+            clock: Instant::now(),
         });
         let ptr = &mut *queue as *mut Queue;
         let mut context = SourceContext {
@@ -844,10 +1111,14 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             engine: Engine::new(config.gap),
             config,
             config_path,
+            state_path: Some(config_dir().join("state.json")),
             discovery: Discovery::new(),
             ui,
             observers: BTreeMap::new(),
             gesture: None,
+            motion_due: None,
+            linger_until: None,
+            motion_tick: Instant::now(),
             gestures: if gestures_enabled {
                 match trackpad::Monitor::start() {
                     Ok(m) => {

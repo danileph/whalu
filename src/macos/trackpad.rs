@@ -1,16 +1,20 @@
-//! Dynamically loaded, read-only MultitouchSupport adapter. No gesture or scroll
-//! events are swallowed, and no system trackpad settings are changed.
+//! Read-only contact detection plus ownership of three-finger scroll streams.
+//! Native scroll suppression happens in the public CGEvent tap; settings are unchanged.
 //! ABI reference: https://github.com/asmagill/hs._asm.undocumented.touchdevice/blob/master/MultitouchSupport.h
 #![allow(unsafe_op_in_unsafe_fn)]
 use super::ffi::*;
-use magnetic::gestures::{Contact, GestureEvent, SwipeRecognizer};
+use magnetic::{
+    gestures::{Contact, GestureEvent, SwipeRecognizer},
+    scroll::ScrollGuard,
+};
 use std::{
     collections::BTreeMap,
     ffi::CStr,
     sync::{
-        Mutex,
+        Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
+    time::Instant,
 };
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -47,7 +51,24 @@ type Callback = unsafe extern "C" fn(Ref, *const Touch, usize, f64, usize, MutRe
 type Register = unsafe extern "C" fn(Ref, Callback) -> i8;
 type Start = unsafe extern "C" fn(Ref, i32) -> i32;
 type Stop = unsafe extern "C" fn(Ref) -> i32;
-static RECOGNIZERS: Mutex<BTreeMap<usize, SwipeRecognizer>> = Mutex::new(BTreeMap::new());
+#[derive(Default)]
+struct Tracked {
+    recognizer: SwipeRecognizer,
+    guard: ScrollGuard,
+    contacts: usize,
+}
+static RECOGNIZERS: Mutex<BTreeMap<usize, Tracked>> = Mutex::new(BTreeMap::new());
+fn clock() -> f64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+pub fn suppress_scroll(continuous: bool, momentum: i64) -> bool {
+    RECOGNIZERS.lock().is_ok_and(|mut states| {
+        states
+            .values_mut()
+            .any(|state| state.guard.capture(continuous, momentum, clock()))
+    })
+}
 static FRAMES: AtomicU64 = AtomicU64::new(0);
 static INVALID: AtomicU64 = AtomicU64::new(0);
 static SWIPES: AtomicU64 = AtomicU64::new(0);
@@ -91,27 +112,50 @@ unsafe extern "C" fn callback(
         cancel_device(device);
         return;
     }
-    let events = RECOGNIZERS
+    let (events, progress, fresh, sustained) = RECOGNIZERS
         .lock()
         .map(|mut states| {
-            states
-                .entry(device as usize)
-                .or_insert_with(|| SwipeRecognizer::new(0.12))
-                .feed(time, &contacts)
+            let state = states.entry(device as usize).or_default();
+            let fresh = state.contacts == 0 && !contacts.is_empty();
+            state.contacts = contacts.len();
+            let events = state.recognizer.feed(time, &contacts);
+            state.guard.contacts(
+                contacts.len(),
+                state.recognizer.eligible(),
+                state.recognizer.active(),
+                clock(),
+            );
+            let progress = (contacts.len() == 3)
+                .then(|| state.recognizer.progress())
+                .flatten();
+            (events, progress, fresh, state.recognizer.sustained())
         })
         .unwrap_or_default();
+    if fresh {
+        super::enqueue(super::Event::ContactBegan);
+    }
     for event in events {
         if matches!(event, GestureEvent::Begin(_)) {
             SWIPES.fetch_add(1, Ordering::Relaxed);
         }
-        super::enqueue(super::Event::Gesture(device as usize, event));
+        super::enqueue(super::Event::Gesture(device as usize, event, time));
+    }
+    if let Some(progress) = progress {
+        super::enqueue(super::Event::GestureMotion(
+            device as usize,
+            progress,
+            time,
+            sustained,
+        ));
     }
 }
+
 fn cancel_device(device: Ref) {
     if let Ok(mut states) = RECOGNIZERS.lock() {
         if let Some(state) = states.get_mut(&(device as usize)) {
-            for event in state.cancel() {
-                super::enqueue(super::Event::Gesture(device as usize, event));
+            state.guard = ScrollGuard::default();
+            for event in state.recognizer.cancel() {
+                super::enqueue(super::Event::Gesture(device as usize, event, 0.));
             }
         }
     }
@@ -199,6 +243,9 @@ impl Drop for Monitor {
             for device in &self.started {
                 (self.register)(*device, callback);
                 (self.stop)(*device);
+            }
+            if let Ok(mut states) = RECOGNIZERS.lock() {
+                states.clear();
             }
             // No dlclose: see lifecycle note above. The OS releases the image on exit.
             let _ = self.library;
