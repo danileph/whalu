@@ -259,3 +259,11 @@ The user preferred removing the effect unless it could match Notification Center
 - Default startup imports missing configuration and recovery files from the former Magnetic support directory without replacing existing Whalu files or deleting the originals. Regression coverage checks migration, repeated startup, destination precedence, partial migration, and exclusion of the former process lock. Magnetic/Floating modes and the `magnetic` configuration key remain compatible.
 - `cargo fmt --check`, `cargo test --locked`, and `cargo clippy --all-targets --locked -- -D warnings` pass. Shell syntax, plist validation, and `git diff --check` pass. The release bundle builds and passes strict code-signature verification; its CLI help, example configuration, bundle identity, packaged icon, and all ten ICNS representations were checked.
 - Artwork was visually inspected. The new bundle has not been installed or granted macOS permissions as part of this change; its new identity requires its own Accessibility and window-preview grants. Live window navigation behavior was not changed or revalidated by this rebrand.
+
+
+## Whalu icon refinement
+
+- Reduced the panes-and-orbit symbol to about 56% of the dark panel width. Replaced the pre-rounded, transparent source with an opaque 1024×1024 graphite image extending to every edge, allowing macOS to apply its own mask without a second pale backing. Updated the wordmark to use the same compact symbol.
+- Rebuilt and decoded all ten standard/Retina ICNS representations. Verified their dimensions, full opacity, dark corners, and byte-for-byte equality of the installed ICNS and project asset. Shell syntax, `git diff --check`, release packaging, and strict installed-bundle signature verification pass. No Rust source changed.
+- Reinstalled and relaunched Whalu. Inspected the actual macOS-rendered icon through NSWorkspace and the live setup window: one dark rounded tile, smaller silver symbol, and no outer white/pale panel. Refreshed the app’s Launch Services registration. Retained the previous installed bundle under `tmp/whalu-before-icon-polish/` for rollback.
+- The changed ad-hoc signature requires Accessibility to be granted again; the app is waiting in setup with settings opened for the user. No privacy permissions were changed automatically.

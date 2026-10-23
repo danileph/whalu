@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Keep the master opaque and square; macOS supplies the rounded icon mask.
 # Build every standard and Retina representation from the committed master.
 ICON_WORK="$(mktemp -d "${TMPDIR:-/tmp}/whalu-icon.XXXXXX")"
 trap 'rm -rf "$ICON_WORK"' EXIT

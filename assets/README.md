@@ -1,10 +1,12 @@
 # Whalu brand assets
 
-Whalu uses a graphite glass tile, three staggered frosted-silver window panes, and a thin silver orbit, based on the supplied visual references.
+Whalu uses a dark graphite panel with a centered, compact symbol of three frosted-silver window panes and a thin silver orbit.
 
-- `Whalu.png`: 1024×1024 app-icon master with transparent outer margins.
+- `Whalu.png`: 1024×1024 opaque, square app-icon master. The graphite background reaches all four edges; the panes and orbit occupy about 56% of the width.
 - `Whalu.icns`: macOS icon containing standard and Retina representations from 16 to 1024 pixels. Used by the app bundle and setup window.
 - `Whalu-wordmark.png`: horizontal icon and silver Whalu wordmark on charcoal, used in the project README.
+
+Keep the app-icon master fully opaque and square, without an inset rounded tile, external margin, or pale backing. macOS applies the icon mask. The previous transparent artwork caused macOS to place the icon inside an additional pale rounded square. See [Apple’s app-icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons).
 
 Regenerate the ICNS after replacing the PNG master:
 
@@ -14,16 +16,12 @@ Regenerate the ICNS after replacing the PNG master:
 
 This uses macOS `sips` and `iconutil`. `./scripts/build-app.sh` packages the committed ICNS without regenerating artwork or requiring image-generation access.
 
-The icon and wordmark were made with the built-in `image_gen` tool. The generated master was resized for packaging; its alpha channel is retained. The following prompts document the artwork. The original specification PDF and historical validation entries retain the former project name.
+The icon and wordmark were refined with the built-in `image_gen` tool using the earlier Whalu artwork as the edit target. The generated icon was resized for packaging. The prompts below describe the current assets; the earlier artwork and prompts remain in Git history. The original specification PDF and historical validation entries retain the former project name.
 
-## Icon generation prompt
+## Icon refinement prompt
 
-> Use case: logo-brand. Asset type: production macOS application icon for Whalu. Use the supplied image as visual reference. Create a very faithful, polished rendition of this exact concept: dark graphite rounded-square glass tile with three overlapping, diagonally staggered frosted silver glass window panes and a slender elliptical silver orbit wrapping around them. Same perspective, proportions, monochrome silver and charcoal palette, bright fine glass edges, soft controlled reflections. Single icon, centered, straight-on rounded tile. Transparent background OUTSIDE the rounded-square tile; the graphite tile interior stays dark and opaque. Tile occupies roughly 82% of square canvas with even transparent margin, macOS app icon silhouette. No surrounding black rectangular background. No text, letters, mockup, dock, grid, extra icon or watermark. Preserve readability at small sizes. Deliver one square high-resolution PNG.
+> Use case: precise-object-edit. Edit target: attached Whalu icon. Produce a polished production macOS icon texture. Make TWO explicit changes: 1) scale the ENTIRE silver symbol (all three panes AND orbit together) down to 72% of its current size, preserving its proportions, perspective and optical centering; give it generous DARK breathing room inside the panel. 2) Replace the enclosing rounded-square tile and transparent outer margins with a SINGLE FULL-BLEED OPAQUE CHARCOAL BACKGROUND covering EVERY pixel of the square canvas INCLUDING ALL FOUR CORNERS. The dark panel is the entire image now, with NO visible inset tile boundary, NO frame and NO rounded corners baked into the image. macOS will round the actual app icon itself. The only objects are the smaller centered three frosted silver window panes and slender silver orbit, on a refined very subtle black/graphite gradient. Preserve the beautiful material concept and spatial arrangement of the panes. Softer controlled lighting, crisp clean edges without noise, no glare bloom. Background is nearly black across the whole canvas, slightly lighter upper-left, not light gray. NO white background, NO white border, NO white padding, NO transparency, NO external drop shadow, NO isolated pixels, NO text or mockup. Square output, full bleed dark graphite.
 
-## Final icon refinement prompt
+## Wordmark refinement prompt
 
-> Use case: precise-object-edit. Edit target: attached Whalu app icon. Preserve the graphite tile, three frosted silver panes, ellipse orbit, lighting and layout exactly. Fix ONLY the silhouette: remove all stray white flecks, colored artifacts, noisy halo, and debris above and outside the rounded tile. Make its outer edge one smooth, crisp continuous rounded square with subtle antialiasing. Outside the tile must be entirely transparent with no shadow haze or isolated pixels. Inside the tile must stay fully opaque. Center the tile with balanced transparent margins, tile width 82% of square canvas. No text. Production macOS icon PNG with flawless clean alpha edges.
-
-## Wordmark generation prompt
-
-> Use case: logo-brand. Asset type: wide horizontal README brand banner. Input image 1 is the final Whalu icon, preserve it exactly. Input image 2 is the wordmark style and layout reference. Create ONLY the top icon-and-wordmark lockup, with no lower examples, no divider line and no dock. Place the exact icon from input 1 on the left, and text verbatim 'Whalu' on the right. Large rounded geometric sans serif letters with restrained silver-white glass reflections, like reference. Text W-h-a-l-u must be spelled correctly, only initial W uppercase. Near-black charcoal background with subtle diffuse light at upper left. Wide landscape composition about 3:1, balanced generous margin, icon roughly same visual height as wordmark. Production crisp minimal brand asset, no subtitle, no extra objects, no watermark. Icon and wordmark must match reference proportions and monochrome graphite / frosted silver identity.
+> Use case: precise-object-edit. Edit target: image 1, the Whalu horizontal wordmark banner. Image 2 is the newly corrected app icon artwork. Preserve image 1's exact text 'Whalu', typography, text scale, layout and background. Change ONLY the app icon at left to match image 2: same three silver glass panes plus orbit at their SMALLER scale, with much more charcoal breathing room around the silver shapes inside the dark tile. Keep the tile same size and position in the banner; its dark rounded-square silhouette is appropriate here for the marketing image, with a very fine subtle dark glass edge, NO heavy white border or pale plate. Render the inset symbol at approximately 56% of the tile width. Use the material, perspective and smaller proportions of image 2. No additional text, no layout changes, no white padding, no extra objects.
