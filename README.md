@@ -12,22 +12,22 @@ Grouping is deferred. Every window has its own entry in one Space-local stack. S
 
 | Input | Action |
 | --- | --- |
-| Hold Fn + Control | Show overview; release either modifier to dismiss |
+| Hold Control + Option | Show overview; release either modifier to dismiss |
 | Click an overview thumbnail or app badge | Focus that window immediately; the overview moves through the stack in order |
-| Fn + Control + Up / Down | Previous / next individual window |
-| Fn + Control + Left / Right | Previous / next window of the active application |
+| Control + Option + Up / Down | Previous / next individual window |
+| Control + Option + Left / Right | Previous / next window of the active application |
 | Three fingers down / up | Previous / next window (natural scrolling) |
-| Fn + Control + mouse wheel | Scroll through individual windows |
+| Control + Option + mouse wheel | Scroll through individual windows |
 | Three fingers left / right | Continuously select windows of the active application |
-| Fn + Control + Space | Toggle Magnetic / Floating |
-| Fn + Control + Command + Up | Snap to full usable display |
-| Fn + Control + Command + Left | Cycle left half → top-left quarter → bottom-left quarter |
-| Fn + Control + Command + Right | Cycle right half → top-right quarter → bottom-right quarter |
-| Fn + Control + Command + Down | Restore the rectangle from before snapping |
+| Control + Option + Space | Toggle Magnetic / Floating |
+| Control + Option + Command + Up | Snap to full usable display |
+| Control + Option + Command + Left | Cycle left half → top-left quarter → bottom-left quarter |
+| Control + Option + Command + Right | Cycle right half → top-right quarter → bottom-right quarter |
+| Control + Option + Command + Down | Restore the rectangle from before snapping |
 
 The former Shift + Control + Option group shortcuts and group-local H/J/K/L shortcuts are no longer captured. Control + arrows, Command + Tab, Option + M, two-finger scrolling, and native four-finger gestures pass through.
 
-During a three-finger swipe, the overview stays open and focus follows your movement live. An ordinary swipe moves exactly one window, even when fast. To traverse more windows, keep your fingers down and continue moving after the overview appears; only then does speed-dependent acceleration engage. Lift after a fast sustained scroll for a stronger coast whose speed and distance follow your swipe velocity. Simply holding still does not unlock acceleration. A short swipe selects one window and holds the overview for 650 ms so the change stays visible. Rapid separate swipes keep that same overview open, advance one window per swipe, and restart the dismissal delay after the final swipe. Once sustained scrolling is active, holding near an edge continues through longer lists and gradually speeds up. A fourth contact cancels the session and restores the original visible window when still in the same Space. Gestures and mouse-wheel navigation stop at the list ends; keyboard navigation wraps. New input catches momentum immediately. Hold the configured `overlay_modifiers` (Fn + Control by default) to use the mouse wheel; scrolling is consumed while navigating so the active app does not scroll too. Mouse-wheel bursts start with one window; longer continued scrolling enables slower traversal and a restrained coast of at most one extra window.
+During a three-finger swipe, the overview stays open and focus follows your movement live. An ordinary swipe moves exactly one window, even when fast. To traverse more windows, keep your fingers down and continue moving after the overview appears; only then does speed-dependent acceleration engage. Lift after a fast sustained scroll for a stronger coast whose speed and distance follow your swipe velocity. Simply holding still does not unlock acceleration. A short swipe selects one window and holds the overview for 650 ms so the change stays visible. Rapid separate swipes keep that same overview open, advance one window per swipe, and restart the dismissal delay after the final swipe. Once sustained scrolling is active, holding near an edge continues through longer lists and gradually speeds up. A fourth contact cancels the session and restores the original visible window when still in the same Space. Gestures and mouse-wheel navigation stop at the list ends; keyboard navigation wraps. New input catches momentum immediately. Hold the configured `overlay_modifiers` (Control + Option by default) to use the mouse wheel; scrolling is consumed while navigating so the active app does not scroll too. Mouse-wheel bursts start with one window; longer continued scrolling enables slower traversal and a restrained coast of at most one extra window.
 
 Snaps use exact full/half/quarter fractions of the usable display with no added gap. When an app enforces a minimum size, the accepted rectangle stays aligned to the requested right/bottom edges and within the display whenever it can fit. Snapping never enters native fullscreen.
 
@@ -68,7 +68,7 @@ Legacy `overlay_brightness` values are accepted and ignored; generated configura
 
 `gap` affects automatic background exposure only. Set `magnetic = false` for navigation without automatic arrangement, or `gestures = false` for keyboard and modifier-wheel operation without three-finger navigation.
 
-Bindings use physical macOS keycodes and exact modifier combinations. The `function` modifier represents Fn (Globe). Existing custom bindings remain as configured; replace `option = true` with `function = true` in `overlay_modifiers` and each binding to adopt Fn + Control. A supplied `bindings` array replaces the defaults. Removed actions (`group_next`, `group_previous`, and the former group-local `left`, `down`, `up`, `right`) must be removed from older custom configurations. Generate and check the current schema with:
+Bindings use physical macOS keycodes and exact modifier combinations. A supplied `bindings` array replaces the defaults. Removed actions (`group_next`, `group_previous`, and the former group-local `left`, `down`, `up`, `right`) must be removed from older custom configurations. Generate and check the current schema with:
 
 ```sh
 ~/.cargo/bin/cargo run -- --print-config > whalu.example.toml

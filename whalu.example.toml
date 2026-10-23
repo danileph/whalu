@@ -7,8 +7,7 @@ ignored_apps = []
 
 [overlay_modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -18,8 +17,7 @@ action = "previous"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -29,8 +27,7 @@ action = "next"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -40,8 +37,7 @@ action = "app_previous"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -51,8 +47,7 @@ action = "app_next"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -62,8 +57,7 @@ action = "toggle_mode"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = false
 
@@ -73,8 +67,7 @@ action = "snap_full"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = true
 
@@ -84,8 +77,7 @@ action = "restore"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = true
 
@@ -95,8 +87,7 @@ action = "snap_left"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = true
 
@@ -106,8 +97,7 @@ action = "snap_right"
 
 [bindings.modifiers]
 control = true
-function = true
-option = false
+option = true
 shift = false
 command = true
 

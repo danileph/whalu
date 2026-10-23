@@ -106,7 +106,7 @@ impl Ui {
             }
             let menu = NSMenu::new(mtm);
             let title = NSMenuItem::new(mtm);
-            title.setTitle(&NSString::from_str("Whalu · Fn + Control"));
+            title.setTitle(&NSString::from_str("Whalu · Control + Option"));
             title.setEnabled(false);
             menu.addItem(&title);
             let gesture_label = NSMenuItem::new(mtm);
