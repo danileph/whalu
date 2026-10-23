@@ -36,7 +36,7 @@ impl StateWriter {
         let pending = Arc::new((Mutex::new(PendingSave::default()), Condvar::new()));
         let shared = Arc::clone(&pending);
         let worker = thread::Builder::new()
-            .name("magnetic-state".into())
+            .name("whalu-state".into())
             .spawn(move || {
                 let (lock, wake) = &*shared;
                 let mut saved = None;
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn writer_flushes_the_latest_snapshot_on_shutdown() {
-        let dir = std::env::temp_dir().join(format!("magnetic-state-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("whalu-state-test-{}", std::process::id()));
         let path = dir.join("state.json");
         let writer = StateWriter::new(path.clone()).unwrap();
         for index in 0..100 {

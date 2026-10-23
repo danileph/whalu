@@ -39,7 +39,7 @@ pub(super) fn run(
             ignored_apps,
             ..Config::default()
         },
-        config_path: std::env::temp_dir().join("magnetic-input-probe.toml"),
+        config_path: std::env::temp_dir().join("whalu-input-probe.toml"),
         state_writer: None,
         engine,
         discovery,

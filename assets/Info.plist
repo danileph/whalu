@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleName</key><string>Magnetic</string>
-<key>CFBundleDisplayName</key><string>Magnetic</string>
-<key>CFBundleIdentifier</key><string>dev.danileph.magnetic</string>
-<key>CFBundleExecutable</key><string>magnetic</string>
+<key>CFBundleName</key><string>Whalu</string>
+<key>CFBundleDisplayName</key><string>Whalu</string>
+<key>CFBundleIdentifier</key><string>dev.danileph.whalu</string>
+<key>CFBundleExecutable</key><string>whalu</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.3.5</string>
 <key>CFBundleVersion</key><string>26</string>
 <key>LSMinimumSystemVersion</key><string>14.2</string>
-<key>CFBundleIconFile</key><string>Magnetic</string>
+<key>CFBundleIconFile</key><string>Whalu</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>

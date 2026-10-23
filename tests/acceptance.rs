@@ -1,4 +1,4 @@
-use magnetic::{
+use whalu::{
     config::Config,
     core::{Command, Effect, Engine, Mode, Window},
     geometry::{Direction, Rect, Region},
@@ -336,7 +336,7 @@ fn unfocused_space_resumes_its_last_focused_window() {
 }
 #[test]
 fn context_tracking_does_not_forget_temporarily_invisible_members() {
-    let mut tracker = magnetic::visibility::ContextTracker::default();
+    let mut tracker = whalu::visibility::ContextTracker::default();
     let a = tracker.resolve(&[1, 2, 3], false);
     assert_eq!(tracker.resolve(&[1], false), a);
     let b = tracker.resolve(&[4, 5], true);
@@ -389,7 +389,7 @@ fn snaps_are_exact_fractions_without_added_spacing() {
 
 #[test]
 fn minimum_size_snaps_preserve_outer_edges_and_keep_the_actual_window_visible() {
-    use magnetic::geometry::constrained_snap;
+    use whalu::geometry::constrained_snap;
     for bounds in [
         Rect::new(0., 29., 1280., 803.),
         Rect::new(-1920., -300., 1920., 1080.),

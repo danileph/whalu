@@ -85,13 +85,19 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
             false,
         );
         window.setReleasedWhenClosed(false);
-        window.setTitle(&NSString::from_str("Set up Magnetic"));
+        window.setTitle(&NSString::from_str("Set up Whalu"));
+        let icon = NSImageView::initWithFrame(
+            NSImageView::alloc(mtm),
+            NSRect::new(NSPoint::new(24., 264.), NSSize::new(48., 48.)),
+        );
+        icon.setImage(NSImage::imageNamed(&NSString::from_str("NSApplicationIcon")).as_deref());
+        icon.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
         let heading = NSTextField::labelWithString(
-            &NSString::from_str("Magnetic is waiting for permission"),
+            &NSString::from_str("Whalu is waiting for permission"),
             mtm,
         );
         heading.setFont(Some(&NSFont::boldSystemFontOfSize(19.)));
-        heading.setFrame(NSRect::new(NSPoint::new(24., 275.), NSSize::new(472., 30.)));
+        heading.setFrame(NSRect::new(NSPoint::new(84., 275.), NSSize::new(412., 30.)));
         let message = NSTextField::wrappingLabelWithString(&NSString::from_str(""), mtm);
         message.setFont(Some(&NSFont::systemFontOfSize(14.)));
         message.setFrame(NSRect::new(NSPoint::new(24., 85.), NSSize::new(472., 175.)));
@@ -111,6 +117,7 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
         quit.setFrame(NSRect::new(NSPoint::new(24., 24.), NSSize::new(85., 34.)));
         let content = window.contentView().unwrap();
         for view in [
+            &*icon as &NSView,
             &*heading as &NSView,
             &*message as &NSView,
             &*open as &NSView,
@@ -120,17 +127,17 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
         }
         let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.);
         if let Some(button) = status.button(mtm) {
-            button.setTitle(&NSString::from_str("M •"));
-            button.setToolTip(Some(&NSString::from_str("Magnetic: permission required")));
+            button.setTitle(&NSString::from_str("W •"));
+            button.setToolTip(Some(&NSString::from_str("Whalu: permission required")));
         }
         let menu = NSMenu::new(mtm);
         let title = NSMenuItem::new(mtm);
-        title.setTitle(&NSString::from_str("Magnetic needs permission"));
+        title.setTitle(&NSString::from_str("Whalu needs permission"));
         title.setEnabled(false);
         menu.addItem(&title);
         for (name, action) in [
             ("Open permission settings…", sel!(openSettings:)),
-            ("Quit Magnetic", sel!(quit:)),
+            ("Quit Whalu", sel!(quit:)),
         ] {
             let item = NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(mtm),
@@ -147,11 +154,11 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
             let (title, text) = match issue {
                 Issue::Accessibility => (
                     "Open Accessibility Settings",
-                    "Magnetic needs Accessibility access to focus and arrange other apps’ windows.\n\nEnable Magnetic in Privacy & Security → Accessibility. If it is missing, use + to add ~/Applications/Magnetic.app.\n\nLeave this window open. Magnetic starts automatically when access is granted.",
+                    "Whalu needs Accessibility access to focus and arrange other apps’ windows.\n\nEnable Whalu in Privacy & Security → Accessibility. If it is missing, use + to add ~/Applications/Whalu.app.\n\nLeave this window open. Whalu starts automatically when access is granted.",
                 ),
                 Issue::Keyboard => (
                     "Open Input Monitoring Settings",
-                    "Accessibility is enabled, but macOS has not allowed the keyboard event tap.\n\nEnable Magnetic in Privacy & Security → Input Monitoring. If it is missing, use + to add ~/Applications/Magnetic.app.\n\nLeave this window open. Magnetic retries automatically.",
+                    "Accessibility is enabled, but macOS has not allowed the keyboard event tap.\n\nEnable Whalu in Privacy & Security → Input Monitoring. If it is missing, use + to add ~/Applications/Whalu.app.\n\nLeave this window open. Whalu retries automatically.",
                 ),
             };
             open.setTitle(&NSString::from_str(title));
@@ -161,7 +168,7 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
         window.center();
         window.makeKeyAndOrderFront(None);
         eprintln!(
-            "Magnetic waiting for {} permission; the M • menu remains available.",
+            "Whalu waiting for {} permission; the W • menu remains available.",
             if issue == Issue::Accessibility {
                 "Accessibility"
             } else {

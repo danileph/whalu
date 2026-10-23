@@ -10,16 +10,6 @@ mod trackpad;
 mod ui;
 use discovery::Discovery;
 use ffi::*;
-use magnetic::{
-    config::{Config, config_dir},
-    core::{Command, Effect, Engine},
-    gestures::{Axis, GestureEvent},
-    input::{Modifiers, route},
-    navigation::{ClickSequence, ScrubSession},
-    persistence::{SavedState, StateWriter},
-    scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
-    visibility::ContextTracker,
-};
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSWorkspace,
@@ -34,6 +24,16 @@ use std::{
         mpsc::{self, Receiver, Sender},
     },
     time::{Duration, Instant},
+};
+use whalu::{
+    config::{Config, config_dir},
+    core::{Command, Effect, Engine},
+    gestures::{Axis, GestureEvent},
+    input::{Modifiers, route},
+    navigation::{ClickSequence, ScrubSession},
+    persistence::{SavedState, StateWriter},
+    scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
+    visibility::ContextTracker,
 };
 
 static QUEUE: AtomicPtr<Queue> = AtomicPtr::new(null_mut());
@@ -67,7 +67,7 @@ pub(super) enum Event {
 struct Queue {
     tx: Sender<Event>,
     source: Ref,
-    bindings: Vec<magnetic::config::Binding>,
+    bindings: Vec<whalu::config::Binding>,
     runtime: *mut Runtime,
     scroll_modifiers: Modifiers,
     wheel: WheelRouter,
@@ -309,7 +309,7 @@ impl Runtime {
                     // Navigation is explicit intent: bypass the modifier-only HUD delay.
                     self.overlay_deadline = None;
                     self.prepare_command(cmd);
-                    if std::env::var_os("MAGNETIC_TRACE").is_some() {
+                    if std::env::var_os("WHALU_TRACE").is_some() {
                         eprintln!(
                             "Command {cmd:?}: context={}, windows={}, focused={:?}",
                             self.engine.current,
@@ -328,7 +328,7 @@ impl Runtime {
                             .engine
                             .focused()
                             .and_then(|id| self.engine.windows.get(&id))
-                            .is_some_and(|w| w.mode == magnetic::core::Mode::Magnetic)
+                            .is_some_and(|w| w.mode == whalu::core::Mode::Magnetic)
                     {
                         self.reflow();
                     }
@@ -869,7 +869,7 @@ impl Runtime {
         for (id, w) in uninitialized {
             if let Some(live) = self.engine.windows.get_mut(&id) {
                 live.mode = w.mode;
-                if live.mode == magnetic::core::Mode::Floating {
+                if live.mode == whalu::core::Mode::Floating {
                     live.last_floating_frame = Some(live.frame);
                 }
             }
@@ -988,7 +988,7 @@ impl Runtime {
                         continue;
                     };
                     // Enforce M-01 at the native boundary, independently of the solver.
-                    if w.mode != magnetic::core::Mode::Magnetic
+                    if w.mode != whalu::core::Mode::Magnetic
                         || (w.frame.width - r.width).abs() > 0.01
                         || (w.frame.height - r.height).abs() > 0.01
                     {
@@ -1280,7 +1280,7 @@ pub fn list() -> Result<(), String> {
     Ok(())
 }
 fn permission_help() -> String {
-    "Accessibility permission is required. Open System Settings → Privacy & Security → Accessibility, add Magnetic.app (or the terminal when using cargo run), enable it, then relaunch. Use `magnetic --permissions` to open settings.".into()
+    "Accessibility permission is required. Open System Settings → Privacy & Security → Accessibility, add Whalu.app (or the terminal when using cargo run), enable it, then relaunch. Use `whalu --permissions` to open settings.".into()
 }
 pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String> {
     unsafe {
@@ -1295,7 +1295,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             .map_err(|e| e.to_string())?;
         use std::os::fd::AsRawFd;
         if libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) != 0 {
-            return Err("Magnetic is already running".into());
+            return Err("Whalu is already running".into());
         }
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -1429,7 +1429,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         runtime.ui.gesture_status(runtime.gestures.is_some());
         runtime.reconcile(false);
         eprintln!(
-            "Magnetic running. Hold Control + Option to navigate; use the M menu to pause or quit."
+            "Whalu running. Hold Control + Option to navigate; use the W menu to pause or quit."
         );
         app.run();
         *DISPATCH.lock().unwrap() = None;

@@ -147,5 +147,74 @@ pub fn config_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Library/Application Support/Magnetic")
+        .join("Library/Application Support/Whalu")
+}
+
+/// Import only missing files; retain the former app's data for rollback.
+/// Explicit configuration paths and read-only CLI commands do not migrate data.
+pub fn migrate_legacy_data() -> Result<(), String> {
+    let destination = config_dir();
+    let legacy = destination.parent().unwrap().join("Magnetic");
+    migrate_files(&legacy, &destination).map_err(|error| {
+        format!(
+            "Cannot import Magnetic settings into {}: {error}",
+            destination.display()
+        )
+    })
+}
+
+fn migrate_files(legacy: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    for name in ["config.toml", "state.json"] {
+        let source = legacy.join(name);
+        let target = destination.join(name);
+        if target.try_exists()? || !source.try_exists()? {
+            continue;
+        }
+        std::fs::create_dir_all(destination)?;
+        std::fs::copy(source, target)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::migrate_files;
+
+    #[test]
+    fn rebrand_imports_settings_and_recovery_without_overwriting_either_app() {
+        let root = std::env::temp_dir().join(format!("whalu-migration-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let legacy = root.join("Magnetic");
+        let destination = root.join("Whalu");
+
+        migrate_files(&legacy, &destination).unwrap();
+        assert!(!destination.exists());
+
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("config.toml"), "gap = 12.0\n").unwrap();
+        std::fs::write(legacy.join("state.json"), r#"{"version":1,"windows":[]}"#).unwrap();
+        std::fs::write(legacy.join("instance.lock"), "legacy lock").unwrap();
+        migrate_files(&legacy, &destination).unwrap();
+        for name in ["config.toml", "state.json"] {
+            assert_eq!(
+                std::fs::read(legacy.join(name)).unwrap(),
+                std::fs::read(destination.join(name)).unwrap()
+            );
+        }
+        assert!(!destination.join("instance.lock").exists());
+
+        std::fs::write(destination.join("config.toml"), "gap = 4.0\n").unwrap();
+        std::fs::remove_file(destination.join("state.json")).unwrap();
+        migrate_files(&legacy, &destination).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "gap = 4.0\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(legacy.join("config.toml")).unwrap(),
+            "gap = 12.0\n"
+        );
+        assert!(destination.join("state.json").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

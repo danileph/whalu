@@ -3,10 +3,6 @@
 //! ABI reference: https://github.com/asmagill/hs._asm.undocumented.touchdevice/blob/master/MultitouchSupport.h
 #![allow(unsafe_op_in_unsafe_fn)]
 use super::ffi::*;
-use magnetic::{
-    gestures::{Contact, GestureEvent, SwipeRecognizer},
-    scroll::ScrollGuard,
-};
 use std::{
     collections::BTreeMap,
     ffi::CStr,
@@ -15,6 +11,10 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     time::Instant,
+};
+use whalu::{
+    gestures::{Contact, GestureEvent, SwipeRecognizer},
+    scroll::ScrollGuard,
 };
 #[repr(C)]
 #[derive(Clone, Copy)]

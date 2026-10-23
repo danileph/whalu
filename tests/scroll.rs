@@ -1,4 +1,4 @@
-use magnetic::scroll::{KineticScroll, ScrollGuard, WheelRoute, WheelRouter, WheelScroll};
+use whalu::scroll::{KineticScroll, ScrollGuard, WheelRoute, WheelRouter, WheelScroll};
 
 #[test]
 fn three_contact_scroll_is_claimed_before_gesture_threshold_and_through_lift() {
@@ -198,7 +198,7 @@ fn sustained_flick_speed_controls_coast_distance_and_duration() {
 
 #[test]
 fn real_contact_intent_controls_release_momentum() {
-    use magnetic::gestures::{Contact, GestureEvent, SwipeRecognizer};
+    use whalu::gestures::{Contact, GestureEvent, SwipeRecognizer};
     let run = |path: &[(f64, f64)]| {
         let mut recognizer = SwipeRecognizer::default();
         let mut motion = KineticScroll::default();

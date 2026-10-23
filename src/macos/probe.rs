@@ -1,15 +1,15 @@
 //! Opt-in diagnostics. Only fixture windows owned by a child process are manipulated.
 use super::{discovery::Discovery, ffi::*, ui::Ui};
-use magnetic::{
+use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::*;
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use std::process::{Child, Command as ProcessCommand};
+use whalu::{
     core::{Command, Effect, Engine, Mode, Window},
     geometry::{Direction, Rect},
     gestures::Axis,
     navigation::ScrubSession,
 };
-use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::*;
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-use std::process::{Child, Command as ProcessCommand};
 
 /// Read-only timings against the current desktop. No focus or geometry changes.
 pub fn performance() -> Result<(), String> {
@@ -135,15 +135,15 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         let mut windows = vec![];
         let titles = [
-            "Magnetic fixture A",
-            "Magnetic fixture B",
-            "Magnetic fixture C",
-            "Magnetic fixture D",
+            "Whalu fixture A",
+            "Whalu fixture B",
+            "Whalu fixture C",
+            "Whalu fixture D",
         ];
         let count = if constrained {
             2
         } else {
-            std::env::var("MAGNETIC_FIXTURE_COUNT")
+            std::env::var("WHALU_FIXTURE_COUNT")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(4)
@@ -172,7 +172,7 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
             w.setReleasedWhenClosed(false);
             w.setTitle(&NSString::from_str(title));
             let label = NSTextField::labelWithString(
-                &NSString::from_str("Temporary Magnetic integration test window"),
+                &NSString::from_str("Temporary Whalu integration test window"),
                 mtm,
             );
             label.setFrame(NSRect::new(NSPoint::new(20., 130.), NSSize::new(360., 24.)));
@@ -395,7 +395,7 @@ fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String
         fixtures.push(Fixture(
             ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
                 .arg("--fixture")
-                .env("MAGNETIC_FIXTURE_COUNT", "1")
+                .env("WHALU_FIXTURE_COUNT", "1")
                 .spawn()
                 .map_err(|e| e.to_string())?,
         ));
@@ -471,9 +471,9 @@ fn constrained_smoke(mtm: MainThreadMarker) -> Result<(), String> {
     let (id, bounds) = found.ok_or("Minimum-size fixture was not discovered")?;
     let handle = &discovery.handles[&id];
     for region in [
-        magnetic::geometry::Region::Right,
-        magnetic::geometry::Region::BottomRight,
-        magnetic::geometry::Region::TopLeft,
+        whalu::geometry::Region::Right,
+        whalu::geometry::Region::BottomRight,
+        whalu::geometry::Region::TopLeft,
     ] {
         let target = region.rect(bounds);
         snap_frame(handle.element.0, target, bounds)
@@ -484,12 +484,12 @@ fn constrained_smoke(mtm: MainThreadMarker) -> Result<(), String> {
                 "Minimum-width snap is not fully visible: {actual:?} in {bounds:?}"
             ));
         }
-        if region != magnetic::geometry::Region::TopLeft
+        if region != whalu::geometry::Region::TopLeft
             && (actual.right() - bounds.right()).abs() > 1.
         {
             return Err("Minimum-width snap lost right-edge alignment".into());
         }
-        if region == magnetic::geometry::Region::BottomRight
+        if region == whalu::geometry::Region::BottomRight
             && (actual.bottom() - bounds.bottom()).abs() > 1.
         {
             return Err("Minimum-height snap lost bottom-edge alignment".into());

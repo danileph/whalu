@@ -218,7 +218,7 @@ pub unsafe fn number(v: Ref) -> i64 {
     CFNumberGetValue(v, 4, (&mut n as *mut i64).cast());
     n
 }
-pub fn frame(e: Ref) -> Option<magnetic::geometry::Rect> {
+pub fn frame(e: Ref) -> Option<whalu::geometry::Rect> {
     let p = attr(e, "AXPosition")?;
     let s = attr(e, "AXSize")?;
     let mut point = Point::default();
@@ -232,10 +232,10 @@ pub fn frame(e: Ref) -> Option<magnetic::geometry::Rect> {
             return None;
         }
     }
-    let r = magnetic::geometry::Rect::new(point.x, point.y, size.width, size.height);
+    let r = whalu::geometry::Rect::new(point.x, point.y, size.width, size.height);
     r.valid().then_some(r)
 }
-pub fn set_position(e: Ref, r: magnetic::geometry::Rect) -> Result<(), i32> {
+pub fn set_position(e: Ref, r: whalu::geometry::Rect) -> Result<(), i32> {
     unsafe {
         let p = Point { x: r.x, y: r.y };
         let v = Owned::new(AXValueCreate(1, (&p as *const Point).cast())).ok_or(-1)?;
@@ -243,7 +243,7 @@ pub fn set_position(e: Ref, r: magnetic::geometry::Rect) -> Result<(), i32> {
         if code == 0 { Ok(()) } else { Err(code) }
     }
 }
-pub fn set_size(e: Ref, r: magnetic::geometry::Rect) -> Result<(), i32> {
+pub fn set_size(e: Ref, r: whalu::geometry::Rect) -> Result<(), i32> {
     unsafe {
         let s = Size {
             width: r.width,
@@ -264,15 +264,15 @@ pub fn settable(e: Ref, key: &str) -> bool {
 /// Reapply size after moving, then anchor the size actually accepted by the app.
 pub fn snap_frame(
     element: Ref,
-    target: magnetic::geometry::Rect,
-    bounds: magnetic::geometry::Rect,
+    target: whalu::geometry::Rect,
+    bounds: whalu::geometry::Rect,
 ) -> Result<(), i32> {
     let _ = set_size(element, target);
     let _ = set_position(element, target);
     let resized = set_size(element, target);
     // Even a rejected resize must not leave the old width hanging off-screen.
     let actual = frame(element).ok_or(-25202)?;
-    let aligned = magnetic::geometry::constrained_snap(target, actual, bounds);
+    let aligned = whalu::geometry::constrained_snap(target, actual, bounds);
     set_position(element, aligned)?;
     resized
 }

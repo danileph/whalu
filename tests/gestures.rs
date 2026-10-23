@@ -1,4 +1,4 @@
-use magnetic::{
+use whalu::{
     core::{Command, Effect, Engine, Mode, Window},
     geometry::Rect,
     gestures::{Axis, Contact, GestureEvent as Event, SwipeRecognizer},

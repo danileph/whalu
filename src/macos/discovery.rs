@@ -1,11 +1,11 @@
 use super::ffi::*;
-use magnetic::{
-    core::{Mode, Window, WindowId},
-    geometry::Rect,
-};
 use objc2::{MainThreadMarker, rc::Retained};
 use objc2_app_kit::{NSApplicationActivationPolicy, NSRunningApplication, NSScreen, NSWorkspace};
 use std::collections::{BTreeMap, BTreeSet};
+use whalu::{
+    core::{Mode, Window, WindowId},
+    geometry::Rect,
+};
 
 pub struct NativeWindow {
     pub id: WindowId,

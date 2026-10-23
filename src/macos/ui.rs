@@ -1,9 +1,4 @@
 use super::{Event, discovery::Discovery, enqueue, previews};
-use magnetic::{
-    core::Engine,
-    gestures::Axis,
-    overview::{Pose, Wheel},
-};
 use objc2::{
     AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
     runtime::AnyObject, sel,
@@ -20,6 +15,11 @@ use std::{
     collections::BTreeMap,
     rc::Rc,
     time::{Duration, Instant},
+};
+use whalu::{
+    core::Engine,
+    gestures::Axis,
+    overview::{Pose, Wheel},
 };
 
 define_class!(
@@ -101,12 +101,12 @@ impl Ui {
             panel.setContentView(Some(&content));
             let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.);
             if let Some(button) = status.button(mtm) {
-                button.setTitle(&NSString::from_str("M"));
-                button.setToolTip(Some(&NSString::from_str("Magnetic Window Manager")));
+                button.setTitle(&NSString::from_str("W"));
+                button.setToolTip(Some(&NSString::from_str("Whalu Window Manager")));
             }
             let menu = NSMenu::new(mtm);
             let title = NSMenuItem::new(mtm);
-            title.setTitle(&NSString::from_str("Magnetic · Control + Option"));
+            title.setTitle(&NSString::from_str("Whalu · Control + Option"));
             title.setEnabled(false);
             menu.addItem(&title);
             let gesture_label = NSMenuItem::new(mtm);
@@ -121,7 +121,7 @@ impl Ui {
                 ("Enable window previews…", sel!(previews:)),
                 ("Open configuration", sel!(settings:)),
                 ("Reload configuration", sel!(reload:)),
-                ("Quit Magnetic", sel!(quit:)),
+                ("Quit Whalu", sel!(quit:)),
             ] {
                 let item = NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
