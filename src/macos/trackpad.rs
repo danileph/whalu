@@ -57,6 +57,46 @@ struct Tracked {
     guard: ScrollGuard,
     contacts: usize,
 }
+impl Tracked {
+    fn feed(&mut self, device: usize, time: f64, contacts: &[Contact]) -> Vec<super::Event> {
+        let fresh = self.contacts == 0 && !contacts.is_empty();
+        let native_gesture = self.contacts < 4 && contacts.len() >= 4;
+        self.contacts = contacts.len();
+        let gestures = self.recognizer.feed(time, contacts);
+        self.guard.contacts(
+            contacts.len(),
+            self.recognizer.eligible(),
+            self.recognizer.active(),
+            clock(),
+        );
+        let mut events = vec![];
+        if fresh {
+            events.push(super::Event::ContactBegan);
+        }
+        // This must precede the recognizer's cancelled End: restoring the old
+        // selection during a four-finger Space swipe can pull macOS back.
+        if native_gesture {
+            events.push(super::Event::NativeGesture);
+        }
+        events.extend(
+            gestures
+                .into_iter()
+                .map(|event| super::Event::Gesture(device, event, time)),
+        );
+        if let Some(progress) = (contacts.len() == 3)
+            .then(|| self.recognizer.progress())
+            .flatten()
+        {
+            events.push(super::Event::GestureMotion(
+                device,
+                progress,
+                time,
+                self.recognizer.sustained(),
+            ));
+        }
+        events
+    }
+}
 static RECOGNIZERS: Mutex<BTreeMap<usize, Tracked>> = Mutex::new(BTreeMap::new());
 fn clock() -> f64 {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -112,41 +152,18 @@ unsafe extern "C" fn callback(
         cancel_device(device);
         return;
     }
-    let (events, progress, fresh, sustained) = RECOGNIZERS
+    let events = RECOGNIZERS
         .lock()
         .map(|mut states| {
             let state = states.entry(device as usize).or_default();
-            let fresh = state.contacts == 0 && !contacts.is_empty();
-            state.contacts = contacts.len();
-            let events = state.recognizer.feed(time, &contacts);
-            state.guard.contacts(
-                contacts.len(),
-                state.recognizer.eligible(),
-                state.recognizer.active(),
-                clock(),
-            );
-            let progress = (contacts.len() == 3)
-                .then(|| state.recognizer.progress())
-                .flatten();
-            (events, progress, fresh, state.recognizer.sustained())
+            state.feed(device as usize, time, &contacts)
         })
         .unwrap_or_default();
-    if fresh {
-        super::enqueue(super::Event::ContactBegan);
-    }
     for event in events {
-        if matches!(event, GestureEvent::Begin(_)) {
+        if matches!(event, super::Event::Gesture(_, GestureEvent::Begin(_), _)) {
             SWIPES.fetch_add(1, Ordering::Relaxed);
         }
-        super::enqueue(super::Event::Gesture(device as usize, event, time));
-    }
-    if let Some(progress) = progress {
-        super::enqueue(super::Event::GestureMotion(
-            device as usize,
-            progress,
-            time,
-            sustained,
-        ));
+        super::enqueue(event);
     }
 }
 
@@ -278,3 +295,55 @@ pub fn probe(seconds: f64) -> Result<(), String> {
     Ok(())
 }
 const _: () = assert!(std::mem::size_of::<Touch>() == 96);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contacts(count: i32, x: f64) -> Vec<Contact> {
+        (0..count)
+            .map(|id| Contact {
+                id,
+                x: x + id as f64 * 0.05,
+                y: 0.5,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fourth_contact_yields_before_cancelling_a_recognized_three_finger_swipe() {
+        let mut tracked = Tracked::default();
+        tracked.feed(1, 0., &contacts(3, 0.3));
+        tracked.feed(1, 0.04, &contacts(3, 0.32));
+        let began = tracked.feed(1, 0.09, &contacts(3, 0.4));
+        assert!(began.iter().any(|event| matches!(
+            event,
+            super::super::Event::Gesture(_, GestureEvent::Begin(_), _)
+        )));
+        let events = tracked.feed(1, 0.1, &contacts(4, 0.41));
+        assert!(matches!(events[0], super::super::Event::NativeGesture));
+        assert!(matches!(
+            events[1],
+            super::super::Event::Gesture(_, GestureEvent::End { cancelled: true }, _)
+        ));
+        assert!(tracked.feed(1, 0.11, &contacts(4, 0.42)).is_empty());
+        assert!(tracked.feed(1, 0.12, &contacts(3, 0.43)).is_empty());
+        tracked.feed(1, 0.13, &[]);
+        let fresh = tracked.feed(1, 0.2, &contacts(3, 0.3));
+        assert!(matches!(fresh[0], super::super::Event::ContactBegan));
+        assert!(
+            !fresh
+                .iter()
+                .any(|event| matches!(event, super::super::Event::NativeGesture))
+        );
+    }
+
+    #[test]
+    fn direct_four_finger_landing_yields_without_a_whalu_session() {
+        let mut tracked = Tracked::default();
+        let events = tracked.feed(1, 0., &contacts(4, 0.3));
+        assert!(matches!(events[0], super::super::Event::ContactBegan));
+        assert!(matches!(events[1], super::super::Event::NativeGesture));
+        assert_eq!(events.len(), 2);
+    }
+}

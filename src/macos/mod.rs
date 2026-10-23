@@ -43,6 +43,7 @@ static DISPATCH: Mutex<Option<(Sender<Event>, usize)>> = Mutex::new(None);
 pub(super) enum Event {
     Dirty,
     SpaceChanged,
+    NativeGesture,
     Command(Command),
     Modifiers(Modifiers),
     Mouse(bool),
@@ -227,19 +228,8 @@ impl Runtime {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
-                Event::SpaceChanged => {
-                    // Native Space navigation wins over an in-progress scrub.
-                    self.clear_scroll();
-                    self.discovery.invalidate_navigation();
-                    self.pending_focus = None;
-                    self.switched_space = true;
-                    self.manual_until = None;
-                    self.space_until = Some(Instant::now() + Duration::from_millis(850));
-                    self.space_retries = 8;
-                    self.engine.frozen = true;
-                    self.ui.reset_overview();
-                    self.deadline = None;
-                }
+                Event::SpaceChanged => self.yield_to_system(true),
+                Event::NativeGesture => self.yield_to_system(false),
                 Event::Modifiers(m) => {
                     let held = m.overlay(self.config.overlay_modifiers);
                     if held && !self.held && self.config.overlay {
@@ -436,6 +426,22 @@ impl Runtime {
         } else {
             self.pending_focus.as_mut().unwrap().due = now + Duration::from_millis(50);
         }
+    }
+    fn yield_to_system(&mut self, space_changed: bool) {
+        // Four-finger contact precedes the workspace notification. Abandon the
+        // session before its cancellation event can restore an old-Space window.
+        self.clear_scroll();
+        self.discovery.invalidate_navigation();
+        self.pending_focus = None;
+        self.pending_commands.clear();
+        self.switched_space |= space_changed;
+        self.manual_until = None;
+        self.space_until = Some(Instant::now() + Duration::from_millis(850));
+        self.space_retries = 8;
+        self.engine.frozen = true;
+        self.overlay_deadline = None;
+        self.ui.reset_overview();
+        self.deadline = None;
     }
     fn clear_scroll(&mut self) {
         self.click_travel = None;
@@ -931,6 +937,9 @@ impl Runtime {
     }
 
     fn apply(&mut self, effects: Vec<Effect>) {
+        if self.space_until.is_some() || self.switched_space {
+            return;
+        }
         for effect in effects {
             let id = match effect {
                 Effect::Focus(id) | Effect::Move(id, _) | Effect::Snap(id, _) => id,
@@ -938,7 +947,12 @@ impl Runtime {
             let Some(h) = self.discovery.handles.get(&id) else {
                 continue;
             };
-            if !h.visible {
+            // Cached visibility may still describe the previous Space before
+            // NSWorkspace delivers its change notification. Never raise or move
+            // a window that has already left the screen.
+            if !h.visible || !self.discovery.is_onscreen(id) {
+                self.pending_focus = None;
+                self.deadline = Some(Instant::now());
                 continue;
             }
             match effect {

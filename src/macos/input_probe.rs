@@ -409,6 +409,118 @@ pub(super) fn run(
     println!(
         "PASS: Space reset discards cached cards/hit targets and rejects queued stale clicks even with a reused context ID"
     );
+    // A fourth contact arrives before NSWorkspace reports the Space change.
+    // Its cancelled three-finger End must not restore the original window.
+    for (source, released) in [
+        (ScrollSource::Trackpad(1), false),
+        (ScrollSource::Trackpad(1), true),
+        (ScrollSource::Wheel, true),
+    ] {
+        prepare(&mut runtime, source)?;
+        if fixture_pids.len() > 1 {
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.12, false) };
+        }
+        runtime.select_scroll(1);
+        if fixture_pids.len() > 1 {
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.12, false) };
+        }
+        runtime.gesture.as_mut().unwrap().released = released;
+        runtime.motion_due = Some(Instant::now());
+        let selected = runtime.engine.focused();
+        let before = frame(runtime.discovery.handles[&ids[0]].element.0)
+            .ok_or("Missing fixture frame before native gesture")?;
+        runtime.pending_commands.push(Command::FocusNext);
+        tx.send(Event::NativeGesture).map_err(|e| e.to_string())?;
+        tx.send(Event::Gesture(
+            1,
+            GestureEvent::End { cancelled: true },
+            0.2,
+        ))
+        .map_err(|e| e.to_string())?;
+        tx.send(Event::Gesture(
+            1,
+            GestureEvent::Begin(Axis::Horizontal),
+            0.21,
+        ))
+        .map_err(|e| e.to_string())?;
+        tx.send(Event::Gesture(1, GestureEvent::Update(1), 0.22))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.apply(vec![
+            Effect::Focus(ids[0]),
+            Effect::Move(
+                ids[0],
+                whalu::geometry::Rect {
+                    x: before.x + 25.,
+                    ..before
+                },
+            ),
+            Effect::Snap(
+                ids[0],
+                whalu::geometry::Rect {
+                    y: before.y + 25.,
+                    ..before
+                },
+            ),
+        ]);
+        if runtime.engine.focused() != selected
+            || runtime.gesture.is_some()
+            || runtime.motion_due.is_some()
+            || runtime.pending_focus.is_some()
+            || !runtime.pending_commands.is_empty()
+            || runtime.space_until.is_none()
+            || !runtime.engine.frozen
+            || runtime.ui.is_visible()
+            || frame(runtime.discovery.handles[&ids[0]].element.0) != Some(before)
+        {
+            return Err("Four-finger handoff restored focus or modified a fixture window".into());
+        }
+        // Input queued before the eventual workspace notification must not be
+        // replayed into its destination (or another rapid Space transition).
+        tx.send(Event::Command(Command::FocusNext))
+            .map_err(|e| e.to_string())?;
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        runtime.drain();
+        if !runtime.pending_commands.is_empty() {
+            return Err("Space change retained navigation from before the notification".into());
+        }
+        runtime.space_until = Some(Instant::now());
+        runtime.drain();
+        let handle = &runtime.discovery.handles[&ids[1]];
+        let app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+            .ok_or("Missing native gesture fixture app")?;
+        if runtime.engine.focused() != selected
+            || !attr(app.0, "AXFocusedWindow")
+                .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
+        {
+            return Err(
+                "Native gesture cancellation or settlement changed real window focus".into(),
+            );
+        }
+    }
+    // Even before a workspace notification, cached visible=true must not be
+    // sufficient to raise a window that fresh Quartz metadata no longer shows.
+    let selected = runtime.engine.focused();
+    let old_capture = runtime.discovery.handles[&ids[0]].quartz_id;
+    runtime
+        .discovery
+        .handles
+        .get_mut(&ids[0])
+        .unwrap()
+        .quartz_id = Some(u32::MAX);
+    runtime.apply(vec![Effect::Focus(ids[0])]);
+    runtime
+        .discovery
+        .handles
+        .get_mut(&ids[0])
+        .unwrap()
+        .quartz_id = old_capture;
+    if runtime.engine.focused() != selected {
+        return Err("Cached visibility allowed focus on a window absent from Quartz".into());
+    }
+    println!(
+        "PASS: four-finger handoff abandons active navigation and momentum before cancellation, blocks stale focus/moves, and settles without restoring the old window"
+    );
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
     runtime.drain();
