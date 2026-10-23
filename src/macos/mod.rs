@@ -490,8 +490,8 @@ impl Runtime {
         {
             return;
         }
-        // Validate only this known window against fresh Quartz visibility. A
-        // full AX scan here stalls the main event tap and can target stale Spaces.
+        // Validate against fresh Quartz visibility; indistinguishable overlapping
+        // windows also need their application's AX cohort checked.
         if !self.discovery.is_onscreen(window) {
             self.ui.reset_overview();
             self.deadline = Some(Instant::now());

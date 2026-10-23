@@ -82,26 +82,53 @@ impl Discovery {
     /// A click must still belong to an on-screen Quartz window at dispatch time.
     pub fn is_onscreen(&self, id: WindowId) -> bool {
         self.handles.get(&id).is_some_and(|handle| {
-            handle.visible
-                && handle.quartz_id.is_some_and(|cg| {
-                    quartz_windows(17).is_some_and(|windows| {
-                        windows.iter().any(|window| {
-                            window.id == cg && window.pid == handle.pid && window.onscreen
-                        })
-                    })
-                })
+            if !handle.visible {
+                return false;
+            }
+            let Some(windows) = quartz_windows(16) else {
+                return false;
+            };
+            if let Some(cg) = handle.quartz_id {
+                return windows
+                    .iter()
+                    .any(|window| window.id == cg && window.pid == handle.pid && window.onscreen);
+            }
+            // Identical, fully on-screen windows can have distinct AX identities
+            // without a reliable per-window Quartz match. Revalidate the whole
+            // cohort before allowing a click on one of their icon-only cards.
+            let Some(frame) = frame(handle.element.0) else {
+                return false;
+            };
+            let Some(app) = (unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) })
+            else {
+                return false;
+            };
+            unsafe { AXUIElementSetMessagingTimeout(app.0, 0.05) };
+            let Some(elements) = attr(app.0, "AXWindows") else {
+                return false;
+            };
+            let elements = unsafe { array(elements.0) };
+            if !elements
+                .iter()
+                .any(|element| unsafe { CFEqual(*element, handle.element.0) })
+            {
+                return false;
+            }
+            let ax_matches = elements
+                .iter()
+                .filter_map(|element| super::ffi::frame(*element))
+                .filter(|other| other.near(frame))
+                .count();
+            let candidates: Vec<_> = windows
+                .iter()
+                .filter(|window| window.pid == handle.pid && window.frame.near(frame))
+                .collect();
+            cohort_is_onscreen(&candidates, ax_matches)
         })
     }
     pub fn scan(&mut self, mtm: MainThreadMarker, ignored: &[String]) -> Snapshot {
         let bounds = display_bounds(mtm);
         let quartz = quartz_windows(16);
-        let visible: Vec<_> = quartz
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .filter(|w| w.onscreen)
-            .map(|w| (w.pid, w.frame))
-            .collect();
         let workspace = NSWorkspace::sharedWorkspace();
         let front = workspace
             .frontmostApplication()
@@ -190,7 +217,16 @@ impl Discovery {
             };
             let elements = unsafe { array(windows.0) };
             let frames: Vec<_> = elements.iter().map(|element| frame(*element)).collect();
-            for (element, window_frame) in elements.iter().copied().zip(frames.iter()) {
+            let titles: Vec<_> = elements
+                .iter()
+                .map(|element| text_attr(*element, "AXTitle"))
+                .collect();
+            for ((element, window_frame), title) in elements
+                .iter()
+                .copied()
+                .zip(frames.iter())
+                .zip(titles.iter())
+            {
                 if text_attr(element, "AXSubrole") != "AXStandardWindow"
                     || bool_attr(element, "AXModal")
                 {
@@ -224,8 +260,14 @@ impl Discovery {
                     .count();
                 let quartz_id = match_quartz_window(
                     known,
-                    &candidates.iter().map(|w| w.id).collect::<Vec<_>>(),
-                    ax_matches,
+                    &candidates,
+                    &frames
+                        .iter()
+                        .zip(&titles)
+                        .filter(|(other, _)| other.is_some_and(|other| other.near(frame)))
+                        .map(|(_, title)| title.as_str())
+                        .collect::<Vec<_>>(),
+                    title,
                 );
                 // A refreshed AX proxy may still describe the same Quartz
                 // window. Reuse that identity only if its old AX object is not
@@ -252,7 +294,7 @@ impl Discovery {
                             .iter()
                             .any(|w| w.id == cg && w.pid == pid && w.onscreen)
                     } else {
-                        false
+                        cohort_is_onscreen(&candidates, ax_matches)
                     };
                 let display = result
                     .bounds
@@ -264,12 +306,11 @@ impl Discovery {
                     })
                     .map(|(id, _)| *id)
                     .unwrap_or(unsafe { CGMainDisplayID() });
-                let title = text_attr(element, "AXTitle");
                 result.windows.push(Window {
                     id,
                     app_id: app_id.clone(),
                     app_name: app_name.clone(),
-                    title,
+                    title: title.clone(),
                     display,
                     frame,
                     mode: Mode::Magnetic,
@@ -300,33 +341,6 @@ impl Discovery {
                     },
                 );
                 live.insert(id);
-            }
-        }
-        // Public Quartz metadata cannot distinguish AX windows sharing identical bounds
-        // on different Spaces. Exclude ambiguous matches instead of touching a hidden window.
-        let ambiguous: BTreeSet<_> = result
-            .visible
-            .iter()
-            .copied()
-            .filter(|id| {
-                let h = &self.handles[id];
-                let r = result.windows.iter().find(|w| w.id == *id).unwrap().frame;
-                let candidates = result
-                    .windows
-                    .iter()
-                    .filter(|w| self.handles[&w.id].pid == h.pid && w.frame.near(r))
-                    .count();
-                let onscreen = visible
-                    .iter()
-                    .filter(|(pid, frame)| *pid == h.pid && frame.near(r))
-                    .count();
-                candidates > onscreen && result.focused != Some(*id) && h.quartz_id.is_none()
-            })
-            .collect();
-        result.visible.retain(|id| !ambiguous.contains(id));
-        for id in ambiguous {
-            if let Some(h) = self.handles.get_mut(&id) {
-                h.visible = false;
             }
         }
         self.handles.retain(|id, h| {
@@ -366,8 +380,31 @@ fn manageable_owner(app_id: &str) -> bool {
 }
 /// AX focus can lag a Space transition. Never use that stale focus to assign an
 /// on-screen window's identity to an equally sized off-Space AX window.
-fn match_quartz_window(known: Option<u32>, candidates: &[u32], ax_matches: usize) -> Option<u32> {
-    known.or_else(|| (ax_matches == 1 && candidates.len() == 1).then(|| candidates[0]))
+fn match_quartz_window(
+    known: Option<u32>,
+    candidates: &[&QuartzWindow],
+    ax_titles: &[&str],
+    title: &str,
+) -> Option<u32> {
+    known.or_else(|| {
+        if ax_titles.len() == 1 && candidates.len() == 1 {
+            return Some(candidates[0].id);
+        }
+        // Window names are optional (notably without Screen Recording access).
+        // Only a unique title on both sides can resolve overlapping windows.
+        if title.is_empty() || ax_titles.iter().filter(|other| **other == title).count() != 1 {
+            return None;
+        }
+        let mut matches = candidates.iter().filter(|window| window.title == title);
+        let matched = matches.next()?;
+        matches.next().is_none().then_some(matched.id)
+    })
+}
+
+fn cohort_is_onscreen(candidates: &[&QuartzWindow], ax_matches: usize) -> bool {
+    ax_matches > 0
+        && candidates.len() == ax_matches
+        && candidates.iter().all(|window| window.onscreen)
 }
 
 pub fn display_bounds(mtm: MainThreadMarker) -> BTreeMap<u32, Rect> {
@@ -397,6 +434,7 @@ struct QuartzWindow {
     pid: i32,
     frame: Rect,
     onscreen: bool,
+    title: String,
 }
 fn navigation_unchanged(previous: &[QuartzWindow], current: &mut [QuartzWindow]) -> bool {
     current.sort_unstable_by_key(|window| window.id);
@@ -425,6 +463,7 @@ fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
                         onscreen: !shown.is_null()
                             && CFGetTypeID(shown) == CFBooleanGetTypeID()
                             && CFBooleanGetValue(shown),
+                        title: text(dict(d, "kCGWindowName")).unwrap_or_default(),
                     })
                 })
                 .collect(),
@@ -434,7 +473,7 @@ fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{manageable_owner, match_quartz_window};
+    use super::*;
 
     #[test]
     fn accessibility_authorization_helper_is_never_an_application_window_owner() {
@@ -452,19 +491,102 @@ mod tests {
         }
     }
 
+    fn quartz(id: u32, title: &str, onscreen: bool) -> QuartzWindow {
+        QuartzWindow {
+            id,
+            pid: 7,
+            frame: Rect::new(0., 30., 800., 600.),
+            onscreen,
+            title: title.into(),
+        }
+    }
+
+    #[test]
+    fn overlapping_windows_match_their_own_unique_titles() {
+        let first = quartz(11, "First document", true);
+        let second = quartz(22, "Second document", true);
+        let candidates = [&second, &first];
+        let titles = ["First document", "Second document"];
+        assert_eq!(
+            match_quartz_window(None, &candidates, &titles, titles[0]),
+            Some(11)
+        );
+        assert_eq!(
+            match_quartz_window(None, &candidates, &titles, titles[1]),
+            Some(22)
+        );
+    }
+
     #[test]
     fn off_space_identity_is_not_reassigned_to_the_visible_same_size_window() {
-        // 11 is off-screen, 22 is on-screen; AX may still report 11 focused.
-        assert_eq!(match_quartz_window(Some(11), &[11, 22], 2), Some(11));
-        assert_eq!(match_quartz_window(Some(22), &[11, 22], 2), Some(22));
-        assert_eq!(match_quartz_window(Some(11), &[22], 2), Some(11));
+        let hidden = quartz(11, "Document", false);
+        let shown = quartz(22, "Document", true);
+        let titles = ["Document", "Document"];
+        assert_eq!(
+            match_quartz_window(Some(11), &[&hidden, &shown], &titles, titles[0]),
+            Some(11)
+        );
+        assert_eq!(
+            match_quartz_window(Some(22), &[&hidden, &shown], &titles, titles[1]),
+            Some(22)
+        );
+        assert_eq!(
+            match_quartz_window(Some(11), &[&shown], &titles, titles[0]),
+            Some(11)
+        );
+        assert!(!cohort_is_onscreen(&[&hidden, &shown], 2));
+        assert!(!cohort_is_onscreen(&[&shown], 2));
     }
+
     #[test]
     fn ambiguous_new_ax_windows_do_not_share_a_visible_quartz_identity() {
-        assert_eq!(match_quartz_window(None, &[22], 2), None);
-        assert_eq!(match_quartz_window(None, &[11, 22], 1), None);
-        assert_eq!(match_quartz_window(None, &[22], 1), Some(22));
-        assert_eq!(match_quartz_window(None, &[], 1), None);
+        let first = quartz(11, "Document", true);
+        let second = quartz(22, "Document", true);
+        assert_eq!(
+            match_quartz_window(None, &[&second], &["Document", "Document"], "Document"),
+            None
+        );
+        assert_eq!(
+            match_quartz_window(None, &[&first, &second], &["Document"], "Document"),
+            None
+        );
+        assert_eq!(
+            match_quartz_window(None, &[&second], &["Document"], "Document"),
+            Some(22)
+        );
+        assert_eq!(
+            match_quartz_window(None, &[], &["Document"], "Document"),
+            None
+        );
+    }
+
+    #[test]
+    fn indistinguishable_windows_are_visible_only_when_the_complete_cohort_is_onscreen() {
+        let first = quartz(11, "", true);
+        let second = quartz(22, "", true);
+        let candidates = [&first, &second];
+        assert_eq!(match_quartz_window(None, &candidates, &["", ""], ""), None);
+        assert!(cohort_is_onscreen(&candidates, 2));
+        assert!(!cohort_is_onscreen(&candidates, 1));
+        assert!(!cohort_is_onscreen(&candidates, 3));
+        assert!(!cohort_is_onscreen(&[], 0));
+    }
+
+    #[test]
+    fn unique_titles_resolve_windows_on_separate_spaces() {
+        let hidden = quartz(11, "Hidden", false);
+        let shown = quartz(22, "Visible", true);
+        let candidates = [&hidden, &shown];
+        let titles = ["Hidden", "Visible"];
+        assert_eq!(
+            match_quartz_window(None, &candidates, &titles, titles[0]),
+            Some(11)
+        );
+        assert_eq!(
+            match_quartz_window(None, &candidates, &titles, titles[1]),
+            Some(22)
+        );
+        assert!(!cohort_is_onscreen(&candidates, 2));
     }
 }
 
@@ -480,12 +602,14 @@ mod navigation_cache_tests {
                 pid: 7,
                 frame: Rect::new(-800., 0., 800., 600.),
                 onscreen: true,
+                title: String::new(),
             },
             QuartzWindow {
                 id: 22,
                 pid: 7,
                 frame: Rect::new(-800., 0., 800., 600.),
                 onscreen: false,
+                title: String::new(),
             },
         ];
         let mut reordered = previous.clone();

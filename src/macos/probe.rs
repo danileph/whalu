@@ -149,11 +149,13 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
                 .unwrap_or(4)
                 .clamp(1, 4)
         };
+        let overlap = std::env::var_os("WHALU_FIXTURE_OVERLAP").is_some();
+        let same_title = std::env::var_os("WHALU_FIXTURE_SAME_TITLE").is_some();
         for (i, title) in titles.iter().take(count).enumerate() {
             let w = NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
                 NSRect::new(
-                    NSPoint::new(130. + i as f64 * 120., 180.),
+                    NSPoint::new(130. + if overlap { 0. } else { i as f64 * 120. }, 180.),
                     NSSize::new(400., 300.),
                 ),
                 NSWindowStyleMask::Titled
@@ -170,7 +172,11 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
             }
 
             w.setReleasedWhenClosed(false);
-            w.setTitle(&NSString::from_str(title));
+            w.setTitle(&NSString::from_str(if same_title {
+                titles[0]
+            } else {
+                title
+            }));
             let label = NSTextField::labelWithString(
                 &NSString::from_str("Temporary Whalu integration test window"),
                 mtm,
@@ -215,6 +221,8 @@ pub fn smoke() -> Result<(), String> {
         let _restore_focus = RestoreFocus(NSWorkspace::sharedWorkspace().frontmostApplication());
         let child = ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--fixture")
+            .env("WHALU_FIXTURE_OVERLAP", "1")
+            .env("WHALU_FIXTURE_SAME_TITLE", "1")
             .spawn()
             .map_err(|e| e.to_string())?;
         let fixture = Fixture(child);
@@ -239,6 +247,23 @@ pub fn smoke() -> Result<(), String> {
         }
         let (snapshot, ids) =
             found.ok_or("Fixture windows were not discoverable through Accessibility/Quartz")?;
+        let first_frame =
+            frame(discovery.handles[&ids[0]].element.0).ok_or("No overlapping fixture geometry")?;
+        if ids.iter().any(|id| {
+            !frame(discovery.handles[id].element.0).is_some_and(|r| r.near(first_frame))
+                || !discovery.is_onscreen(*id)
+        }) {
+            return Err(
+                "Overlapping fixture windows did not remain independently clickable".into(),
+            );
+        }
+        let refreshed = discovery.scan(mtm, &[]);
+        if ids.iter().any(|id| !refreshed.visible.contains(id)) {
+            return Err("Refresh lost an overlapping fixture window".into());
+        }
+        println!(
+            "PASS: identical overlapping windows remain independent and clickable after refresh"
+        );
         let mut e = Engine::new(8.);
         e.bounds = snapshot.bounds;
         for w in snapshot.windows {

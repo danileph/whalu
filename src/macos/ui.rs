@@ -423,9 +423,7 @@ impl Ui {
         let mut sources = self.sources.borrow_mut();
         sources.retain(|id, _| discovery.handles.contains_key(id));
         for (&id, h) in &discovery.handles {
-            let Some(quartz) = h.quartz_id else {
-                continue;
-            };
+            let quartz = h.quartz_id;
             let source = sources.entry(id).or_insert_with(|| Source::new(quartz));
             if source.quartz != quartz {
                 *source = Source::new(quartz);
@@ -438,7 +436,7 @@ impl Ui {
             .sources
             .borrow_mut()
             .get_mut(&id)
-            .filter(|s| s.quartz == quartz)
+            .filter(|s| s.quartz == Some(quartz))
         {
             source.pending = None;
             source.updated = Some(Instant::now());
@@ -624,7 +622,9 @@ impl Ui {
                         .is_none_or(|t| now.duration_since(t) > Duration::from_secs(3))
                 {
                     source.pending = Some(now);
-                    targets.push((*id, source.quartz));
+                    if let Some(quartz) = source.quartz {
+                        targets.push((*id, quartz));
+                    }
                 }
             }
         }
@@ -883,14 +883,14 @@ fn layer_value(layer: &CALayer, key: &str) -> Option<Retained<AnyObject>> {
 }
 
 struct Source {
-    quartz: u32,
+    quartz: Option<u32>,
     icon: Option<Retained<NSImage>>,
     image: Option<Retained<NSImage>>,
     updated: Option<Instant>,
     pending: Option<Instant>,
 }
 impl Source {
-    fn new(quartz: u32) -> Self {
+    fn new(quartz: Option<u32>) -> Self {
         Self {
             quartz,
             icon: None,
