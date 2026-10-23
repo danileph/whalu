@@ -5,21 +5,26 @@ use crate::{
 };
 use std::collections::VecDeque;
 
-/// A click visits adjacent windows in a snapshot of the current stack. Each
-/// advance requires the previous focus to have succeeded, so external focus,
-/// removed windows, and Space changes stop travel instead of skipping entries.
+/// Visual selection follows stack order while native focus stays on the clicked
+/// destination. Intermediate cards must never activate intermediate apps.
 pub struct ClickSequence {
     context: u64,
-    expected: Option<WindowId>,
+    target: WindowId,
+    selected: Option<WindowId>,
     remaining: VecDeque<WindowId>,
 }
 impl ClickSequence {
     pub fn new(engine: &Engine, target: WindowId) -> Option<Self> {
+        Self::from_selection(engine, target, engine.focused())
+    }
+    pub fn from_selection(
+        engine: &Engine,
+        target: WindowId,
+        selected: Option<WindowId>,
+    ) -> Option<Self> {
         let ctx = engine.context()?;
         let end = ctx.order.iter().position(|id| *id == target)?;
-        let start = ctx
-            .focused
-            .and_then(|id| ctx.order.iter().position(|entry| *entry == id));
+        let start = selected.and_then(|id| ctx.order.iter().position(|entry| *entry == id));
         let remaining = match start {
             Some(start) if start < end => ctx.order[start + 1..=end].iter().copied().collect(),
             Some(start) if start > end => ctx.order[end..start].iter().rev().copied().collect(),
@@ -28,14 +33,15 @@ impl ClickSequence {
         };
         Some(Self {
             context: engine.current,
-            expected: ctx.focused,
+            target,
+            selected,
             remaining,
         })
     }
     pub fn advance(&mut self, engine: &Engine) -> Option<WindowId> {
         let valid = self.context == engine.current
             && engine.context().is_some_and(|ctx| {
-                ctx.focused == self.expected
+                ctx.focused == Some(self.target)
                     && self
                         .remaining
                         .iter()
@@ -46,11 +52,20 @@ impl ClickSequence {
             return None;
         }
         let next = self.remaining.pop_front()?;
-        self.expected = Some(next);
+        self.selected = Some(next);
         Some(next)
     }
     pub fn pending(&self) -> bool {
         !self.remaining.is_empty()
+    }
+    pub fn selected(&self) -> Option<WindowId> {
+        self.selected
+    }
+    pub fn target(&self) -> WindowId {
+        self.target
+    }
+    pub fn context(&self) -> u64 {
+        self.context
     }
 }
 

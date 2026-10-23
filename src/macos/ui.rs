@@ -165,6 +165,12 @@ impl Ui {
     pub fn is_key(&self) -> bool {
         self.panel.isKeyWindow()
     }
+    pub fn selected_thumbnail(&self) -> Option<u64> {
+        self.cards
+            .borrow()
+            .iter()
+            .find_map(|(id, card)| (card.active && card.retiring.is_none()).then_some(*id))
+    }
     pub fn snapshot(&self, path: &str) -> Result<(), String> {
         let view = self.panel.contentView().ok_or("HUD content view missing")?;
         self.panel.displayIfNeeded();
@@ -200,6 +206,15 @@ impl Ui {
                 true
             }
         });
+    }
+    pub fn reset_overview(&self) {
+        self.hide();
+        self.visibility_epoch.set(self.visibility_epoch.get() + 1);
+        for card in self.cards.borrow_mut().values() {
+            card.view.removeFromSuperview();
+        }
+        self.cards.borrow_mut().clear();
+        self.sources.borrow_mut().clear();
     }
     pub fn paused(&self, paused: bool) {
         self.pause.setTitle(&NSString::from_str(if paused {
@@ -363,6 +378,7 @@ impl Ui {
                     != (ClickRoute::Select {
                         context,
                         window: id,
+                        epoch: self.visibility_epoch(),
                     })
                 {
                     return Err(format!(
@@ -432,6 +448,9 @@ impl Ui {
         }
     }
     pub fn show_navigation(&self, engine: &Engine, _gesture: Option<Axis>) {
+        self.show_selection(engine, _gesture, None);
+    }
+    pub fn show_selection(&self, engine: &Engine, _gesture: Option<Axis>, selection: Option<u64>) {
         let Some(ctx) = engine.context() else {
             self.hide();
             return;
@@ -470,8 +489,10 @@ impl Ui {
         // A fixed display-relative center keeps first/last entries centered too.
         let height = (b.size.height - 16.).max(132.);
         let wheel = Wheel::new(height);
-        let selected = ctx
-            .focused
+        let focused = selection
+            .filter(|id| ctx.order.contains(id))
+            .or(ctx.focused);
+        let selected = focused
             .and_then(|id| ctx.order.iter().position(|i| i == &id))
             .unwrap_or(0);
         let start = selected.saturating_sub(wheel.radius + 1);
@@ -538,7 +559,7 @@ impl Ui {
             let Some(w) = engine.windows.get(id) else {
                 continue;
             };
-            let active = ctx.focused == Some(*id);
+            let active = focused == Some(*id);
             let offset = index as f64 - selected as f64;
             let pose = wheel.pose(offset);
             let fresh = !cards.contains_key(id);
@@ -613,6 +634,7 @@ impl Ui {
         drop(sources);
         *self.clicks.targets.borrow_mut() = Some(ClickMap {
             context: engine.current,
+            epoch: self.visibility_epoch(),
             frame,
             desktop_top,
             root: self.content.layer().unwrap(),
@@ -637,6 +659,7 @@ pub(super) struct ThumbnailClicks {
 }
 struct ClickMap {
     context: u64,
+    epoch: u64,
     frame: NSRect,
     desktop_top: f64,
     root: Retained<CALayer>,
@@ -646,7 +669,11 @@ struct ClickMap {
 pub(super) enum ClickRoute {
     Pass,
     Consume,
-    Select { context: u64, window: u64 },
+    Select {
+        context: u64,
+        window: u64,
+        epoch: u64,
+    },
 }
 impl ThumbnailClicks {
     pub fn reset(&self) {
@@ -657,9 +684,12 @@ impl ThumbnailClicks {
             1 => {
                 let target = self.hit(point);
                 self.pressed.set(target.is_some());
-                target.map_or(ClickRoute::Pass, |(context, window)| ClickRoute::Select {
-                    context,
-                    window,
+                target.map_or(ClickRoute::Pass, |(context, window, epoch)| {
+                    ClickRoute::Select {
+                        context,
+                        window,
+                        epoch,
+                    }
                 })
             }
             2 if self.pressed.replace(false) => ClickRoute::Consume,
@@ -667,7 +697,7 @@ impl ThumbnailClicks {
             _ => ClickRoute::Pass,
         }
     }
-    fn hit(&self, point: NSPoint) -> Option<(u64, u64)> {
+    fn hit(&self, point: NSPoint) -> Option<(u64, u64, u64)> {
         let targets = self.targets.try_borrow().ok()?;
         let map = targets.as_ref()?;
         // Quartz uses top-left screen coordinates; AppKit uses bottom-left.
@@ -694,7 +724,7 @@ impl ThumbnailClicks {
                 .then_some((*id, visible.zPosition()))
             })
             .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| (map.context, id))
+            .map(|(id, _)| (map.context, id, map.epoch))
     }
 }
 /// Views survive selection changes so Core Animation can retarget their live

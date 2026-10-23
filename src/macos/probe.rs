@@ -102,11 +102,16 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
             "Magnetic fixture C",
             "Magnetic fixture D",
         ];
-        for (i, title) in titles
-            .iter()
-            .take(if constrained { 2 } else { 4 })
-            .enumerate()
-        {
+        let count = if constrained {
+            2
+        } else {
+            std::env::var("MAGNETIC_FIXTURE_COUNT")
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(4)
+                .clamp(1, 4)
+        };
+        for (i, title) in titles.iter().take(count).enumerate() {
             let w = NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
                 NSRect::new(
@@ -339,11 +344,63 @@ pub fn smoke() -> Result<(), String> {
         ui.snapshot(&path.to_string_lossy())?;
         ui.hide();
         println!("PASS: AppKit HUD renders without becoming key");
-        super::input_probe::run(e, discovery, ui, tap, mtm)?;
+        super::input_probe::run(e, discovery, ui, tap.clone(), mtm)?;
+        cross_app_click_smoke(mtm, tap)?;
         constrained_smoke(mtm)?;
         println!("Native smoke test passed; fixture windows closed automatically.");
         Ok(())
     }
+}
+fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String> {
+    let mut fixtures = vec![];
+    for _ in 0..4 {
+        fixtures.push(Fixture(
+            ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
+                .arg("--fixture")
+                .env("MAGNETIC_FIXTURE_COUNT", "1")
+                .spawn()
+                .map_err(|e| e.to_string())?,
+        ));
+    }
+    let pids: Vec<_> = fixtures
+        .iter()
+        .map(|fixture| fixture.0.id() as i32)
+        .collect();
+    let mut discovery = Discovery::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+        }
+        let snapshot = discovery.scan(mtm, &[]);
+        let ids: Vec<_> = pids
+            .iter()
+            .filter_map(|pid| {
+                discovery
+                    .handles
+                    .values()
+                    .find(|handle| handle.pid == *pid && handle.visible)
+                    .map(|handle| handle.id)
+            })
+            .collect();
+        if ids.len() != pids.len() {
+            continue;
+        }
+        let mut engine = Engine::new(8.);
+        engine.bounds = snapshot.bounds;
+        for window in snapshot.windows {
+            if ids.contains(&window.id) {
+                engine.windows.insert(window.id, window);
+            }
+        }
+        engine.set_visible(1, &ids, Some(ids[0]));
+        super::input_probe::run(engine, discovery, Ui::new(mtm), tap, mtm)?;
+        println!(
+            "PASS: immediate click focus, ordered visual travel and stale-Space isolation across four independent application processes"
+        );
+        return Ok(());
+    }
+    Err("Cross-application fixture windows were not discoverable".into())
 }
 fn ui_is_key(ui: &Ui) -> bool {
     ui.is_key()

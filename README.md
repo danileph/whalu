@@ -9,7 +9,7 @@ Grouping is deferred. Every window has its own entry in one Space-local stack. S
 | Input | Action |
 | --- | --- |
 | Hold Control + Option | Show overview; release either modifier to dismiss |
-| Click an overview thumbnail or app badge | Move through the stack in order to that window |
+| Click an overview thumbnail or app badge | Focus that window immediately; the overview moves through the stack in order |
 | Control + Option + Up / Down | Previous / next individual window |
 | Control + Option + Left / Right | Previous / next window of the active application |
 | Three fingers down / up | Previous / next window (natural scrolling) |

@@ -46,7 +46,11 @@ pub(super) enum Event {
     Command(Command),
     Modifiers(Modifiers),
     Mouse(bool),
-    SelectThumbnail { context: u64, window: u64 },
+    SelectThumbnail {
+        context: u64,
+        window: u64,
+        epoch: u64,
+    },
     Drag,
     Gesture(usize, GestureEvent, f64),
     GestureMotion(usize, f64, f64, bool),
@@ -114,6 +118,27 @@ struct ClickTravel {
     sequence: ClickSequence,
     due: Instant,
 }
+struct PendingFocus {
+    context: u64,
+    window: u64,
+    due: Instant,
+    until: Instant,
+}
+impl PendingFocus {
+    fn observed(
+        &self,
+        context: u64,
+        visible: &[u64],
+        observed: Option<u64>,
+        now: Instant,
+    ) -> Option<u64> {
+        if self.context == context && visible.contains(&self.window) && now < self.until {
+            Some(self.window)
+        } else {
+            observed
+        }
+    }
+}
 struct Runtime {
     mtm: MainThreadMarker,
     rx: Receiver<Event>,
@@ -128,6 +153,7 @@ struct Runtime {
     gestures: Option<trackpad::Monitor>,
     gesture: Option<ActiveScroll>,
     click_travel: Option<ClickTravel>,
+    pending_focus: Option<PendingFocus>,
     motion_due: Option<Instant>,
     linger_until: Option<Instant>,
     motion_tick: Instant,
@@ -142,6 +168,7 @@ struct Runtime {
     switched_space: bool,
     pending_commands: Vec<Command>,
     space_until: Option<Instant>,
+    space_retries: u8,
     paused: bool,
     modal: bool,
     recovery: SavedState,
@@ -168,6 +195,7 @@ impl Runtime {
                 self.motion_due,
                 self.linger_until,
                 self.click_travel.as_ref().map(|travel| travel.due),
+                self.pending_focus.as_ref().map(|focus| focus.due),
             ]
             .into_iter()
             .flatten()
@@ -203,11 +231,13 @@ impl Runtime {
                 Event::SpaceChanged => {
                     // Native Space navigation wins over an in-progress scrub.
                     self.clear_scroll();
+                    self.pending_focus = None;
                     self.switched_space = true;
                     self.manual_until = None;
                     self.space_until = Some(Instant::now() + Duration::from_millis(850));
+                    self.space_retries = 8;
                     self.engine.frozen = true;
-                    self.ui.hide();
+                    self.ui.reset_overview();
                     self.deadline = None;
                 }
                 Event::Modifiers(m) => {
@@ -237,12 +267,19 @@ impl Runtime {
                 }
                 Event::ContactBegan => self.contact_began(),
                 Event::Wheel(delta, time) => self.wheel_event(delta, time),
-                Event::SelectThumbnail { context, window } => {
-                    self.select_thumbnail(context, window);
+                Event::SelectThumbnail {
+                    context,
+                    window,
+                    epoch,
+                } => {
+                    if epoch == self.ui.visibility_epoch() {
+                        self.select_thumbnail(context, window);
+                    }
                 }
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
+                        self.pending_focus = None;
                         self.clear_scroll();
                         self.render();
                         self.dragging = false;
@@ -365,7 +402,39 @@ impl Runtime {
         }
         self.advance_scroll(now);
         self.advance_click(now);
+        self.confirm_focus(now);
         self.schedule();
+    }
+    fn confirm_focus(&mut self, now: Instant) {
+        let Some(pending) = self
+            .pending_focus
+            .as_ref()
+            .filter(|pending| pending.due <= now)
+        else {
+            return;
+        };
+        let target = self.discovery.handles.get(&pending.window);
+        let confirmed = target.is_some_and(|handle| {
+            NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .is_some_and(|app| app.processIdentifier() == handle.pid)
+                && unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+                    .and_then(|app| {
+                        unsafe {
+                            AXUIElementSetMessagingTimeout(app.0, 0.05);
+                        }
+                        attr(app.0, "AXFocusedWindow")
+                    })
+                    .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
+        });
+        if confirmed || pending.context != self.engine.current || self.space_until.is_some() {
+            self.pending_focus = None;
+        } else if now >= pending.until {
+            self.pending_focus = None;
+            self.deadline = Some(now);
+        } else {
+            self.pending_focus.as_mut().unwrap().due = now + Duration::from_millis(50);
+        }
     }
     fn clear_scroll(&mut self) {
         self.click_travel = None;
@@ -374,30 +443,43 @@ impl Runtime {
         self.linger_until = None;
     }
     fn select_thumbnail(&mut self, context: u64, window: u64) {
-        if !self.ui.is_visible() || self.space_until.is_some() || self.mouse {
-            return;
-        }
-        self.clear_scroll();
-        // Reconciliation can render. Preserve the panel and its live animations
-        // while a click takes over from gesture feedback or a coast.
-        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
-        self.overlay_deadline = None;
-        self.reconcile(false);
-        self.deadline = None;
-        if !self.engine.frozen
-            && self.engine.current == context
-            && self
+        if !self.ui.is_visible()
+            || self.space_until.is_some()
+            || self.mouse
+            || self.engine.frozen
+            || context != self.engine.current
+            || !self
                 .engine
                 .context()
                 .is_some_and(|ctx| ctx.order.contains(&window))
         {
-            self.click_travel =
-                ClickSequence::new(&self.engine, window).map(|sequence| ClickTravel {
-                    sequence,
-                    due: Instant::now(),
-                });
-            self.linger_until = None;
+            return;
+        }
+        // Validate only this known window against fresh Quartz visibility. A
+        // full AX scan here stalls the main event tap and can target stale Spaces.
+        if !self.discovery.is_onscreen(window) {
+            self.ui.reset_overview();
+            self.deadline = Some(Instant::now());
+            return;
+        }
+        let visual = self
+            .click_travel
+            .as_ref()
+            .and_then(|travel| travel.sequence.selected())
+            .or(self.engine.focused());
+        let sequence = ClickSequence::from_selection(&self.engine, window, visual);
+        self.clear_scroll();
+        self.overlay_deadline = None;
+        self.apply(vec![Effect::Focus(window)]);
+        if self.engine.focused() == Some(window) {
+            self.click_travel = sequence.map(|sequence| ClickTravel {
+                sequence,
+                due: Instant::now(),
+            });
             self.advance_click(Instant::now());
+            self.deadline = Some(Instant::now() + Duration::from_millis(100));
+        } else {
+            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
         }
         self.render();
         self.save();
@@ -419,21 +501,17 @@ impl Runtime {
             self.render();
             return;
         }
-        if let Some(window) = next {
-            self.apply(vec![Effect::Focus(window)]);
-            if self.engine.focused() == Some(window)
-                && self
-                    .click_travel
-                    .as_ref()
-                    .is_some_and(|travel| travel.sequence.pending())
-            {
-                // One visible step per timer turn, even after a slow AX call.
-                // Retarget the wheel from its live presentation between steps.
-                self.click_travel.as_mut().unwrap().due =
-                    Instant::now() + Duration::from_millis(140);
-                self.render();
-                return;
-            }
+        if next.is_some()
+            && self
+                .click_travel
+                .as_ref()
+                .is_some_and(|travel| travel.sequence.pending())
+        {
+            // One visible step per timer turn, even after a slow AX call.
+            // Retarget the wheel from its live presentation between steps.
+            self.click_travel.as_mut().unwrap().due = Instant::now() + Duration::from_millis(70);
+            self.render();
+            return;
         }
         self.click_travel = None;
         self.linger_until = Some(Instant::now() + Duration::from_millis(650));
@@ -442,10 +520,8 @@ impl Runtime {
         self.save();
     }
     fn contact_began(&mut self) {
-        if self.click_travel.take().is_some() {
-            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
-            self.save();
-        }
+        // Resting or repositioning a finger after a click is not navigation.
+        // Only a recognized gesture (begin_scroll) interrupts visual click travel.
         let catch = self
             .gesture
             .as_ref()
@@ -763,8 +839,22 @@ impl Runtime {
             }
             self.restored.insert(id);
         }
-        self.engine
-            .set_visible(context, &snap.visible, snap.focused);
+        let focused = if snap.modal {
+            snap.focused
+        } else {
+            self.pending_focus.as_ref().map_or(snap.focused, |pending| {
+                pending.observed(context, &snap.visible, snap.focused, Instant::now())
+            })
+        };
+        if snap.modal
+            || context_changed
+            || self.pending_focus.as_ref().is_some_and(|pending| {
+                snap.focused == Some(pending.window) || !snap.visible.contains(&pending.window)
+            })
+        {
+            self.pending_focus = None;
+        }
+        self.engine.set_visible(context, &snap.visible, focused);
         if (context_changed && self.click_travel.is_some())
             || self
                 .gesture
@@ -775,6 +865,7 @@ impl Runtime {
         }
         if context_changed {
             self.linger_until = None;
+            self.ui.reset_overview();
         }
         self.switched_space = false;
         self.observe();
@@ -784,6 +875,14 @@ impl Runtime {
         }
         self.render();
         self.save();
+        if self.space_retries > 0 {
+            if snap.visible.is_empty() {
+                self.space_retries -= 1;
+                self.deadline = Some(Instant::now() + Duration::from_millis(120));
+            } else {
+                self.space_retries = 0;
+            }
+        }
     }
     fn reflow(&mut self) {
         if !self.paused
@@ -808,11 +907,9 @@ impl Runtime {
             }
             match effect {
                 Effect::Focus(id) => unsafe {
-                    #[allow(deprecated)]
-                    let activated = h.app.activateWithOptions(
-                        NSApplicationActivationOptions::ActivateIgnoringOtherApps,
-                    );
+                    AXUIElementSetMessagingTimeout(h.element.0, 0.05);
                     if let Some(app) = Owned::new(AXUIElementCreateApplication(h.pid)) {
+                        AXUIElementSetMessagingTimeout(app.0, 0.05);
                         AXUIElementSetAttributeValue(
                             app.0,
                             string("AXFocusedWindow").0,
@@ -830,8 +927,22 @@ impl Runtime {
                         kCFBooleanTrue,
                     );
                     let raised = AXUIElementPerformAction(h.element.0, string("AXRaise").0);
+                    // Select the exact window before activating its application,
+                    // so activation does not restore another window/Space first.
+                    #[allow(deprecated)]
+                    let activated = h.app.isActive()
+                        || h.app.activateWithOptions(
+                            NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+                        );
                     if activated && (main == 0 || raised == 0) {
                         self.engine.focus(id);
+                        let now = Instant::now();
+                        self.pending_focus = Some(PendingFocus {
+                            context: self.engine.current,
+                            window: id,
+                            due: now + Duration::from_millis(40),
+                            until: now + Duration::from_millis(600),
+                        });
                     } else {
                         eprintln!("Could not focus window {id}: AX {main}/{raised}");
                     }
@@ -966,9 +1077,12 @@ impl Runtime {
             && self.config.overlay
         {
             self.ui.sync_sources(&self.discovery);
-            self.ui.show_navigation(
+            self.ui.show_selection(
                 &self.engine,
                 self.gesture.as_ref().map(|active| active.session.axis),
+                self.click_travel
+                    .as_ref()
+                    .and_then(|travel| travel.sequence.selected()),
             );
         } else {
             self.ui.hide();
@@ -1028,8 +1142,16 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
             {
                 ui::ClickRoute::Pass => {}
                 ui::ClickRoute::Consume => return null_mut(),
-                ui::ClickRoute::Select { context, window } => {
-                    enqueue(Event::SelectThumbnail { context, window });
+                ui::ClickRoute::Select {
+                    context,
+                    window,
+                    epoch,
+                } => {
+                    enqueue(Event::SelectThumbnail {
+                        context,
+                        window,
+                        epoch,
+                    });
                     return null_mut();
                 }
             }
@@ -1233,6 +1355,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             observers: BTreeMap::new(),
             gesture: None,
             click_travel: None,
+            pending_focus: None,
             motion_due: None,
             linger_until: None,
             motion_tick: Instant::now(),
@@ -1262,6 +1385,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             switched_space: false,
             pending_commands: vec![],
             space_until: None,
+            space_retries: 0,
             paused: false,
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),
@@ -1290,4 +1414,30 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
 
 pub fn gesture_probe(seconds: f64) -> Result<(), String> {
     trackpad::probe(seconds)
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    #[test]
+    fn accepted_focus_is_not_erased_by_a_late_or_empty_ax_observation() {
+        let now = Instant::now();
+        let pending = PendingFocus {
+            context: 1,
+            window: 4,
+            due: now,
+            until: now + Duration::from_millis(600),
+        };
+        assert_eq!(pending.observed(1, &[1, 2, 3, 4], Some(1), now), Some(4));
+        assert_eq!(pending.observed(1, &[1, 2, 3, 4], None, now), Some(4));
+        assert_eq!(pending.observed(1, &[1, 2, 3, 4], Some(4), now), Some(4));
+        // No intent may carry its window across Spaces, disappearance, or expiry.
+        assert_eq!(pending.observed(2, &[4, 5], Some(5), now), Some(5));
+        assert_eq!(pending.observed(1, &[1, 2, 3], Some(2), now), Some(2));
+        assert_eq!(
+            pending.observed(1, &[1, 2, 3, 4], Some(1), now + Duration::from_millis(600)),
+            Some(1)
+        );
+    }
 }
