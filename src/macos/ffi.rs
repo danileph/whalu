@@ -132,6 +132,7 @@ unsafe extern "C" {
     ) -> Ref;
     pub fn CGEventTapEnable(tap: Ref, enable: bool);
     pub fn CGEventGetFlags(event: Ref) -> u64;
+    pub fn CGEventGetLocation(event: Ref) -> Point;
     pub fn CGEventGetDoubleValueField(event: Ref, field: u32) -> f64;
     pub fn CGEventGetIntegerValueField(event: Ref, field: u32) -> i64;
     pub fn CGPreflightScreenCaptureAccess() -> bool;

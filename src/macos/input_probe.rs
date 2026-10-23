@@ -182,6 +182,52 @@ pub(super) fn run(
     if runtime.linger_until.is_none() || !runtime.ui.is_visible() {
         return Err("Fresh contact did not preserve feedback for the next swipe".into());
     }
+    // Click a real fixture thumbnail while a coast owns the overview. Routing
+    // is exercised without posting synthetic input to other applications.
+    prepare(&mut runtime, ScrollSource::Trackpad(1))?;
+    runtime.render();
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.4, false);
+    }
+    let epoch = runtime.ui.visibility_epoch();
+    let point = runtime
+        .ui
+        .thumbnail_point(ids[1], objc2_foundation::NSPoint::new(64., 41.))?;
+    let ui::ClickRoute::Select { context, window } = runtime.ui.clicks.route(1, point) else {
+        return Err("Fixture thumbnail click missed".into());
+    };
+    tx.send(Event::SelectThumbnail { context, window })
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    let handle = &runtime.discovery.handles[&ids[1]];
+    let app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+        .ok_or("Missing fixture application")?;
+    let native_focused = attr(app.0, "AXFocusedWindow")
+        .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) });
+    if runtime.engine.focused() != Some(ids[1])
+        || !native_focused
+        || runtime.gesture.is_some()
+        || runtime.motion_due.is_some()
+        || !runtime.ui.is_visible()
+        || runtime.ui.is_key()
+        || runtime.ui.visibility_epoch() != epoch
+        || runtime.linger_until.is_none()
+        || runtime.ui.clicks.route(2, point) != ui::ClickRoute::Consume
+    {
+        return Err("Thumbnail click failed native focus, selection, coast interruption or continuous non-key feedback".into());
+    }
+    // Stale context/card messages cannot navigate an unrelated Space/window.
+    for (context, window) in [(context.wrapping_add(1), ids[0]), (context, u64::MAX)] {
+        tx.send(Event::SelectThumbnail { context, window })
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        if runtime.engine.focused() != Some(ids[1]) {
+            return Err("Stale thumbnail click changed selection".into());
+        }
+    }
+    println!(
+        "PASS: thumbnail click selects and focuses its native fixture, cancels scrolling, preserves overview feedback and rejects stale targets"
+    );
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
     runtime.drain();

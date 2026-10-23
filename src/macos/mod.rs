@@ -46,6 +46,7 @@ pub(super) enum Event {
     Command(Command),
     Modifiers(Modifiers),
     Mouse(bool),
+    SelectThumbnail { context: u64, window: u64 },
     Drag,
     Gesture(usize, GestureEvent, f64),
     GestureMotion(usize, f64, f64, bool),
@@ -67,6 +68,7 @@ struct Queue {
     scroll_modifiers: Modifiers,
     wheel: WheelRouter,
     clock: Instant,
+    clicks: ui::ThumbnailClicks,
 }
 pub(super) fn enqueue(event: Event) {
     if let Ok(dispatch) = DISPATCH.lock() {
@@ -229,6 +231,9 @@ impl Runtime {
                 }
                 Event::ContactBegan => self.contact_began(),
                 Event::Wheel(delta, time) => self.wheel_event(delta, time),
+                Event::SelectThumbnail { context, window } => {
+                    self.select_thumbnail(context, window);
+                }
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
@@ -324,6 +329,7 @@ impl Runtime {
                         let q = QUEUE.load(Ordering::Acquire);
                         if !q.is_null() {
                             (*q).wheel.reset();
+                            (*q).clicks.reset();
                         }
                     }
                     self.held = false;
@@ -358,6 +364,34 @@ impl Runtime {
         self.gesture = None;
         self.motion_due = None;
         self.linger_until = None;
+    }
+    fn select_thumbnail(&mut self, context: u64, window: u64) {
+        if !self.ui.is_visible() || self.space_until.is_some() || self.mouse {
+            return;
+        }
+        self.clear_scroll();
+        // Reconciliation can render. Preserve the panel and its live animations
+        // while a click takes over from gesture feedback or a coast.
+        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        self.overlay_deadline = None;
+        self.reconcile(false);
+        self.deadline = None;
+        if !self.engine.frozen
+            && self.engine.current == context
+            && self
+                .engine
+                .context()
+                .is_some_and(|ctx| ctx.order.contains(&window))
+        {
+            let old = self.engine.focused();
+            self.apply(vec![Effect::Focus(window)]);
+            if self.engine.focused() != old {
+                self.reflow();
+            }
+            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        }
+        self.render();
+        self.save();
     }
     fn contact_began(&mut self) {
         let catch = self
@@ -921,6 +955,23 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         return event;
     }
     let modifiers = Modifiers::from_flags(CGEventGetFlags(event));
+    if matches!(ty, 1 | 2 | 6) {
+        let q = QUEUE.load(Ordering::Acquire);
+        if !q.is_null() {
+            let point = CGEventGetLocation(event);
+            match (*q)
+                .clicks
+                .route(ty, objc2_foundation::NSPoint::new(point.x, point.y))
+            {
+                ui::ClickRoute::Pass => {}
+                ui::ClickRoute::Consume => return null_mut(),
+                ui::ClickRoute::Select { context, window } => {
+                    enqueue(Event::SelectThumbnail { context, window });
+                    return null_mut();
+                }
+            }
+        }
+    }
     if ty == 22 {
         let continuous = CGEventGetIntegerValueField(event, 88) != 0;
         let momentum = CGEventGetIntegerValueField(event, 123);
@@ -1049,6 +1100,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             scroll_modifiers: config.overlay_modifiers,
             wheel: WheelRouter::default(),
             clock: Instant::now(),
+            clicks: ui::ThumbnailClicks::default(),
         });
         let ptr = &mut *queue as *mut Queue;
         let mut context = SourceContext {
@@ -1072,6 +1124,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         CFRunLoopAddSource(CFRunLoopGetMain(), tap_source.0, kCFRunLoopCommonModes);
         CGEventTapEnable(tap.0, true);
         let ui = ui::Ui::new(mtm);
+        queue.clicks = ui.clicks.clone();
         let center = NSWorkspace::sharedWorkspace().notificationCenter();
         for name in [
             "NSWorkspaceDidLaunchApplicationNotification",

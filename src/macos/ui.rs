@@ -18,6 +18,7 @@ use objc2_quartz_core::{
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -69,6 +70,7 @@ pub struct Ui {
     sources: RefCell<BTreeMap<u64, Source>>,
     cards: RefCell<BTreeMap<u64, Card>>,
     visibility_epoch: Cell<u64>,
+    pub clicks: ThumbnailClicks,
     _status: Retained<NSStatusItem>,
     pause: Retained<NSMenuItem>,
     gesture_label: Retained<NSMenuItem>,
@@ -140,6 +142,7 @@ impl Ui {
                 sources: RefCell::new(BTreeMap::new()),
                 cards: RefCell::new(BTreeMap::new()),
                 visibility_epoch: Cell::new(0),
+                clicks: ThumbnailClicks::default(),
                 _status: status,
                 pause: pause.unwrap(),
                 gesture_label,
@@ -182,6 +185,7 @@ impl Ui {
         Ok(())
     }
     pub fn hide(&self) {
+        self.clicks.targets.borrow_mut().take();
         if self.panel.isVisible() {
             self.visibility_epoch.set(self.visibility_epoch.get() + 1);
         }
@@ -231,6 +235,7 @@ impl Ui {
         if Retained::as_ptr(&self.cards.borrow()[&ids[0]].view) != identity {
             return Err("Selection rebuilt the existing card".into());
         }
+        self.verify_thumbnail_clicks()?;
         let selected = self.cards.borrow()[&ids[1]].view.layer().unwrap();
         if (selected.position().y + 41. - self.content.bounds().size.height / 2.).abs() > 0.01 {
             return Err(format!(
@@ -305,8 +310,92 @@ impl Ui {
         if unsafe { layer.animationForKey(&NSString::from_str("position")) }.is_some() {
             return Err("Unchanged overview refresh restarted motion".into());
         }
+        self.verify_thumbnail_clicks()?;
+        let point = self.thumbnail_point(engine.focused().unwrap(), NSPoint::new(64., 41.))?;
+        self.hide();
+        if self.clicks.route(1, point) != ClickRoute::Pass {
+            return Err("Hidden overview intercepted a click".into());
+        }
+        self.show(engine);
         println!(
             "PASS: opaque wheel cards interpolate, reverse continuously, remain centered, retain 3D transforms, and draw badges in front of borders"
+        );
+        Ok(())
+    }
+    /// Native diagnostic coordinates use the same live presentation tree as hit testing.
+    pub fn thumbnail_point(&self, id: u64, local: NSPoint) -> Result<NSPoint, String> {
+        let targets = self.clicks.targets.borrow();
+        let map = targets.as_ref().ok_or("Overview is hidden")?;
+        let (_, layer) = map
+            .cards
+            .iter()
+            .find(|(window, _)| *window == id)
+            .ok_or("Thumbnail is outside the visible working set")?;
+        let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
+        let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+        let point = visible.convertPoint_toLayer(local, Some(&root));
+        Ok(NSPoint::new(
+            point.x + map.frame.origin.x,
+            map.desktop_top - point.y - map.frame.origin.y,
+        ))
+    }
+    fn verify_thumbnail_clicks(&self) -> Result<(), String> {
+        let ids: Vec<_> = self
+            .cards
+            .borrow()
+            .iter()
+            .filter(|(_, card)| card.retiring.is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        let context = self.clicks.targets.borrow().as_ref().unwrap().context;
+        for id in ids {
+            for local in [NSPoint::new(64., 41.), NSPoint::new(64., -7.)] {
+                let point = self.thumbnail_point(id, local)?;
+                let frame = self.panel.frame();
+                let desktop_top = NSScreen::screens(self.panel.mtm())
+                    .firstObject()
+                    .map_or(0., |screen| screen.frame().size.height);
+                if !contains(frame, NSPoint::new(point.x, desktop_top - point.y)) {
+                    continue;
+                }
+                let actual = self.clicks.route(1, point);
+                if actual
+                    != (ClickRoute::Select {
+                        context,
+                        window: id,
+                    })
+                {
+                    return Err(format!(
+                        "Animated thumbnail/badge {id} click missed: {actual:?}"
+                    ));
+                }
+                // Even after moving outside the strip, drag/up belong to this click.
+                let outside = NSPoint::new(-10000., -10000.);
+                if self.clicks.route(6, outside) != ClickRoute::Consume
+                    || self.clicks.route(2, outside) != ClickRoute::Consume
+                    || self.clicks.route(1, outside) != ClickRoute::Pass
+                    || self.clicks.route(2, outside) != ClickRoute::Pass
+                {
+                    return Err("Thumbnail click leaked drag/up or captured outside input".into());
+                }
+            }
+        }
+        let frame = self.panel.frame();
+        let top = NSScreen::screens(self.panel.mtm())
+            .firstObject()
+            .map_or(0., |screen| screen.frame().size.height);
+        if self.clicks.route(
+            1,
+            NSPoint::new(
+                frame.origin.x + 1.,
+                top - frame.origin.y - frame.size.height / 2.,
+            ),
+        ) != ClickRoute::Pass
+        {
+            return Err("Empty overview strip intercepted a click".into());
+        }
+        println!(
+            "PASS: animated thumbnail/badge hit testing, empty-area passthrough and complete click ownership"
         );
         Ok(())
     }
@@ -522,9 +611,90 @@ impl Ui {
             }
         }
         drop(sources);
+        *self.clicks.targets.borrow_mut() = Some(ClickMap {
+            context: engine.current,
+            frame,
+            desktop_top,
+            root: self.content.layer().unwrap(),
+            cards: cards
+                .iter()
+                .filter(|(_, card)| card.retiring.is_none())
+                .map(|(id, card)| (*id, card.view.layer().unwrap()))
+                .collect(),
+        });
         drop(cards);
         self.panel.orderFrontRegardless();
         previews::capture(targets);
+    }
+}
+
+/// Shared only on the main run loop. The tap reads rendering state and enqueues
+/// selection; it never borrows Runtime or performs Accessibility work.
+#[derive(Clone, Default)]
+pub(super) struct ThumbnailClicks {
+    targets: Rc<RefCell<Option<ClickMap>>>,
+    pressed: Rc<Cell<bool>>,
+}
+struct ClickMap {
+    context: u64,
+    frame: NSRect,
+    desktop_top: f64,
+    root: Retained<CALayer>,
+    cards: Vec<(u64, Retained<CALayer>)>,
+}
+#[derive(Debug, PartialEq)]
+pub(super) enum ClickRoute {
+    Pass,
+    Consume,
+    Select { context: u64, window: u64 },
+}
+impl ThumbnailClicks {
+    pub fn reset(&self) {
+        self.pressed.set(false);
+    }
+    pub fn route(&self, kind: u32, point: NSPoint) -> ClickRoute {
+        match kind {
+            1 => {
+                let target = self.hit(point);
+                self.pressed.set(target.is_some());
+                target.map_or(ClickRoute::Pass, |(context, window)| ClickRoute::Select {
+                    context,
+                    window,
+                })
+            }
+            2 if self.pressed.replace(false) => ClickRoute::Consume,
+            6 if self.pressed.get() => ClickRoute::Consume,
+            _ => ClickRoute::Pass,
+        }
+    }
+    fn hit(&self, point: NSPoint) -> Option<(u64, u64)> {
+        let targets = self.targets.try_borrow().ok()?;
+        let map = targets.as_ref()?;
+        // Quartz uses top-left screen coordinates; AppKit uses bottom-left.
+        let point = NSPoint::new(
+            point.x - map.frame.origin.x,
+            map.desktop_top - point.y - map.frame.origin.y,
+        );
+        if !contains(
+            rect(0., 0., map.frame.size.width, map.frame.size.height),
+            point,
+        ) {
+            return None;
+        }
+        let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+        map.cards
+            .iter()
+            .filter_map(|(id, layer)| {
+                let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
+                let local = visible.convertPoint_fromLayer(point, Some(&root));
+                // Include the badge extending below the thumbnail, but not the
+                // empty strip or the shadow. Follow the current animated pose.
+                (contains(rect(0., 0., 128., 82.), local)
+                    || contains(rect(50., -12., 28., 28.), local))
+                .then_some((*id, visible.zPosition()))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| (map.context, id))
     }
 }
 /// Views survive selection changes so Core Animation can retarget their live
@@ -698,6 +868,12 @@ impl Source {
 }
 fn rect(x: f64, y: f64, w: f64, h: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(w, h))
+}
+fn contains(rect: NSRect, point: NSPoint) -> bool {
+    point.x >= rect.origin.x
+        && point.x < rect.origin.x + rect.size.width
+        && point.y >= rect.origin.y
+        && point.y < rect.origin.y + rect.size.height
 }
 
 fn pump(seconds: f64) {
