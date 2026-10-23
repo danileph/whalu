@@ -68,6 +68,7 @@ pub struct Ui {
     panel: Retained<HudPanel>,
     content: Retained<NSView>,
     sources: RefCell<BTreeMap<u64, Source>>,
+    icons: RefCell<BTreeMap<i32, Option<Retained<NSImage>>>>,
     cards: RefCell<BTreeMap<u64, Card>>,
     visibility_epoch: Cell<u64>,
     pub clicks: ThumbnailClicks,
@@ -140,6 +141,7 @@ impl Ui {
                 panel,
                 content,
                 sources: RefCell::new(BTreeMap::new()),
+                icons: RefCell::new(BTreeMap::new()),
                 cards: RefCell::new(BTreeMap::new()),
                 visibility_epoch: Cell::new(0),
                 clicks: ThumbnailClicks::default(),
@@ -416,6 +418,8 @@ impl Ui {
         Ok(())
     }
     pub fn sync_sources(&self, discovery: &Discovery) {
+        let mut icons = self.icons.borrow_mut();
+        icons.retain(|pid, _| discovery.handles.values().any(|handle| handle.pid == *pid));
         let mut sources = self.sources.borrow_mut();
         sources.retain(|id, _| discovery.handles.contains_key(id));
         for (&id, h) in &discovery.handles {
@@ -426,7 +430,7 @@ impl Ui {
             if source.quartz != quartz {
                 *source = Source::new(quartz);
             }
-            source.icon = h.app.icon();
+            source.icon = icons.entry(h.pid).or_insert_with(|| h.app.icon()).clone();
         }
     }
     pub fn preview_ready(&self, id: u64, quartz: u32, image: Option<previews::Image>) {

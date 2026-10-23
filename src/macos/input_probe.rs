@@ -40,7 +40,7 @@ pub(super) fn run(
             ..Config::default()
         },
         config_path: std::env::temp_dir().join("magnetic-input-probe.toml"),
-        state_path: None,
+        state_writer: None,
         engine,
         discovery,
         ui,
@@ -70,7 +70,6 @@ pub(super) fn run(
         recovery: SavedState::default(),
         restored: BTreeSet::new(),
         context_tracker: ContextTracker::default(),
-        last_saved: None,
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {

@@ -11,6 +11,44 @@ use objc2_app_kit::*;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use std::process::{Child, Command as ProcessCommand};
 
+/// Read-only timings against the current desktop. No focus or geometry changes.
+pub fn performance() -> Result<(), String> {
+    if !unsafe { AXIsProcessTrusted() } {
+        return Err(super::permission_help());
+    }
+    let mtm = MainThreadMarker::new().ok_or("Requires main thread")?;
+    let _app = NSApplication::sharedApplication(mtm);
+    let mut discovery = Discovery::new();
+    let mut scans = Vec::new();
+    let mut visible = 0;
+    for _ in 0..5 {
+        let start = std::time::Instant::now();
+        visible = discovery.scan(mtm, &[]).visible.len();
+        scans.push(start.elapsed().as_secs_f64() * 1000.);
+    }
+    let mut checks = Vec::new();
+    for _ in 0..20 {
+        let start = std::time::Instant::now();
+        if discovery.navigation_focus().is_some() {
+            checks.push(start.elapsed().as_secs_f64() * 1000.);
+        }
+    }
+    scans.sort_by(f64::total_cmp);
+    checks.sort_by(f64::total_cmp);
+    println!("Visible windows: {visible}");
+    println!("Full discovery median (5 scans): {:.2} ms", scans[2]);
+    println!("Validated navigation cache hits: {}/20", checks.len());
+    if !checks.is_empty() {
+        println!(
+            "Cached focus/visibility check median: {:.2} ms",
+            checks[checks.len() / 2]
+        );
+    } else {
+        println!("Cache unavailable: desktop changed or focus requires full discovery");
+    }
+    Ok(())
+}
+
 pub fn preview(path: &str, hold: bool) -> Result<(), String> {
     let mtm = MainThreadMarker::new().ok_or("Requires main thread")?;
     let app = NSApplication::sharedApplication(mtm);

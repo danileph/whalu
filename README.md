@@ -89,6 +89,7 @@ After switching native Spaces without a focused window, the first navigation com
 ~/.cargo/bin/cargo clippy --all-targets -- -D warnings
 ~/.cargo/bin/cargo fmt --check
 ~/.cargo/bin/cargo run -- --native-smoke-test
+~/.cargo/bin/cargo run --release -- --performance-probe
 ~/.cargo/bin/cargo run -- --gesture-probe 10
 ~/.cargo/bin/cargo run -- --preview "$PWD/tmp/hud-preview.png"
 ```
@@ -100,3 +101,5 @@ Tests cover independent window/app navigation, continuous swipe reversal and iso
 Scroll tests also cover natural direction, early three-contact ownership, partial release, native momentum isolation, modifier-wheel routing, bounded deceleration, reversal, and fresh-input interruption. Native fixture checks exercise short-swipe selection, kinetic focus, wheel bursts, and the 650 ms feedback/dismissal lifecycle without writing recovery state. Quit the running manager before the native smoke check so its automatic layout cannot move the test fixtures.
 
 The runtime coalesces AX/workspace/display notifications on the main run loop and uses one-shot timers for bursts and transitions. No periodic window enumeration runs at idle. Input callbacks enqueue work without performing Accessibility calls.
+
+Keyboard navigation reuses discovered windows after checking fresh Quartz visibility/geometry and the focused AX window. Window changes, dialogs, Space/display transitions, configuration reloads, and uncertain focus fall back to full discovery; snap and mode commands always refresh metadata. Overview icons are cached per application process. Recovery snapshots are coalesced on a background writer, which flushes the latest state on quit. `--performance-probe` measures full discovery and validated cache checks without changing focus or moving windows; keep the desktop steady while it runs. These timings exclude native focus activation and compositor animation.

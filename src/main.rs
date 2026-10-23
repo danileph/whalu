@@ -12,7 +12,7 @@ fn main_result() -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
             println!(
-                "Magnetic {} · native macOS window manager\n\n  magnetic                 Run menu-bar app\n  --doctor                 Check permissions and platform support\n  --list                   List manageable windows in current Space\n  --native-smoke-test      Test temporary native fixture windows\n  --gesture-probe [secs]    Check three-finger recognition without navigation\n  --preview <output.png> [--hold]  Render sample HUD; keep overview visible\n  --permissions            Open Accessibility settings\n  --print-config           Print default configuration\n  --check-config [path]    Validate configuration\n  --config <path>          Run using configuration file\n\nDefault config: {}",
+                "Magnetic {} · native macOS window manager\n\n  magnetic                 Run menu-bar app\n  --doctor                 Check permissions and platform support\n  --list                   List manageable windows in current Space\n  --performance-probe      Measure discovery and cached navigation checks\n  --native-smoke-test      Test temporary native fixture windows\n  --gesture-probe [secs]    Check three-finger recognition without navigation\n  --preview <output.png> [--hold]  Render sample HUD; keep overview visible\n  --permissions            Open Accessibility settings\n  --print-config           Print default configuration\n  --check-config [path]    Validate configuration\n  --config <path>          Run using configuration file\n\nDefault config: {}",
                 env!("CARGO_PKG_VERSION"),
                 config_dir().join("config.toml").display()
             );
@@ -58,6 +58,7 @@ fn main_result() -> Result<(), String> {
                 macos::gesture_probe(seconds)
             }
             Some("--native-smoke-test") => macos::probe::smoke(),
+            Some("--performance-probe") => macos::probe::performance(),
             Some("--fixture") => macos::probe::fixture(),
             Some("--fixture-minimum-size") => macos::probe::constrained_fixture(),
             Some("--preview") if args.len() == 2 || (args.len() == 3 && args[2] == "--hold") => {

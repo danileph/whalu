@@ -1,18 +1,88 @@
 //! Recovery stores metadata, never reapplies saved geometry on launch.
 use crate::core::{Engine, Mode, Window};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::Path};
-#[derive(Default, Serialize, Deserialize)]
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Condvar, Mutex},
+    thread::{self, JoinHandle},
+};
+#[derive(Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedState {
     pub version: u32,
     pub windows: Vec<SavedWindow>,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedWindow {
     pub app_id: String,
     pub title: String,
     pub mode: Mode,
 }
+
+#[derive(Default)]
+struct PendingSave {
+    state: Option<SavedState>,
+    stopping: bool,
+}
+
+/// A single writer with one pending snapshot. Bursts replace pending work;
+/// shutdown waits for the latest snapshot to reach the atomic state file.
+pub struct StateWriter {
+    pending: Arc<(Mutex<PendingSave>, Condvar)>,
+    worker: Option<JoinHandle<()>>,
+}
+impl StateWriter {
+    pub fn new(path: PathBuf) -> std::io::Result<Self> {
+        let pending = Arc::new((Mutex::new(PendingSave::default()), Condvar::new()));
+        let shared = Arc::clone(&pending);
+        let worker = thread::Builder::new()
+            .name("magnetic-state".into())
+            .spawn(move || {
+                let (lock, wake) = &*shared;
+                let mut saved = None;
+                loop {
+                    let state = {
+                        let mut pending = lock.lock().unwrap();
+                        while pending.state.is_none() && !pending.stopping {
+                            pending = wake.wait(pending).unwrap();
+                        }
+                        match pending.state.take() {
+                            Some(state) => state,
+                            None => break,
+                        }
+                    };
+                    if saved.as_ref() == Some(&state) {
+                        continue;
+                    }
+                    match state.write(&path) {
+                        Ok(()) => saved = Some(state),
+                        Err(error) => eprintln!("Recovery write failed: {error}"),
+                    }
+                }
+            })?;
+        Ok(Self {
+            pending,
+            worker: Some(worker),
+        })
+    }
+
+    pub fn save(&self, state: SavedState) {
+        let (lock, wake) = &*self.pending;
+        lock.lock().unwrap().state = Some(state);
+        wake.notify_one();
+    }
+}
+impl Drop for StateWriter {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.pending;
+        lock.lock().unwrap().stopping = true;
+        wake.notify_one();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 impl SavedState {
     pub fn capture(engine: &Engine) -> Self {
         Self {
@@ -82,5 +152,34 @@ impl SavedState {
         }
         std::fs::rename(tmp, path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writer_flushes_the_latest_snapshot_on_shutdown() {
+        let dir = std::env::temp_dir().join(format!("magnetic-state-test-{}", std::process::id()));
+        let path = dir.join("state.json");
+        let writer = StateWriter::new(path.clone()).unwrap();
+        for index in 0..100 {
+            writer.save(SavedState {
+                version: 1,
+                windows: vec![SavedWindow {
+                    app_id: "test.app".into(),
+                    title: format!("Window {index}"),
+                    mode: Mode::Floating,
+                }],
+            });
+        }
+        drop(writer);
+        let saved = SavedState::load(&path);
+        assert_eq!(saved.windows.len(), 1);
+        assert_eq!(saved.windows[0].title, "Window 99");
+        assert_eq!(saved.windows[0].mode, Mode::Floating);
+        assert!(!path.with_extension("json.tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

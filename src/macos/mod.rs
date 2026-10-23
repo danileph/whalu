@@ -16,7 +16,7 @@ use magnetic::{
     gestures::{Axis, GestureEvent},
     input::{Modifiers, route},
     navigation::{ClickSequence, ScrubSession},
-    persistence::SavedState,
+    persistence::{SavedState, StateWriter},
     scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
     visibility::ContextTracker,
 };
@@ -144,7 +144,7 @@ struct Runtime {
     rx: Receiver<Event>,
     config: Config,
     config_path: std::path::PathBuf,
-    state_path: Option<std::path::PathBuf>,
+    state_writer: Option<StateWriter>,
     engine: Engine,
     discovery: Discovery,
     ui: ui::Ui,
@@ -174,7 +174,6 @@ struct Runtime {
     recovery: SavedState,
     restored: BTreeSet<u64>,
     context_tracker: ContextTracker,
-    last_saved: Option<String>,
     _lock: std::fs::File,
 }
 impl Runtime {
@@ -231,6 +230,7 @@ impl Runtime {
                 Event::SpaceChanged => {
                     // Native Space navigation wins over an in-progress scrub.
                     self.clear_scroll();
+                    self.discovery.invalidate_navigation();
                     self.pending_focus = None;
                     self.switched_space = true;
                     self.manual_until = None;
@@ -308,8 +308,7 @@ impl Runtime {
                     self.clear_scroll();
                     // Navigation is explicit intent: bypass the modifier-only HUD delay.
                     self.overlay_deadline = None;
-                    self.reconcile(false);
-                    self.deadline = None;
+                    self.prepare_command(cmd);
                     if std::env::var_os("MAGNETIC_TRACE").is_some() {
                         eprintln!(
                             "Command {cmd:?}: context={}, windows={}, focused={:?}",
@@ -363,6 +362,8 @@ impl Runtime {
                 Event::Reload => self.reload(),
                 Event::Quit => {
                     self.save();
+                    // Join the writer only at shutdown so the final state is durable.
+                    self.state_writer.take();
                     self.ui.hide();
                     NSApplication::sharedApplication(self.mtm).terminate(None);
                 }
@@ -441,6 +442,40 @@ impl Runtime {
         self.gesture = None;
         self.motion_due = None;
         self.linger_until = None;
+    }
+    fn prepare_command(&mut self, command: Command) {
+        let navigation = matches!(
+            command,
+            Command::FocusNext | Command::FocusPrevious | Command::AppNext | Command::AppPrevious
+        );
+        if navigation && !self.modal {
+            if let Some(observed) = self.discovery.navigation_focus() {
+                let visible: Vec<_> = self
+                    .discovery
+                    .handles
+                    .values()
+                    .filter(|handle| handle.visible)
+                    .map(|handle| handle.id)
+                    .collect();
+                let focused = self
+                    .pending_focus
+                    .as_ref()
+                    .map_or(Some(observed), |pending| {
+                        pending.observed(
+                            self.engine.current,
+                            &visible,
+                            Some(observed),
+                            Instant::now(),
+                        )
+                    });
+                if let Some(focused) = focused {
+                    self.engine.focus(focused);
+                }
+                return;
+            }
+        }
+        self.reconcile(false);
+        self.deadline = None;
     }
     fn select_thumbnail(&mut self, context: u64, window: u64) {
         if !self.ui.is_visible()
@@ -765,6 +800,7 @@ impl Runtime {
                 }
                 self.ui.gesture_status(self.gestures.is_some());
                 self.config = c;
+                self.discovery.invalidate_navigation();
                 unsafe {
                     let q = QUEUE.load(Ordering::Acquire);
                     (*q).bindings = self.config.bindings.clone();
@@ -962,6 +998,7 @@ impl Runtime {
                         eprintln!("Window {id}: move rejected (AX {code})");
                     }
                     if let Some(actual) = frame(h.element.0) {
+                        self.discovery.observed_frame(id, actual);
                         self.engine.observed_frame(id, actual, false);
                     }
                 }
@@ -988,6 +1025,7 @@ impl Runtime {
                             self.engine.clear_snap(id);
                         }
                         self.engine.observed_frame(id, actual, false);
+                        self.discovery.observed_frame(id, actual);
                     }
                 }
             }
@@ -1089,18 +1127,8 @@ impl Runtime {
         }
     }
     fn save(&mut self) {
-        let Some(path) = self.state_path.as_ref() else {
-            return;
-        };
-        let state = SavedState::capture(&self.engine);
-        if let Ok(data) = serde_json::to_string(&state) {
-            if self.last_saved.as_ref() == Some(&data) {
-                return;
-            }
-            match state.write(path) {
-                Ok(()) => self.last_saved = Some(data),
-                Err(e) => eprintln!("Recovery write failed: {e}"),
-            }
+        if let Some(writer) = self.state_writer.as_ref() {
+            writer.save(SavedState::capture(&self.engine));
         }
     }
 }
@@ -1349,7 +1377,9 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             engine: Engine::new(config.gap),
             config,
             config_path,
-            state_path: Some(config_dir().join("state.json")),
+            state_writer: Some(
+                StateWriter::new(config_dir().join("state.json")).map_err(|e| e.to_string())?,
+            ),
             discovery: Discovery::new(),
             ui,
             observers: BTreeMap::new(),
@@ -1391,7 +1421,6 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),
             context_tracker: ContextTracker::default(),
-            last_saved: None,
             _lock: lock,
         });
         queue.runtime = &mut *runtime;

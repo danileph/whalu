@@ -25,13 +25,59 @@ pub struct Snapshot {
 pub struct Discovery {
     pub handles: BTreeMap<WindowId, NativeWindow>,
     next: u64,
+    navigation_state: Option<Vec<QuartzWindow>>,
 }
 impl Discovery {
     pub fn new() -> Self {
         Self {
             handles: BTreeMap::new(),
             next: 0,
+            navigation_state: None,
         }
+    }
+    /// Reuse metadata only while the complete Quartz window cohort and geometry
+    /// still match. Z-order changes from our own focus requests are harmless.
+    pub fn navigation_focus(&self) -> Option<WindowId> {
+        let previous = self.navigation_state.as_ref()?;
+        let mut current = quartz_windows(16)?;
+        if !navigation_unchanged(previous, &mut current) {
+            return None;
+        }
+        let pid = NSWorkspace::sharedWorkspace()
+            .frontmostApplication()?
+            .processIdentifier();
+        let app = unsafe { Owned::new(AXUIElementCreateApplication(pid)) }?;
+        unsafe { AXUIElementSetMessagingTimeout(app.0, 0.05) };
+        let focused = attr(app.0, "AXFocusedWindow")?;
+        let handle = self.handles.values().find(|handle| {
+            handle.pid == pid && handle.visible && unsafe { CFEqual(handle.element.0, focused.0) }
+        })?;
+        // A known standard window can acquire a sheet or enter fullscreen
+        // without changing its AX identity.
+        if text_attr(focused.0, "AXSubrole") != "AXStandardWindow"
+            || bool_attr(focused.0, "AXModal")
+            || bool_attr(focused.0, "AXFullScreen")
+            || attr(focused.0, "AXSheets").is_some_and(|s| unsafe { !array(s.0).is_empty() })
+        {
+            return None;
+        }
+        Some(handle.id)
+    }
+
+    pub fn observed_frame(&mut self, id: WindowId, frame: Rect) {
+        if let Some(quartz) = self.handles.get(&id).and_then(|handle| handle.quartz_id) {
+            if let Some(window) = self
+                .navigation_state
+                .as_mut()
+                .and_then(|windows| windows.iter_mut().find(|window| window.id == quartz))
+            {
+                window.frame = frame;
+            }
+        }
+    }
+
+    pub fn invalidate_navigation(&mut self) {
+        self.navigation_state = None;
     }
     /// A click must still belong to an on-screen Quartz window at dispatch time.
     pub fn is_onscreen(&self, id: WindowId) -> bool {
@@ -97,7 +143,9 @@ impl Discovery {
             unsafe {
                 AXUIElementSetMessagingTimeout(ax.0, 0.08);
             }
-            let focused = attr(ax.0, "AXFocusedWindow");
+            let focused = (front == Some(pid))
+                .then(|| attr(ax.0, "AXFocusedWindow"))
+                .flatten();
             if front == Some(pid) {
                 // A stale focused window from the old Space (or Finder's desktop)
                 // must not freeze navigation in the destination Space.
@@ -304,6 +352,10 @@ impl Discovery {
             }
         });
 
+        self.navigation_state = quartz.map(|mut windows| {
+            windows.sort_unstable_by_key(|window| window.id);
+            windows
+        });
         result
     }
 }
@@ -334,11 +386,16 @@ pub fn display_bounds(mtm: MainThreadMarker) -> BTreeMap<u32, Rect> {
     }
     result
 }
+#[derive(Clone, PartialEq)]
 struct QuartzWindow {
     id: u32,
     pid: i32,
     frame: Rect,
     onscreen: bool,
+}
+fn navigation_unchanged(previous: &[QuartzWindow], current: &mut [QuartzWindow]) -> bool {
+    current.sort_unstable_by_key(|window| window.id);
+    current == previous
 }
 fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
     unsafe {
@@ -387,5 +444,51 @@ mod tests {
         assert_eq!(match_quartz_window(None, &[11, 22], 1), None);
         assert_eq!(match_quartz_window(None, &[22], 1), Some(22));
         assert_eq!(match_quartz_window(None, &[], 1), None);
+    }
+}
+
+#[cfg(test)]
+mod navigation_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_accepts_focus_reordering_but_rejects_space_and_geometry_changes() {
+        let previous = vec![
+            QuartzWindow {
+                id: 11,
+                pid: 7,
+                frame: Rect::new(-800., 0., 800., 600.),
+                onscreen: true,
+            },
+            QuartzWindow {
+                id: 22,
+                pid: 7,
+                frame: Rect::new(-800., 0., 800., 600.),
+                onscreen: false,
+            },
+        ];
+        let mut reordered = previous.clone();
+        reordered.reverse();
+        assert!(navigation_unchanged(&previous, &mut reordered));
+
+        // Equally sized windows on separate Spaces cannot share cached visibility.
+        let mut switched = previous.clone();
+        switched[0].onscreen = false;
+        switched[1].onscreen = true;
+        assert!(!navigation_unchanged(&previous, &mut switched));
+
+        let mut moved = previous.clone();
+        moved[0].frame.x += 20.;
+        assert!(!navigation_unchanged(&previous, &mut moved));
+        let mut replaced = previous.clone();
+        replaced[0].id = 33;
+        assert!(!navigation_unchanged(&previous, &mut replaced));
+        let mut restarted = previous.clone();
+        restarted[0].pid = 8;
+        assert!(!navigation_unchanged(&previous, &mut restarted));
+        assert!(!navigation_unchanged(
+            &previous,
+            &mut previous[..1].to_vec()
+        ));
     }
 }
