@@ -1428,9 +1428,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         QUEUE.store(ptr, Ordering::Release);
         runtime.ui.gesture_status(runtime.gestures.is_some());
         runtime.reconcile(false);
-        eprintln!(
-            "Whalu running. Hold Control + Option to navigate; use the W menu to pause or quit."
-        );
+        eprintln!("Whalu running. Hold Fn + Control to navigate; use the W menu to pause or quit.");
         app.run();
         *DISPATCH.lock().unwrap() = None;
         QUEUE.store(null_mut(), Ordering::Release);

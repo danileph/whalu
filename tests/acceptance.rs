@@ -243,7 +243,7 @@ fn default_shortcuts_respect_native_and_reserved_keys() {
     }
     let m = Modifiers {
         control: true,
-        option: true,
+        function: true,
         ..Default::default()
     };
     assert_eq!(route(&c.bindings, 125, m), Some(Command::FocusNext));
@@ -252,7 +252,102 @@ fn default_shortcuts_respect_native_and_reserved_keys() {
         None
     );
     assert!(m.overlay(c.overlay_modifiers));
-    assert!(!Modifiers { option: false, ..m }.overlay(c.overlay_modifiers));
+    assert!(
+        !Modifiers {
+            function: false,
+            ..m
+        }
+        .overlay(c.overlay_modifiers)
+    );
+}
+#[test]
+fn fn_control_routes_every_default_action_and_releases_overview() {
+    let c = Config::default();
+    let base = Modifiers::from_flags((1 << 23) | (1 << 18));
+    assert!(base.function && base.control);
+    assert_eq!(base, c.overlay_modifiers);
+    for (key, command) in [
+        (126, Command::FocusPrevious),
+        (125, Command::FocusNext),
+        (123, Command::AppPrevious),
+        (124, Command::AppNext),
+        (49, Command::ToggleMode),
+    ] {
+        assert_eq!(route(&c.bindings, key, base), Some(command));
+        for modifiers in [
+            Modifiers {
+                function: false,
+                ..base
+            },
+            Modifiers {
+                control: false,
+                ..base
+            },
+            Modifiers {
+                function: false,
+                option: true,
+                ..base
+            },
+            Modifiers {
+                option: true,
+                ..base
+            },
+        ] {
+            assert_eq!(route(&c.bindings, key, modifiers), None);
+        }
+    }
+    for (key, direction) in [
+        (126, Direction::Up),
+        (125, Direction::Down),
+        (123, Direction::Left),
+        (124, Direction::Right),
+    ] {
+        assert_eq!(
+            route(
+                &c.bindings,
+                key,
+                Modifiers {
+                    command: true,
+                    ..base
+                }
+            ),
+            Some(Command::Snap(direction))
+        );
+    }
+    assert!(
+        !Modifiers {
+            control: false,
+            ..base
+        }
+        .overlay(c.overlay_modifiers)
+    );
+    assert!(
+        !Modifiers {
+            function: false,
+            ..base
+        }
+        .overlay(c.overlay_modifiers)
+    );
+    let mut legacy = c.bindings[0].clone();
+    legacy.modifiers.function = false;
+    legacy.modifiers.option = true;
+    let encoded = toml::to_string(&legacy)
+        .unwrap()
+        .replace("function = false\n", "");
+    let decoded: whalu::config::Binding = toml::from_str(&encoded).unwrap();
+    assert!(!decoded.modifiers.function);
+    assert!(decoded.modifiers.option);
+    let mut distinct = c.clone();
+    distinct.bindings.push(legacy);
+    distinct.validate().unwrap();
+    distinct.bindings[0].modifiers.function = false;
+    assert!(distinct.validate().is_err());
+    let example: Config = toml::from_str(include_str!("../whalu.example.toml")).unwrap();
+    example.validate().unwrap();
+    assert_eq!(
+        toml::to_string(&example).unwrap(),
+        toml::to_string(&c).unwrap()
+    );
 }
 #[test]
 fn config_round_trip_and_validation() {

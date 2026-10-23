@@ -55,7 +55,7 @@ impl Default for Config {
     fn default() -> Self {
         let base = Modifiers {
             control: true,
-            option: true,
+            function: true,
             ..Default::default()
         };
         let mut bindings = vec![];
@@ -117,16 +117,22 @@ impl Config {
             if b.keycode > 127 {
                 return Err("keycode must be in 0..=127".into());
             }
-            if !(m.control || m.option || m.command) {
-                return Err("bindings require Control, Option, or Command".into());
+            if !(m.control || m.option || m.command || m.function) {
+                return Err("bindings require Control, Option, Command, or Fn".into());
             }
-            if (m.control && !m.option && !m.command && [123, 124, 125, 126].contains(&b.keycode))
+            if (m.control
+                && !m.function
+                && !m.option
+                && !m.command
+                && [123, 124, 125, 126].contains(&b.keycode))
                 || (m.command && !m.control && !m.option && b.keycode == 48)
                 || (m.option && !m.control && !m.command && b.keycode == 46)
             {
                 return Err("binding uses a reserved macOS/spec shortcut".into());
             }
-            if !seen.insert((b.keycode, m.control, m.option, m.shift, m.command)) {
+            if !seen.insert((
+                b.keycode, m.control, m.option, m.shift, m.command, m.function,
+            )) {
                 return Err("duplicate shortcut".into());
             }
         }

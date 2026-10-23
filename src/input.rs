@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default, deny_unknown_fields)]
 pub struct Modifiers {
     pub control: bool,
+    pub function: bool,
     pub option: bool,
     pub shift: bool,
     pub command: bool,
@@ -13,6 +14,7 @@ impl Modifiers {
     pub fn from_flags(flags: u64) -> Self {
         Self {
             control: flags & (1 << 18) != 0,
+            function: flags & (1 << 23) != 0,
             option: flags & (1 << 19) != 0,
             shift: flags & (1 << 17) != 0,
             command: flags & (1 << 20) != 0,
@@ -20,6 +22,7 @@ impl Modifiers {
     }
     pub fn overlay(self, required: Self) -> bool {
         (!required.control || self.control)
+            && (!required.function || self.function)
             && (!required.option || self.option)
             && (!required.shift || self.shift)
             && (!required.command || self.command)
