@@ -35,9 +35,18 @@ pub fn request_access() {
     }
 }
 pub fn capture(targets: Vec<(u64, u32)>) {
+    capture_with(targets, |id, quartz, image| {
+        enqueue(Event::PreviewReady(id, quartz, image));
+    });
+}
+pub fn capture_with(
+    targets: Vec<(u64, u32)>,
+    completed: impl Fn(u64, u32, Option<Image>) + Send + Sync + 'static,
+) {
     if targets.is_empty() || !available() {
         return;
     }
+    let completed = std::sync::Arc::new(completed);
     let callback = RcBlock::new(
         move |content: *mut SCShareableContent, _: *mut NSError| unsafe {
             let windows = content.as_ref().map(|c| c.windows());
@@ -46,7 +55,7 @@ pub fn capture(targets: Vec<(u64, u32)>) {
                     .as_ref()
                     .and_then(|ws| ws.iter().find(|w| w.windowID() == quartz));
                 let Some(window) = window else {
-                    enqueue(Event::PreviewReady(id, quartz, None));
+                    completed(id, quartz, None);
                     continue;
                 };
                 let filter = SCContentFilter::initWithDesktopIndependentWindow(
@@ -61,9 +70,10 @@ pub fn capture(targets: Vec<(u64, u32)>) {
                 config.setShowsCursor(false);
                 config.setCapturesAudio(false);
                 config.setIgnoreShadowsSingleWindow(true);
+                let completed = completed.clone();
                 let done = RcBlock::new(move |image: *mut CGImage, _: *mut NSError| {
                     let retained = image.as_ref().map(Image::retain);
-                    enqueue(Event::PreviewReady(id, quartz, retained));
+                    completed(id, quartz, retained);
                 });
                 SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
                     &filter,

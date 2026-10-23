@@ -1,6 +1,7 @@
 //! Small C ABI surface. Create/Copy results are immediately wrapped in `Owned`.
 #![allow(unsafe_op_in_unsafe_fn)]
 use std::ffi::{c_char, c_void};
+use std::sync::OnceLock;
 pub type Ref = *const c_void;
 pub type MutRef = *mut c_void;
 #[repr(C)]
@@ -198,6 +199,21 @@ pub fn text_attr(e: Ref, key: &str) -> String {
     attr(e, key)
         .and_then(|v| unsafe { text(v.0) })
         .unwrap_or_default()
+}
+/// Resolve the actual WindowServer identity, including equal-title/geometry windows.
+/// This optional Accessibility SPI is also used by native window switchers:
+/// https://github.com/lwouis/alt-tab-macos/blob/master/src/macos/api-wrappers/AXUIElement.swift
+/// Resolve it at runtime so discovery can fall back if macOS stops providing it.
+pub fn window_id(element: Ref) -> Option<u32> {
+    type GetWindow = unsafe extern "C" fn(Ref, *mut u32) -> i32;
+    static GET_WINDOW: OnceLock<Option<GetWindow>> = OnceLock::new();
+    let get_window = GET_WINDOW.get_or_init(|| unsafe {
+        let symbol = libc::dlsym(libc::RTLD_DEFAULT, c"_AXUIElementGetWindow".as_ptr());
+        (!symbol.is_null()).then(|| std::mem::transmute::<*mut c_void, GetWindow>(symbol))
+    });
+    let mut id = 0;
+    let status = unsafe { get_window.as_ref()?(element, &mut id) };
+    (status == 0 && id != 0).then_some(id)
 }
 pub unsafe fn array(a: Ref) -> Vec<Ref> {
     if a.is_null() || CFGetTypeID(a) != CFArrayGetTypeID() {

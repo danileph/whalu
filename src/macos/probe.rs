@@ -261,9 +261,54 @@ pub fn smoke() -> Result<(), String> {
         if ids.iter().any(|id| !refreshed.visible.contains(id)) {
             return Err("Refresh lost an overlapping fixture window".into());
         }
+        let captures: std::collections::BTreeSet<_> = ids
+            .iter()
+            .filter_map(|id| discovery.handles[id].quartz_id)
+            .collect();
+        if captures.len() != ids.len()
+            || ids.iter().any(|id| {
+                let handle = &discovery.handles[id];
+                handle.quartz_id != window_id(handle.element.0)
+            })
+        {
+            return Err("Identical fixture windows did not receive independent capture IDs".into());
+        }
         println!(
-            "PASS: identical overlapping windows remain independent and clickable after refresh"
+            "PASS: identical overlapping windows retain independent capture IDs and click targets after refresh"
         );
+        if super::previews::available() {
+            let targets = ids
+                .iter()
+                .map(|id| (*id, discovery.handles[id].quartz_id.unwrap()))
+                .collect();
+            let (tx, rx) = std::sync::mpsc::channel();
+            super::previews::capture_with(targets, move |id, quartz, image| {
+                let _ = tx.send((id, quartz, image));
+            });
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let mut captured = std::collections::BTreeSet::new();
+            while std::time::Instant::now() < deadline && captured.len() < ids.len() {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
+                while let Ok((id, quartz, image)) = rx.try_recv() {
+                    let image = image.ok_or("An overlapping fixture thumbnail was empty")?;
+                    if discovery.handles[&id].quartz_id != Some(quartz)
+                        || objc2_core_graphics::CGImage::width(Some(image.get())) == 0
+                        || objc2_core_graphics::CGImage::height(Some(image.get())) == 0
+                    {
+                        return Err("Fixture thumbnail did not match its window capture ID".into());
+                    }
+                    captured.insert(id);
+                }
+            }
+            if captured.len() != ids.len() {
+                return Err(
+                    "Timed out capturing independent overlapping fixture thumbnails".into(),
+                );
+            }
+            println!("PASS: real screenshot content for every identical overlapping window");
+        } else {
+            println!("SKIP: thumbnail capture requires Screen Recording permission");
+        }
         let mut e = Engine::new(8.);
         e.bounds = snapshot.bounds;
         for w in snapshot.windows {

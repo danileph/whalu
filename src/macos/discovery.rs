@@ -177,13 +177,14 @@ impl Discovery {
                 // A stale focused window from the old Space (or Finder's desktop)
                 // must not freeze navigation in the destination Space.
                 result.modal = focused.as_ref().is_some_and(|f| {
-                    let known = self
-                        .handles
-                        .values()
-                        .find(|handle| {
-                            handle.pid == pid && unsafe { CFEqual(handle.element.0, f.0) }
-                        })
-                        .and_then(|handle| handle.quartz_id);
+                    let known = window_id(f.0).or_else(|| {
+                        self.handles
+                            .values()
+                            .find(|handle| {
+                                handle.pid == pid && unsafe { CFEqual(handle.element.0, f.0) }
+                            })
+                            .and_then(|handle| handle.quartz_id)
+                    });
                     let shown = known.map_or_else(
                         || {
                             frame(f.0).is_some_and(|r| {
@@ -258,17 +259,22 @@ impl Discovery {
                     .flatten()
                     .filter(|other| other.near(frame))
                     .count();
-                let quartz_id = match_quartz_window(
-                    known,
-                    &candidates,
-                    &frames
-                        .iter()
-                        .zip(&titles)
-                        .filter(|(other, _)| other.is_some_and(|other| other.near(frame)))
-                        .map(|(_, title)| title.as_str())
-                        .collect::<Vec<_>>(),
-                    title,
-                );
+                let direct = window_id(element);
+                let quartz_id = if let Some(id) = direct {
+                    verified_quartz_id(id, pid, quartz.as_deref().unwrap_or_default())
+                } else {
+                    match_quartz_window(
+                        known,
+                        &candidates,
+                        &frames
+                            .iter()
+                            .zip(&titles)
+                            .filter(|(other, _)| other.is_some_and(|other| other.near(frame)))
+                            .map(|(_, title)| title.as_str())
+                            .collect::<Vec<_>>(),
+                        title,
+                    )
+                };
                 // A refreshed AX proxy may still describe the same Quartz
                 // window. Reuse that identity only if its old AX object is not
                 // another window in this application's current enumeration.
@@ -294,7 +300,7 @@ impl Discovery {
                             .iter()
                             .any(|w| w.id == cg && w.pid == pid && w.onscreen)
                     } else {
-                        cohort_is_onscreen(&candidates, ax_matches)
+                        direct.is_none() && cohort_is_onscreen(&candidates, ax_matches)
                     };
                 let display = result
                     .bounds
@@ -377,6 +383,13 @@ impl Discovery {
 /// belongs to the system authorization flow and cannot be navigated normally.
 fn manageable_owner(app_id: &str) -> bool {
     app_id != "com.apple.accessibility.universalAccessAuthWarn"
+}
+/// Never attach a capture ID to an AX window owned by a different process.
+fn verified_quartz_id(id: u32, pid: i32, windows: &[QuartzWindow]) -> Option<u32> {
+    windows
+        .iter()
+        .any(|window| window.id == id && window.pid == pid)
+        .then_some(id)
 }
 /// AX focus can lag a Space transition. Never use that stale focus to assign an
 /// on-screen window's identity to an equally sized off-Space AX window.
@@ -515,6 +528,18 @@ mod tests {
             match_quartz_window(None, &candidates, &titles, titles[1]),
             Some(22)
         );
+    }
+
+    #[test]
+    fn native_capture_ids_distinguish_identical_windows_and_validate_the_owner() {
+        let first = quartz(11, "Recents", true);
+        let second = quartz(22, "Recents", false);
+        let windows = [first, second];
+        assert_eq!(verified_quartz_id(11, 7, &windows), Some(11));
+        assert_eq!(verified_quartz_id(22, 7, &windows), Some(22));
+        // A stale or cross-process ID must not fall back to its identical peer.
+        assert_eq!(verified_quartz_id(33, 7, &windows), None);
+        assert_eq!(verified_quartz_id(11, 8, &windows), None);
     }
 
     #[test]
