@@ -130,7 +130,7 @@ impl Discovery {
                 .bundleIdentifier()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("pid:{pid}"));
-            if ignored.contains(&app_id) {
+            if ignored.contains(&app_id) || !manageable_owner(&app_id) {
                 continue;
             }
             let app_name = app
@@ -359,6 +359,11 @@ impl Discovery {
         result
     }
 }
+/// macOS exposes this permission prompt as an AXStandardWindow, although it
+/// belongs to the system authorization flow and cannot be navigated normally.
+fn manageable_owner(app_id: &str) -> bool {
+    app_id != "com.apple.accessibility.universalAccessAuthWarn"
+}
 /// AX focus can lag a Space transition. Never use that stale focus to assign an
 /// on-screen window's identity to an equally sized off-Space AX window.
 fn match_quartz_window(known: Option<u32>, candidates: &[u32], ax_matches: usize) -> Option<u32> {
@@ -429,7 +434,23 @@ fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
 
 #[cfg(test)]
 mod tests {
-    use super::match_quartz_window;
+    use super::{manageable_owner, match_quartz_window};
+
+    #[test]
+    fn accessibility_authorization_helper_is_never_an_application_window_owner() {
+        assert!(!manageable_owner(
+            "com.apple.accessibility.universalAccessAuthWarn"
+        ));
+        // Do not filter real applications or third-party accessory windows.
+        for app in [
+            "com.apple.systempreferences",
+            "com.apple.finder",
+            "com.openai.codex",
+            "org.hammerspoon.Hammerspoon",
+        ] {
+            assert!(manageable_owner(app));
+        }
+    }
 
     #[test]
     fn off_space_identity_is_not_reassigned_to_the_visible_same_size_window() {
