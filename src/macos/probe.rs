@@ -96,12 +96,21 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         let mut windows = vec![];
-        let titles = ["Magnetic fixture A", "Magnetic fixture B"];
-        for (i, title) in titles.iter().enumerate() {
+        let titles = [
+            "Magnetic fixture A",
+            "Magnetic fixture B",
+            "Magnetic fixture C",
+            "Magnetic fixture D",
+        ];
+        for (i, title) in titles
+            .iter()
+            .take(if constrained { 2 } else { 4 })
+            .enumerate()
+        {
             let w = NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
                 NSRect::new(
-                    NSPoint::new(130. + i as f64 * 240., 180.),
+                    NSPoint::new(130. + i as f64 * 120., 180.),
                     NSSize::new(400., 300.),
                 ),
                 NSWindowStyleMask::Titled
@@ -180,7 +189,7 @@ pub fn smoke() -> Result<(), String> {
                 .filter(|h| h.pid == pid && h.visible)
                 .map(|h| h.id)
                 .collect();
-            if ids.len() == 2 {
+            if ids.len() == 4 {
                 found = Some((s, ids));
                 break;
             }
@@ -239,7 +248,7 @@ pub fn smoke() -> Result<(), String> {
         }
         println!("PASS: native application activation and target-window focus/raise");
         // Verify the continuous selector against real AX focus while its HUD stays
-        // visible. Only the two child-process fixture windows are candidates.
+        // visible. Only child-process fixture windows are candidates.
         let ui = Ui::new(mtm);
         let mut scrub = ScrubSession::new(&e, Axis::Vertical).ok_or("No scrub candidates")?;
         let rectangles: Vec<_> = ids

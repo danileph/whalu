@@ -1,8 +1,59 @@
-//! Stable candidate order and reversible selection for one uninterrupted swipe.
+//! Stable stack order for continuous swipes and sequential thumbnail clicks.
 use crate::{
     core::{Engine, WindowId},
     gestures::Axis,
 };
+use std::collections::VecDeque;
+
+/// A click visits adjacent windows in a snapshot of the current stack. Each
+/// advance requires the previous focus to have succeeded, so external focus,
+/// removed windows, and Space changes stop travel instead of skipping entries.
+pub struct ClickSequence {
+    context: u64,
+    expected: Option<WindowId>,
+    remaining: VecDeque<WindowId>,
+}
+impl ClickSequence {
+    pub fn new(engine: &Engine, target: WindowId) -> Option<Self> {
+        let ctx = engine.context()?;
+        let end = ctx.order.iter().position(|id| *id == target)?;
+        let start = ctx
+            .focused
+            .and_then(|id| ctx.order.iter().position(|entry| *entry == id));
+        let remaining = match start {
+            Some(start) if start < end => ctx.order[start + 1..=end].iter().copied().collect(),
+            Some(start) if start > end => ctx.order[end..start].iter().rev().copied().collect(),
+            Some(_) => VecDeque::new(),
+            None => VecDeque::from([target]),
+        };
+        Some(Self {
+            context: engine.current,
+            expected: ctx.focused,
+            remaining,
+        })
+    }
+    pub fn advance(&mut self, engine: &Engine) -> Option<WindowId> {
+        let valid = self.context == engine.current
+            && engine.context().is_some_and(|ctx| {
+                ctx.focused == self.expected
+                    && self
+                        .remaining
+                        .iter()
+                        .all(|id| ctx.order.contains(id) && engine.windows.contains_key(id))
+            });
+        if !valid {
+            self.remaining.clear();
+            return None;
+        }
+        let next = self.remaining.pop_front()?;
+        self.expected = Some(next);
+        Some(next)
+    }
+    pub fn pending(&self) -> bool {
+        !self.remaining.is_empty()
+    }
+}
+
 #[derive(Debug)]
 pub struct ScrubSession {
     pub context: u64,

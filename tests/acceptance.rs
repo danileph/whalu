@@ -3,6 +3,7 @@ use magnetic::{
     core::{Command, Effect, Engine, Mode, Window},
     geometry::{Direction, Rect, Region},
     input::{Modifiers, route},
+    navigation::ClickSequence,
     persistence::SavedState,
 };
 fn window(id: u64, app: &str, frame: Rect) -> Window {
@@ -40,6 +41,69 @@ fn stack_visits_each_individual_window() {
     assert_eq!(e.command(Command::FocusPrevious), vec![Effect::Focus(2)]);
     e.focus(4);
     assert_eq!(e.command(Command::FocusNext), vec![Effect::Focus(1)]);
+}
+#[test]
+fn thumbnail_click_visits_intermediate_windows_in_both_directions_without_wrapping() {
+    for (start, target, expected) in [
+        (1, 4, vec![1, 2, 3, 4]),
+        (4, 1, vec![4, 3, 2, 1]),
+        (2, 4, vec![2, 3, 4]),
+        (3, 1, vec![3, 2, 1]),
+        (2, 3, vec![2, 3]),
+        (3, 3, vec![3]),
+    ] {
+        let mut e = engine();
+        e.focus(start);
+        let mut click = ClickSequence::new(&e, target).unwrap();
+        let mut visible = vec![start];
+        while let Some(window) = click.advance(&e) {
+            e.focus(window);
+            visible.push(e.focused().unwrap());
+        }
+        assert_eq!(visible, expected);
+        assert_eq!(e.context().unwrap().order, vec![1, 2, 3, 4]);
+        assert!(!click.pending());
+    }
+}
+#[test]
+fn thumbnail_travel_stops_after_failed_focus_external_focus_space_change_or_removal() {
+    for interruption in 0..5 {
+        let mut e = engine();
+        e.focus(1);
+        let mut click = ClickSequence::new(&e, 4).unwrap();
+        assert_eq!(click.advance(&e), Some(2));
+        if interruption != 0 {
+            e.focus(2);
+        }
+        match interruption {
+            0 => {} // The requested focus did not succeed.
+            1 => e.focus(1),
+            2 => e.set_visible(2, &[1, 2, 3, 4], Some(2)),
+            3 => {
+                e.windows.remove(&3);
+            }
+            4 => e.set_visible(1, &[1, 2, 3], Some(2)),
+            _ => unreachable!(),
+        }
+        assert_eq!(click.advance(&e), None);
+        assert!(!click.pending());
+    }
+}
+#[test]
+fn thumbnail_retarget_starts_at_current_selection_and_handles_unfocused_contexts() {
+    let mut e = engine();
+    e.focus(1);
+    let mut first = ClickSequence::new(&e, 4).unwrap();
+    e.focus(first.advance(&e).unwrap());
+    assert_eq!(e.focused(), Some(2));
+    let mut reversed = ClickSequence::new(&e, 1).unwrap();
+    assert_eq!(reversed.advance(&e), Some(1));
+    assert!(!reversed.pending());
+    assert!(ClickSequence::new(&e, 99).is_none());
+    e.set_visible(1, &[1, 2, 3, 4], None);
+    let mut unfocused = ClickSequence::new(&e, 4).unwrap();
+    assert_eq!(unfocused.advance(&e), Some(4));
+    assert!(!unfocused.pending());
 }
 #[test]
 fn app_navigation_is_window_based() {

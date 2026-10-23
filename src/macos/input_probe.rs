@@ -45,6 +45,7 @@ pub(super) fn run(
         tap: tap.clone(),
         gestures: None,
         gesture: None,
+        click_travel: None,
         motion_due: None,
         linger_until: None,
         motion_tick: Instant::now(),
@@ -160,7 +161,7 @@ pub(super) fn run(
             break;
         }
     }
-    if runtime.engine.focused() != Some(ids[1])
+    if runtime.engine.focused() != ids.last().copied()
         || runtime.gesture.is_some()
         || runtime.motion_due.is_some()
         || !runtime.ui.is_visible()
@@ -228,10 +229,106 @@ pub(super) fn run(
     println!(
         "PASS: thumbnail click selects and focuses its native fixture, cancels scrolling, preserves overview feedback and rejects stale targets"
     );
+    // Exercise a distant click in both directions using four real windows.
+    // Each timer turn must raise exactly one adjacent fixture, even if overdue.
+    for reverse in [false, true] {
+        runtime.clear_scroll();
+        let path: Vec<_> = if reverse {
+            ids.iter().rev().copied().collect()
+        } else {
+            ids.clone()
+        };
+        runtime.apply(vec![Effect::Focus(path[0])]);
+        runtime.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        runtime.render();
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.4, false);
+        }
+        let epoch = runtime.ui.visibility_epoch();
+        let point = runtime.ui.thumbnail_point(
+            *path.last().unwrap(),
+            objc2_foundation::NSPoint::new(64., 41.),
+        )?;
+        let ui::ClickRoute::Select { context, window } = runtime.ui.clicks.route(1, point) else {
+            return Err("Distant fixture thumbnail click missed".into());
+        };
+        tx.send(Event::SelectThumbnail { context, window })
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.ui.clicks.route(2, point);
+        for (index, expected) in path.iter().enumerate().skip(1) {
+            if index > 1 {
+                let due = runtime
+                    .click_travel
+                    .as_ref()
+                    .ok_or("Click travel stopped early")?
+                    .due;
+                let previous = runtime.engine.focused();
+                runtime.advance_click(due - Duration::from_millis(1));
+                if runtime.engine.focused() != previous {
+                    return Err("Click skipped its visible step interval".into());
+                }
+                runtime.advance_click(due + Duration::from_secs(1));
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false);
+            }
+            let handle = &runtime.discovery.handles[expected];
+            let actual = attr(app.0, "AXFocusedWindow")
+                .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) });
+            if runtime.engine.focused() != Some(*expected)
+                || !actual
+                || !runtime.ui.is_visible()
+                || runtime.ui.is_key()
+                || runtime.ui.visibility_epoch() != epoch
+            {
+                return Err(format!("Click travel skipped fixture {index} in {path:?}"));
+            }
+        }
+        if runtime.click_travel.is_some()
+            || runtime.linger_until.is_none()
+            || runtime.engine.context().unwrap().order != ids
+        {
+            return Err("Click travel failed to stop with feedback and stable stack order".into());
+        }
+    }
+    let context = runtime.engine.current;
+    runtime.select_thumbnail(context, ids[3]);
+    if runtime.engine.focused() != Some(ids[1]) || runtime.click_travel.is_none() {
+        return Err("Distant click did not start at its adjacent entry".into());
+    }
+    runtime.select_thumbnail(context, ids[0]);
+    runtime.advance_click(Instant::now() + Duration::from_secs(1));
+    if runtime.engine.focused() != Some(ids[0]) || runtime.click_travel.is_some() {
+        return Err("Second click did not replace the old destination".into());
+    }
+    runtime.select_thumbnail(context, ids[3]);
+    runtime.contact_began();
+    runtime.advance_click(Instant::now() + Duration::from_secs(1));
+    if runtime.engine.focused() != Some(ids[1])
+        || runtime.click_travel.is_some()
+        || !runtime.ui.is_visible()
+    {
+        return Err("Fresh contact did not catch click travel".into());
+    }
+    runtime.select_thumbnail(context, ids[3]);
+    tx.send(Event::Command(Command::FocusPrevious))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.click_travel.is_some() || runtime.engine.focused() != Some(ids[1]) {
+        return Err("Keyboard input did not catch click travel".into());
+    }
+    println!(
+        "PASS: real fixture click travel follows 1→2→3→4 and 4→3→2→1 with spaced, non-key feedback; retargeting, touch and keyboard interrupt travel"
+    );
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
     runtime.drain();
-    if runtime.gesture.is_some() || runtime.linger_until.is_some() || runtime.ui.is_visible() {
+    if runtime.gesture.is_some()
+        || runtime.click_travel.is_some()
+        || runtime.linger_until.is_some()
+        || runtime.ui.is_visible()
+    {
         return Err("Space change did not abandon navigation".into());
     }
     if let Some(timer) = runtime.timer.take() {

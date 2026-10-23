@@ -15,7 +15,7 @@ use magnetic::{
     core::{Command, Effect, Engine},
     gestures::{Axis, GestureEvent},
     input::{Modifiers, route},
-    navigation::ScrubSession,
+    navigation::{ClickSequence, ScrubSession},
     persistence::SavedState,
     scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
     visibility::ContextTracker,
@@ -110,6 +110,10 @@ struct ActiveScroll {
     changed: bool,
     sustained: bool,
 }
+struct ClickTravel {
+    sequence: ClickSequence,
+    due: Instant,
+}
 struct Runtime {
     mtm: MainThreadMarker,
     rx: Receiver<Event>,
@@ -123,6 +127,7 @@ struct Runtime {
     tap: Owned,
     gestures: Option<trackpad::Monitor>,
     gesture: Option<ActiveScroll>,
+    click_travel: Option<ClickTravel>,
     motion_due: Option<Instant>,
     linger_until: Option<Instant>,
     motion_tick: Instant,
@@ -162,6 +167,7 @@ impl Runtime {
                 self.space_until,
                 self.motion_due,
                 self.linger_until,
+                self.click_travel.as_ref().map(|travel| travel.due),
             ]
             .into_iter()
             .flatten()
@@ -358,9 +364,11 @@ impl Runtime {
             self.render();
         }
         self.advance_scroll(now);
+        self.advance_click(now);
         self.schedule();
     }
     fn clear_scroll(&mut self) {
+        self.click_travel = None;
         self.gesture = None;
         self.motion_due = None;
         self.linger_until = None;
@@ -383,17 +391,61 @@ impl Runtime {
                 .context()
                 .is_some_and(|ctx| ctx.order.contains(&window))
         {
-            let old = self.engine.focused();
-            self.apply(vec![Effect::Focus(window)]);
-            if self.engine.focused() != old {
-                self.reflow();
-            }
-            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+            self.click_travel =
+                ClickSequence::new(&self.engine, window).map(|sequence| ClickTravel {
+                    sequence,
+                    due: Instant::now(),
+                });
+            self.linger_until = None;
+            self.advance_click(Instant::now());
         }
         self.render();
         self.save();
     }
+    fn advance_click(&mut self, now: Instant) {
+        if !self
+            .click_travel
+            .as_ref()
+            .is_some_and(|travel| travel.due <= now)
+        {
+            return;
+        }
+        let next = self
+            .click_travel
+            .as_mut()
+            .and_then(|travel| travel.sequence.advance(&self.engine));
+        if self.engine.frozen || self.space_until.is_some() {
+            self.clear_scroll();
+            self.render();
+            return;
+        }
+        if let Some(window) = next {
+            self.apply(vec![Effect::Focus(window)]);
+            if self.engine.focused() == Some(window)
+                && self
+                    .click_travel
+                    .as_ref()
+                    .is_some_and(|travel| travel.sequence.pending())
+            {
+                // One visible step per timer turn, even after a slow AX call.
+                // Retarget the wheel from its live presentation between steps.
+                self.click_travel.as_mut().unwrap().due =
+                    Instant::now() + Duration::from_millis(140);
+                self.render();
+                return;
+            }
+        }
+        self.click_travel = None;
+        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        self.reflow();
+        self.render();
+        self.save();
+    }
     fn contact_began(&mut self) {
+        if self.click_travel.take().is_some() {
+            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+            self.save();
+        }
         let catch = self
             .gesture
             .as_ref()
@@ -420,6 +472,9 @@ impl Runtime {
         }
         if self.space_until.is_some() || self.mouse {
             return;
+        }
+        if self.click_travel.take().is_some() {
+            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
         }
         let reuse = self
             .linger_until
@@ -710,10 +765,11 @@ impl Runtime {
         }
         self.engine
             .set_visible(context, &snap.visible, snap.focused);
-        if self
-            .gesture
-            .as_ref()
-            .is_some_and(|active| active.session.context != context)
+        if (context_changed && self.click_travel.is_some())
+            || self
+                .gesture
+                .as_ref()
+                .is_some_and(|active| active.session.context != context)
         {
             self.clear_scroll();
         }
@@ -730,7 +786,11 @@ impl Runtime {
         self.save();
     }
     fn reflow(&mut self) {
-        if !self.paused && self.config.magnetic && self.gesture.is_none() {
+        if !self.paused
+            && self.config.magnetic
+            && self.gesture.is_none()
+            && self.click_travel.is_none()
+        {
             self.apply(self.engine.plan());
         }
     }
@@ -898,7 +958,10 @@ impl Runtime {
     }
     fn render(&self) {
         let keyboard = self.held && self.overlay_deadline.is_none();
-        if (keyboard || self.gesture.is_some() || self.linger_until.is_some())
+        if (keyboard
+            || self.gesture.is_some()
+            || self.click_travel.is_some()
+            || self.linger_until.is_some())
             && self.space_until.is_none()
             && self.config.overlay
         {
@@ -1169,6 +1232,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             ui,
             observers: BTreeMap::new(),
             gesture: None,
+            click_travel: None,
             motion_due: None,
             linger_until: None,
             motion_tick: Instant::now(),
