@@ -59,6 +59,7 @@ unsafe extern "C" {
     pub fn CFBooleanGetValue(value: Ref) -> bool;
     pub fn CFArrayGetCount(a: Ref) -> isize;
     pub fn CFArrayGetValueAtIndex(a: Ref, i: isize) -> Ref;
+    pub fn CFArrayCreate(allocator: Ref, values: *const Ref, count: isize, callbacks: Ref) -> Ref;
     pub fn CFDictionaryGetValue(d: Ref, key: Ref) -> Ref;
     pub fn CFDictionaryCreate(
         a: Ref,

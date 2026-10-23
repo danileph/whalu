@@ -6,6 +6,7 @@ mod input_probe;
 mod onboarding;
 mod previews;
 pub mod probe;
+mod spaces;
 mod trackpad;
 mod ui;
 use discovery::Discovery;
@@ -226,6 +227,14 @@ impl Runtime {
     }
     fn drain(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
+            if std::env::var_os("WHALU_TRACE").is_some()
+                && matches!(
+                    event,
+                    Event::SpaceChanged | Event::NativeGesture | Event::Gesture(..)
+                )
+            {
+                eprintln!("Input: {event:?}");
+            }
             match event {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
                 Event::SpaceChanged => self.yield_to_system(true),
@@ -955,6 +964,9 @@ impl Runtime {
                 self.deadline = Some(Instant::now());
                 continue;
             }
+            if std::env::var_os("WHALU_TRACE").is_some() {
+                eprintln!("Apply {effect:?}: pid={}, capture={:?}", h.pid, h.quartz_id);
+            }
             match effect {
                 Effect::Focus(id) => unsafe {
                     AXUIElementSetMessagingTimeout(h.element.0, 0.05);
@@ -1266,7 +1278,12 @@ pub fn doctor() -> bool {
             if trusted { "granted" } else { "REQUIRED" }
         );
         println!(
-            "Native Space IDs: unavailable through public APIs; conservative visible-window contexts"
+            "Native Space visibility: {}",
+            if spaces::SpaceVisibility::read().is_some() {
+                "read-only membership and animation checks"
+            } else {
+                "Quartz visibility cohort fallback"
+            }
         );
         println!(
             "Three-finger contact listener: experimental private framework; owned scroll packets suppressed by the public event tap"
