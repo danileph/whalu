@@ -136,6 +136,12 @@ unsafe extern "C" {
         info: MutRef,
     ) -> Ref;
     pub fn CGEventTapEnable(tap: Ref, enable: bool);
+    pub fn CGPreflightPostEventAccess() -> bool;
+    pub fn CGEventSetLocation(event: Ref, point: Point);
+    pub fn CGEventSetFlags(event: Ref, flags: u64);
+    pub fn CGEventSetIntegerValueField(event: Ref, field: u32, value: i64);
+    pub fn CGEventSetDoubleValueField(event: Ref, field: u32, value: f64);
+    pub fn CGEventPost(location: u32, event: Ref);
     pub fn CGEventGetFlags(event: Ref) -> u64;
     pub fn CGEventCreate(source: Ref) -> Ref;
     pub fn CGEventGetLocation(event: Ref) -> Point;

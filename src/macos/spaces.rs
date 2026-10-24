@@ -1,6 +1,5 @@
-//! Move and follow through WindowServer’s managed-Space bridge.
-//! Complete both halves of the display swap: set destination, then hide origin.
-//! No synthesized input, title-bar interaction, or cursor movement.
+//! Move membership through WindowServer, then let Dock animate the Space swipe.
+//! Gesture events target the window’s display without moving the cursor.
 use super::ffi::*;
 use objc2::{
     msg_send,
@@ -11,11 +10,13 @@ use objc2::{
 use std::{
     ffi::CStr,
     ptr::null,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
 type Connection = unsafe extern "C" fn() -> i32;
 type Displays = unsafe extern "C" fn(i32) -> Ref;
+type Animating = unsafe extern "C" fn(i32, Ref) -> bool;
 type WindowSpaces = unsafe extern "C" fn(i32, i32, Ref) -> Ref;
 
 unsafe fn symbol<T: Copy>(name: &CStr) -> Result<T, String> {
@@ -33,6 +34,7 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
     unsafe {
         let connection: Connection = symbol(c"SLSMainConnectionID")?;
         let displays: Displays = symbol(c"SLSCopyManagedDisplaySpaces")?;
+        let animating: Animating = symbol(c"SLSManagedDisplayIsAnimating")?;
         let connection = connection();
         let Some(source) = window_space(window)? else {
             return Ok(false);
@@ -77,33 +79,21 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
             .ok_or("Cannot create window identity")?;
             let windows = Owned::new(CFArrayCreate(null(), &window_value.0, 1, null()))
                 .ok_or("Cannot create window list")?;
-            let source_number =
-                Owned::new(CFNumberCreate(null(), 4, (&source as *const u64).cast()))
-                    .ok_or("Cannot create source identity")?;
-            let sources = Owned::new(CFArrayCreate(null(), &source_number.0, 1, null()))
-                .ok_or("Cannot create source list")?;
-            // Resolve and validate every operation before mutating membership.
             let move_class = AnyClass::get(c"SLSBridgedMoveWindowsToManagedSpaceOperation")
                 .ok_or("Native Space transfer unavailable")?;
             let allocated: *mut AnyObject = msg_send![move_class, alloc];
             let operation: *mut AnyObject = msg_send![allocated, initWithWindows: &*(windows.0 as *const AnyObject), spaceID: target];
             let movement =
                 Retained::from_raw(operation).ok_or("Cannot create native Space transfer")?;
-            let switch_class = AnyClass::get(c"SLSBridgedManagedDisplaySetCurrentSpaceOperation")
-                .ok_or("Native Space switching unavailable")?;
-            let allocated: *mut AnyObject = msg_send![switch_class, alloc];
-            let operation: *mut AnyObject = msg_send![allocated, initWithDisplayIdentifier: &*(identifier as *const AnyObject), spaceID: target];
-            let switching =
-                Retained::from_raw(operation).ok_or("Cannot create native Space switch")?;
-            let hide_class = AnyClass::get(c"SLSBridgedHideSpacesOperation")
-                .ok_or("Native Space compositor transition unavailable")?;
-            let allocated: *mut AnyObject = msg_send![hide_class, alloc];
-            let operation: *mut AnyObject =
-                msg_send![allocated, initWithSpaces: &*(sources.0 as *const AnyObject)];
-            let hiding = Retained::from_raw(operation).ok_or("Cannot create native source hide")?;
-            for class in [move_class, switch_class, hide_class] {
-                validate_bridge(class)?;
-            }
+            validate_bridge(move_class)?;
+            let rectangle = frame(element).ok_or("Cannot locate focused window display")?;
+            let animation = DockSwipe::new(
+                Point {
+                    x: rectangle.x + rectangle.width / 2.,
+                    y: rectangle.y + rectangle.height / 2.,
+                },
+                forward,
+            )?;
             // Keep a source-only witness: merely changing WindowServer's current
             // Space pointer can leave these windows rendered on the destination.
             let witnesses: Vec<_> = onscreen()
@@ -118,7 +108,8 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 }
                 std::thread::sleep(Duration::from_millis(15));
             }
-            perform_bridge(switch_class, &switching);
+            let mut animated =
+                animation.perform(connection, identifier, animating, window, &witnesses);
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 let current = Owned::new(displays(connection))
@@ -130,7 +121,9 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                         && number(dict(dict(display, "Current Space"), "ManagedSpaceID")) as u64
                             == target
                 });
-                if active {
+                let running = animating(connection, identifier);
+                animated |= running;
+                if active && !running {
                     break;
                 }
                 if Instant::now() >= deadline {
@@ -144,9 +137,6 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            // A changed current-Space pointer alone leaves origin windows
-            // composited. Hide only after confirming the destination was set.
-            perform_bridge(hide_class, &hiding);
             let deadline = Instant::now() + Duration::from_secs(1);
             loop {
                 let visible = onscreen();
@@ -154,6 +144,9 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                     && visible.contains(&window)
                     && witnesses.iter().all(|id| !visible.contains(id))
                 {
+                    if animated {
+                        ANIMATED_TRANSFERS.fetch_add(1, Ordering::Relaxed);
+                    }
                     return Ok(true);
                 }
                 if Instant::now() >= deadline {
@@ -191,6 +184,125 @@ fn onscreen() -> Vec<u32> {
             .unwrap_or_default()
     }
 }
+
+// Private Dock gesture encoding documented by Mac Mouse Fix and dockswipe.
+// https://github.com/oomol-lab/dockswipe (MIT; see THIRD_PARTY_NOTICES.md).
+// This path deliberately emits no mouse move, button, or keyboard events.
+struct DockSwipe {
+    frames: Vec<(Owned, Owned)>,
+    end: (Owned, Owned),
+}
+impl DockSwipe {
+    unsafe fn new(point: Point, forward: bool) -> Result<Self, String> {
+        unsafe {
+            let mut system: libc::utsname = std::mem::zeroed();
+            if libc::uname(&mut system) != 0
+                || CStr::from_ptr(system.release.as_ptr())
+                    .to_string_lossy()
+                    .split('.')
+                    .next()
+                    .and_then(|major| major.parse::<u32>().ok())
+                    .is_none_or(|major| major >= 26)
+            {
+                return Err(
+                    "Native Dock gesture encoding is unsupported on this macOS version".into(),
+                );
+            }
+            if !CGPreflightPostEventAccess() {
+                return Err("Native Space animation requires Accessibility permission".into());
+            }
+            let direction = if forward { 1. } else { -1. };
+            let frames = (0..18)
+                .map(|step| {
+                    Self::event(
+                        point,
+                        if step == 0 { 1 } else { 2 },
+                        direction * (step + 1) as f64 / 12.,
+                        0.,
+                    )
+                })
+                .collect::<Result<_, _>>()?;
+            let end = Self::event(point, 4, direction * 1.5, direction * (100. / 12.))?;
+            Ok(Self { frames, end })
+        }
+    }
+    unsafe fn event(
+        point: Point,
+        phase: i64,
+        progress: f64,
+        velocity: f64,
+    ) -> Result<(Owned, Owned), String> {
+        unsafe {
+            let gesture =
+                Owned::new(CGEventCreate(null())).ok_or("Cannot create Dock gesture marker")?;
+            let dock = Owned::new(CGEventCreate(null())).ok_or("Cannot create Dock swipe")?;
+            for (event, kind) in [(&gesture, 29.), (&dock, 30.)] {
+                CGEventSetDoubleValueField(event.0, 55, kind);
+                CGEventSetLocation(event.0, point);
+                CGEventSetFlags(event.0, 0);
+                CGEventSetIntegerValueField(event.0, 42, DOCK_INPUT_TAG);
+            }
+            for (field, value) in [
+                (110, 23.),
+                (132, phase as f64),
+                (134, phase as f64),
+                (124, progress),
+                (123, 1.),
+                (165, 1.),
+                (119, f32::from_bits(1) as f64),
+                (139, f32::from_bits(1) as f64),
+                (129, velocity),
+                (130, velocity),
+            ] {
+                CGEventSetDoubleValueField(dock.0, field, value);
+            }
+            CGEventSetIntegerValueField(dock.0, 135, i64::from((progress as f32).to_bits()));
+            CGEventSetIntegerValueField(dock.0, 136, 0);
+            Ok((dock, gesture))
+        }
+    }
+    unsafe fn post(pair: &(Owned, Owned)) {
+        unsafe {
+            CGEventPost(1, pair.0.0);
+            CGEventPost(1, pair.1.0);
+        }
+    }
+    unsafe fn perform(
+        &self,
+        connection: i32,
+        display: Ref,
+        animating: Animating,
+        window: u32,
+        witnesses: &[u32],
+    ) -> bool {
+        unsafe {
+            let mut observed = false;
+            for pair in &self.frames {
+                Self::post(pair);
+                std::thread::sleep(Duration::from_millis(8));
+                // Interactive Dock swipes do not consistently set the managed
+                // display's animation bit. During a real partial reveal, both
+                // the destination window and source-only witnesses composite;
+                // the final visibility check requires the witnesses to vanish.
+                let visible = onscreen();
+                observed |= animating(connection, display)
+                    || (visible.contains(&window)
+                        && witnesses.iter().any(|id| visible.contains(id)));
+            }
+            Self::post(&self.end);
+            // Repeat Ended after Dock's native completion to avoid a dropped
+            // terminal gesture leaving the desktop caught between Spaces.
+            std::thread::sleep(Duration::from_millis(200));
+            Self::post(&self.end);
+            observed
+        }
+    }
+}
+static ANIMATED_TRANSFERS: AtomicUsize = AtomicUsize::new(0);
+pub(super) fn animated_transfers() -> usize {
+    ANIMATED_TRANSFERS.load(Ordering::Relaxed)
+}
+pub(super) const DOCK_INPUT_TAG: i64 = 0x5748_414c_5544;
 
 fn validate_bridge(class: &AnyClass) -> Result<(), String> {
     let method = class

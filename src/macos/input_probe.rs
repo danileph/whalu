@@ -923,6 +923,8 @@ pub(super) fn space_moves(
         runtime.drain();
         runtime.overlay_deadline = None;
         runtime.render();
+        let animations_before = super::spaces::animated_transfers();
+        let mut cursor_changed = None;
         for step in 0..5 {
             let returning = step % 2 == 0;
             let expected = if returning {
@@ -949,8 +951,8 @@ pub(super) fn space_moves(
                 }
                 let position = pointer()?;
                 if (position.x - cursor.x).abs() > 0.01 || (position.y - cursor.y).abs() > 0.01 {
-                    return Err(format!(
-                        "Space transfer cursor changed: ({}, {}) -> ({}, {})",
+                    cursor_changed = Some(format!(
+                        "Pointer moved during probe: ({}, {}) -> ({}, {}); let the in-flight native gesture finish before reporting this interrupted check",
                         cursor.x, cursor.y, position.x, position.y
                     ));
                 }
@@ -980,12 +982,20 @@ pub(super) fn space_moves(
                     {
                         return Err("Space transfer changed geometry".into());
                     }
+                    if let Some(error) = cursor_changed {
+                        return Err(error);
+                    }
                     break;
                 }
                 if Instant::now() >= deadline {
                     return Err("Held-modifier Space transfer timed out".into());
                 }
             }
+        }
+        let animations = super::spaces::animated_transfers() - animations_before;
+        println!("Native Dock animations observed: {animations}/5");
+        if animations != 5 {
+            return Err("Native Dock slide animation was not observed for every Space move".into());
         }
         // Late workspace notifications must refresh without closing a held HUD.
         tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
