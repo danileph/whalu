@@ -87,6 +87,17 @@ After switching native Spaces without a focused window, the first navigation com
 - Dialogs, minimized/fullscreen windows, and windows without settable AX positions are excluded from active navigation. Focused modal/sheet/fullscreen UI suspends layout. Apps can reject size/position requests; windows larger than the whole display retain a reachable top-left corner.
 - Display-aware snapping supports negative origins and usable bounds. Hardware validation covers this Mac, not every app, monitor configuration, or macOS release.
 
+## Empty Spaces immediately switch back
+
+Check `defaults read com.apple.finder CreateDesktop` if entering an empty Space immediately returns to a window on another Space, including when Whalu is stopped. Setting this preference to `false` disables Finder's desktop surface, rather than only hiding its icons. On the tested macOS 26.2 system, WindowServer restored an application whose window belonged to another Space; that application's window ordering then triggered the return. Restoring the desktop surface resolved the behavior with Whalu running:
+
+```sh
+defaults write com.apple.finder CreateDesktop -bool true
+killall Finder
+```
+
+To keep desktop icons hidden, use **System Settings → Desktop & Dock → Show Items → On Desktop** instead. This keeps the desktop surface available. The **When switching to an application, switch to a Space with open windows for the application** preference can remain enabled.
+
 ## Brand assets
 
 The [brand assets](assets/README.md) include the glass app icon, silver wordmark, generation prompts, and icon rebuild instructions.
