@@ -835,6 +835,8 @@ fn fixture_runtime(
         space_until: None,
         space_retries: 0,
         space_transfer_display: None,
+        space_transfer_target: None,
+        space_transfer_window: None,
         space_overview: false,
         modal: false,
         recovery: SavedState::default(),
@@ -923,6 +925,18 @@ pub(super) fn space_moves(
         runtime.drain();
         runtime.overlay_deadline = None;
         runtime.render();
+        let check_previews = super::previews::available();
+        runtime.ui.preload_previews(&runtime.discovery);
+        if check_previews {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !runtime.ui.cached_preview(id) {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+                runtime.drain();
+                if Instant::now() >= deadline {
+                    return Err("Visible transfer preview did not warm".into());
+                }
+            }
+        }
         let animations_before = super::spaces::animated_transfers();
         let mut cursor_changed = None;
         for step in 0..5 {
@@ -982,6 +996,23 @@ pub(super) fn space_moves(
                     {
                         return Err("Space transfer changed geometry".into());
                     }
+                    if check_previews {
+                        let current = runtime.engine.context().unwrap().order.clone();
+                        if step == 0 {
+                            let deadline = Instant::now() + Duration::from_secs(3);
+                            while current.iter().any(|id| !runtime.ui.cached_preview(*id)) {
+                                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+                                runtime.drain();
+                                if Instant::now() >= deadline {
+                                    return Err("First destination previews did not load".into());
+                                }
+                            }
+                        } else if current.iter().any(|id| !runtime.ui.cached_preview(*id)) {
+                            return Err(
+                                "Returning to a Space discarded an already loaded preview".into()
+                            );
+                        }
+                    }
                     if let Some(error) = cursor_changed {
                         return Err(error);
                     }
@@ -991,6 +1022,11 @@ pub(super) fn space_moves(
                     return Err("Held-modifier Space transfer timed out".into());
                 }
             }
+        }
+        if check_previews {
+            println!(
+                "PASS: destination previews survive all subsequent Space round trips without a blank recapture"
+            );
         }
         let animations = super::spaces::animated_transfers() - animations_before;
         println!("Native Dock animations observed: {animations}/5");

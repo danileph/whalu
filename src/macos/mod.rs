@@ -47,6 +47,7 @@ pub(super) enum Event {
     DisplaysChanged,
     SpaceChanged,
     SpaceTransferFinished,
+    SpaceTransferPreparing(u64),
     NativeGesture,
     Command(Command),
     Modifiers(Modifiers),
@@ -175,6 +176,8 @@ struct Runtime {
     space_until: Option<Instant>,
     space_retries: u8,
     space_transfer_display: Option<u32>,
+    space_transfer_target: Option<u64>,
+    space_transfer_window: Option<u64>,
     space_overview: bool,
     modal: bool,
     recovery: SavedState,
@@ -254,8 +257,20 @@ impl Runtime {
                         // commands queued during this particular transfer.
                         self.switched_space = true;
                         self.discovery.invalidate_navigation();
+                        if self.space_transfer_target.is_some() {
+                            self.stage_space_destination();
+                        }
                     } else {
                         self.yield_to_system(true);
+                    }
+                }
+                Event::SpaceTransferPreparing(target) => {
+                    if self.space_transfer_display.is_some() {
+                        self.space_transfer_target = Some(target);
+                        if self.held && self.config.overlay {
+                            self.ui.preload_previews(&self.discovery);
+                        }
+                        self.stage_space_destination();
                     }
                 }
                 Event::SpaceTransferFinished => {
@@ -283,6 +298,9 @@ impl Runtime {
                         self.reconcile(false);
                     }
                     self.render();
+                    if opening {
+                        self.ui.preload_previews(&self.discovery);
+                    }
                 }
                 Event::Gesture(device, event, time) => self.gesture_event(device, event, time),
                 Event::GestureMotion(device, position, time, sustained) => {
@@ -365,6 +383,7 @@ impl Runtime {
                                     );
                                     match submitted {
                                         Ok(()) => {
+                                            self.space_transfer_window = self.engine.focused();
                                             self.space_transfer_display = self.engine.display();
                                             self.navigation_display = self.engine.display();
                                             self.yield_to_system(true);
@@ -402,8 +421,11 @@ impl Runtime {
 
                 Event::PreviewAccess => previews::request_access(),
                 Event::PreviewReady(id, quartz, image) => {
-                    self.ui.preview_ready(id, quartz, image);
+                    let retry = self.ui.preview_ready(id, quartz, image);
                     self.render();
+                    if retry && self.held {
+                        self.deadline = Some(Instant::now() + Duration::from_millis(130));
+                    }
                 }
                 Event::Settings => {
                     let path = self.config_path.clone();
@@ -455,6 +477,8 @@ impl Runtime {
             }
             self.reconcile(false);
             self.space_transfer_display = None;
+            self.space_transfer_target = None;
+            self.space_transfer_window = None;
             self.space_overview = false;
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
@@ -964,6 +988,45 @@ impl Runtime {
             Err(e) => eprintln!("Configuration unchanged: {e}"),
         }
     }
+    fn stage_space_destination(&mut self) {
+        let (Some(display), Some(target)) =
+            (self.space_transfer_display, self.space_transfer_target)
+        else {
+            return;
+        };
+        // Use known metadata while Dock is drawing. A full AX census here can
+        // take longer than the animation and delay the entire overview update.
+        let visible: Vec<_> = self
+            .discovery
+            .handles
+            .values()
+            .filter(|h| {
+                if h.minimized || !self.engine.windows.contains_key(&h.id) {
+                    return false;
+                }
+                let membership = h.quartz_id.and_then(|id| spaces::window_space(id).ok());
+                membership == Some(Some(target))
+                    || (membership == Some(None)
+                        && h.visible
+                        && self.engine.windows[&h.id].display == display)
+            })
+            .map(|h| h.id)
+            .collect();
+        if visible.is_empty() {
+            return;
+        }
+        let context = self.context_tracker.resolve(display, &visible, true);
+        if context != self.engine.current {
+            self.ui.refresh_overview();
+        }
+        self.engine.set_display_visible(
+            display,
+            context,
+            &visible,
+            self.space_transfer_window.filter(|id| visible.contains(id)),
+        );
+        self.render();
+    }
     fn reconcile(&mut self, _allow_layout: bool) {
         let snap = self.discovery.scan(self.mtm, &self.config.ignored_apps);
         self.modal = snap.modal;
@@ -972,7 +1035,29 @@ impl Runtime {
             .navigation_display
             .filter(|display| snap.bounds.contains_key(display));
         let display = snap.active_display(self.navigation_display);
-        let visible = snap.visible_on_display(display);
+        let visible = if let Some(target) = self.space_transfer_target {
+            // The compositor can show both Spaces mid-slide. Stage only the
+            // destination membership while input stays frozen until completion.
+            self.discovery
+                .handles
+                .values()
+                .filter(|h| {
+                    let membership = h.quartz_id.and_then(|id| spaces::window_space(id).ok());
+                    let sticky_here = membership == Some(None)
+                        && h.visible
+                        && snap
+                            .windows
+                            .iter()
+                            .chain(self.engine.windows.values())
+                            .any(|w| w.id == h.id && w.display == display);
+                    (membership == Some(Some(target)) || sticky_here)
+                        && !bool_attr(h.element.0, "AXMinimized")
+                })
+                .map(|h| h.id)
+                .collect()
+        } else {
+            snap.visible_on_display(display)
+        };
         self.engine.bounds = snap.bounds;
         // A missing AX entry on another Space is not a destroyed window.
         self.engine
@@ -1028,7 +1113,9 @@ impl Runtime {
             }
             self.restored.insert(id);
         }
-        let focused = if snap.modal {
+        let focused = if self.space_transfer_target.is_some() && self.space_until.is_some() {
+            self.space_transfer_window.filter(|id| visible.contains(id))
+        } else if snap.modal {
             snap.focused
         } else {
             self.pending_focus.as_ref().map_or(snap.focused, |pending| {
@@ -1222,10 +1309,8 @@ impl Runtime {
         if self.space_until.is_some() && self.space_overview && keyboard && self.config.overlay {
             // Keep the non-key panel visible, but discard old click targets.
             // Completion replaces its cards with a fresh destination census.
-            if !self.ui.is_visible() {
-                self.ui.sync_sources(&self.discovery);
-                self.ui.show(&self.engine);
-            }
+            self.ui.sync_sources(&self.discovery);
+            self.ui.show(&self.engine);
             self.ui.suspend_overview();
             return;
         }
@@ -1559,6 +1644,8 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             space_until: None,
             space_retries: 0,
             space_transfer_display: None,
+            space_transfer_target: None,
+            space_transfer_window: None,
             space_overview: false,
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),

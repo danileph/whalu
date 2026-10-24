@@ -13,6 +13,7 @@ pub struct NativeWindow {
     pub element: Owned,
     pub app: Retained<NSRunningApplication>,
     pub visible: bool,
+    pub minimized: bool,
     pub quartz_id: Option<u32>,
 }
 pub struct Snapshot {
@@ -343,7 +344,8 @@ impl Discovery {
                     self.next += 1;
                     self.next
                 });
-                let shown = !bool_attr(element, "AXMinimized")
+                let minimized = bool_attr(element, "AXMinimized");
+                let shown = !minimized
                     && !bool_attr(element, "AXFullScreen")
                     && if let (Some(cg), Some(windows)) = (quartz_id, quartz.as_ref()) {
                         windows
@@ -383,6 +385,7 @@ impl Discovery {
                         element: unsafe { Owned(CFRetain(element)) },
                         app: app.clone(),
                         visible: shown,
+                        minimized,
                         quartz_id,
                     },
                 );

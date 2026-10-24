@@ -71,6 +71,7 @@ pub struct Ui {
     icons: RefCell<BTreeMap<i32, Option<Retained<NSImage>>>>,
     cards: RefCell<BTreeMap<u64, Card>>,
     visibility_epoch: Cell<u64>,
+    reset_layout: Cell<bool>,
     pub clicks: ThumbnailClicks,
     _status: Retained<NSStatusItem>,
     gesture_label: Retained<NSMenuItem>,
@@ -138,6 +139,7 @@ impl Ui {
                 icons: RefCell::new(BTreeMap::new()),
                 cards: RefCell::new(BTreeMap::new()),
                 visibility_epoch: Cell::new(0),
+                reset_layout: Cell::new(true),
                 clicks: ThumbnailClicks::default(),
                 _status: status,
                 gesture_label,
@@ -219,7 +221,7 @@ impl Ui {
             card.view.removeFromSuperview();
         }
         self.cards.borrow_mut().clear();
-        self.sources.borrow_mut().clear();
+        self.reset_layout.set(true);
     }
     pub fn show(&self, engine: &Engine) {
         self.show_navigation(engine, None);
@@ -551,7 +553,7 @@ impl Ui {
             source.icon = icons.entry(h.pid).or_insert_with(|| h.app.icon()).clone();
         }
     }
-    pub fn preview_ready(&self, id: u64, quartz: u32, image: Option<previews::Image>) {
+    pub fn preview_ready(&self, id: u64, quartz: u32, image: Option<previews::Image>) -> bool {
         if let Some(source) = self
             .sources
             .borrow_mut()
@@ -559,15 +561,56 @@ impl Ui {
             .filter(|s| s.quartz == Some(quartz))
         {
             source.pending = None;
-            source.updated = Some(Instant::now());
             if let Some(image) = image {
+                source.updated = Some(Instant::now());
+                source.failures = 0;
+                source.retry_after = None;
                 source.image = Some(NSImage::initWithCGImage_size(
                     NSImage::alloc(),
                     image.get(),
                     NSSize::new(0., 0.),
                 ));
+            } else {
+                source.failures = source.failures.saturating_add(1);
+                if source.failures <= 3 {
+                    source.retry_after = Some(Instant::now() + Duration::from_millis(120));
+                    return true;
+                }
+                source.updated = Some(Instant::now());
             }
         }
+        false
+    }
+    pub fn preload_previews(&self, discovery: &Discovery) {
+        if !previews::available() {
+            return;
+        }
+        self.sync_sources(discovery);
+        let now = Instant::now();
+        let mut sources = self.sources.borrow_mut();
+        let mut targets = Vec::new();
+        for (&id, source) in sources.iter_mut() {
+            if targets.len() == 48 {
+                break;
+            }
+            if source.image.is_none()
+                && source.pending.is_none()
+                && source.retry_after.is_none_or(|until| until <= now)
+            {
+                if let Some(quartz) = source.quartz {
+                    source.pending = Some(now);
+                    targets.push((id, quartz));
+                }
+            }
+        }
+        drop(sources);
+        previews::capture(targets);
+    }
+    pub fn cached_preview(&self, id: u64) -> bool {
+        self.sources
+            .borrow()
+            .get(&id)
+            .is_some_and(|s| s.image.is_some())
     }
     pub fn show_navigation(&self, engine: &Engine, _gesture: Option<Axis>) {
         self.show_selection(engine, _gesture, None);
@@ -611,7 +654,8 @@ impl Ui {
             176.,
             height,
         );
-        let animate = self.panel.isVisible() && self.panel.frame() == frame;
+        let reset_layout = self.reset_layout.replace(false);
+        let animate = self.panel.isVisible() && self.panel.frame() == frame && !reset_layout;
         // Respect the system motion preference without requiring a second rendering path.
         let reduce_motion: bool = unsafe {
             msg_send![
@@ -719,10 +763,12 @@ impl Ui {
             }
             if let Some(source) = source {
                 let now = Instant::now();
+                source.used = now;
                 if capture_allowed
+                    && source.retry_after.is_none_or(|until| until <= now)
                     && source
                         .pending
-                        .is_none_or(|t| now.duration_since(t) > Duration::from_secs(10))
+                        .is_none_or(|t| now.duration_since(t) > Duration::from_secs(2))
                     && source
                         .updated
                         .is_none_or(|t| now.duration_since(t) > Duration::from_secs(3))
@@ -734,12 +780,23 @@ impl Ui {
                 }
             }
         }
-        // Retain only a small in-memory thumbnail working set.
-        for (id, source) in sources.iter_mut() {
-            if !ctx.order[start..end].contains(id) {
-                source.image = None;
-                source.updated = None;
-            }
+        // Keep recently used previews across Spaces; never blank a card just
+        // because another desktop was shown. Bound retained image memory.
+        let mut cached: Vec<_> = sources
+            .iter()
+            .filter(|(_, s)| s.image.is_some())
+            .map(|(id, s)| (*id, s.used))
+            .collect();
+        cached.sort_by_key(|(_, used)| *used);
+        let excess = cached.len().saturating_sub(48);
+        for (id, _) in cached
+            .into_iter()
+            .filter(|(id, _)| !ctx.order[start..end].contains(id))
+            .take(excess)
+        {
+            let source = sources.get_mut(&id).unwrap();
+            source.image = None;
+            source.updated = None;
         }
         drop(sources);
         *self.clicks.targets.borrow_mut() = Some(ClickMap {
@@ -1009,6 +1066,9 @@ struct Source {
     image: Option<Retained<NSImage>>,
     updated: Option<Instant>,
     pending: Option<Instant>,
+    used: Instant,
+    failures: u8,
+    retry_after: Option<Instant>,
 }
 impl Source {
     fn new(quartz: Option<u32>) -> Self {
@@ -1018,6 +1078,9 @@ impl Source {
             image: None,
             updated: None,
             pending: None,
+            used: Instant::now(),
+            failures: 0,
+            retry_after: None,
         }
     }
 }

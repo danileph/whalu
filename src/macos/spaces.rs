@@ -108,6 +108,7 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 }
                 std::thread::sleep(Duration::from_millis(15));
             }
+            super::enqueue(super::Event::SpaceTransferPreparing(target));
             let mut animated =
                 animation.perform(connection, identifier, animating, window, &witnesses);
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -185,6 +186,14 @@ fn onscreen() -> Vec<u32> {
     }
 }
 
+// Approach one adjacent desktop without crossing its boundary or adding
+// release momentum. Dock eases the remaining distance after Ended.
+fn swipe_progress(step: usize, steps: usize, forward: bool) -> f64 {
+    let t = (step as f64 / steps.max(1) as f64).clamp(0., 1.);
+    let progress = 0.9 * t * t * (3. - 2. * t);
+    if forward { progress } else { -progress }
+}
+
 // Private Dock gesture encoding documented by Mac Mouse Fix and dockswipe.
 // https://github.com/oomol-lab/dockswipe (MIT; see THIRD_PARTY_NOTICES.md).
 // This path deliberately emits no mouse move, button, or keyboard events.
@@ -217,12 +226,12 @@ impl DockSwipe {
                     Self::event(
                         point,
                         if step == 0 { 1 } else { 2 },
-                        direction * (step + 1) as f64 / 12.,
+                        swipe_progress(step + 1, 18, forward),
                         0.,
                     )
                 })
                 .collect::<Result<_, _>>()?;
-            let end = Self::event(point, 4, direction * 1.5, direction * (100. / 12.))?;
+            let end = Self::event(point, 4, direction * 0.9, 0.)?;
             Ok(Self { frames, end })
         }
     }
@@ -290,10 +299,6 @@ impl DockSwipe {
                         && witnesses.iter().any(|id| visible.contains(id)));
             }
             Self::post(&self.end);
-            // Repeat Ended after Dock's native completion to avoid a dropped
-            // terminal gesture leaving the desktop caught between Spaces.
-            std::thread::sleep(Duration::from_millis(200));
-            Self::post(&self.end);
             observed
         }
     }
@@ -359,7 +364,20 @@ fn adjacent(desktops: &[u64], index: usize, forward: bool) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::adjacent;
+    use super::{adjacent, swipe_progress};
+    #[test]
+    fn swipe_stays_inside_one_desktop_and_eases_to_rest() {
+        for forward in [false, true] {
+            let path: Vec<_> = (0..=18)
+                .map(|step| swipe_progress(step, 18, forward).abs())
+                .collect();
+            assert_eq!(path[0], 0.);
+            assert!((path[18] - 0.9).abs() < 1e-9);
+            assert!(path.iter().all(|p| *p < 1.));
+            assert!(path.windows(2).all(|p| p[1] >= p[0]));
+            assert!(path[18] - path[17] < path[9] - path[8]);
+        }
+    }
     #[test]
     fn desktop_moves_stop_at_display_boundaries() {
         assert_eq!(adjacent(&[10, 11, 12], 0, false), None);
