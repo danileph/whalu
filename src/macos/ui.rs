@@ -198,9 +198,6 @@ impl Ui {
             self.visibility_epoch.set(self.visibility_epoch.get() + 1);
             // Space and activation notifications also dismiss the overview when
             // it is already hidden. Avoid another native ordering operation.
-            if std::env::var_os("WHALU_TRACE").is_some() {
-                eprintln!("HUD: order out");
-            }
             self.panel.orderOut(None);
         }
         self.cards.borrow_mut().retain(|_, card| {

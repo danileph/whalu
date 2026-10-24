@@ -454,7 +454,6 @@ fn navigation_unchanged(previous: &[QuartzWindow], current: &mut [QuartzWindow])
     current == previous
 }
 fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
-    let spaces = super::spaces::SpaceVisibility::read();
     unsafe {
         let list = Owned::new(CGWindowListCopyWindowInfo(options, 0))?;
         Some(
@@ -470,15 +469,13 @@ fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
                         return None;
                     }
                     let shown = dict(d, "kCGWindowIsOnscreen");
-                    let id = number(dict(d, "kCGWindowNumber")) as u32;
                     Some(QuartzWindow {
-                        id,
+                        id: number(dict(d, "kCGWindowNumber")) as u32,
                         pid: number(dict(d, "kCGWindowOwnerPID")) as i32,
                         frame: Rect::new(r.origin.x, r.origin.y, r.size.width, r.size.height),
                         onscreen: !shown.is_null()
                             && CFGetTypeID(shown) == CFBooleanGetTypeID()
-                            && CFBooleanGetValue(shown)
-                            && spaces.as_ref().is_none_or(|scope| scope.allows(id)),
+                            && CFBooleanGetValue(shown),
                         title: text(dict(d, "kCGWindowName")).unwrap_or_default(),
                     })
                 })
