@@ -1,7 +1,13 @@
-//! Carry a held title bar through Dock’s native Space transition.
-//! WindowServer queries only read desktop order and verify the result.
-//! Never set the current-Space pointer: that does not complete a native switch.
+//! Move and follow through WindowServer’s managed-Space bridge.
+//! Complete both halves of the display swap: set destination, then hide origin.
+//! No synthesized input, title-bar interaction, or cursor movement.
 use super::ffi::*;
+use objc2::{
+    msg_send,
+    rc::Retained,
+    runtime::{AnyClass, AnyObject},
+    sel,
+};
 use std::{
     ffi::CStr,
     ptr::null,
@@ -23,10 +29,6 @@ unsafe fn symbol<T: Copy>(name: &CStr) -> Result<T, String> {
     Ok(unsafe { std::mem::transmute_copy(&pointer) })
 }
 
-// Tag our native input so Whalu does not treat its own grab or Space key as
-// user navigation. Other apps and Dock still receive these events normally.
-pub(super) const INPUT_TAG: i64 = 0x5748_414c_5553;
-
 pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, String> {
     unsafe {
         let connection: Connection = symbol(c"SLSMainConnectionID")?;
@@ -37,8 +39,7 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
         };
         let managed = Owned::new(displays(connection)).ok_or("Cannot read desktop order")?;
         for display in array(managed.0) {
-            // Native arrow navigation visits fullscreen Spaces too. Never skip
-            // one and accidentally send the window to a different desktop.
+            // Stop at fullscreen neighbors instead of skipping a desktop.
             let spaces = array(dict(display, "Spaces"));
             let ids: Vec<_> = spaces
                 .iter()
@@ -60,43 +61,64 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 return Err("Focused window is not on the active desktop".into());
             }
             let identifier = dict(display, "Display Identifier");
-            let (key, flags) = space_shortcut(forward)?;
-            if !CGPreflightPostEventAccess() {
-                return Err(
-                    "Native input posting requires Accessibility permission for this executable"
-                        .into(),
-                );
-            }
-            let deadline = Instant::now() + Duration::from_secs(1);
-            while CGEventSourceFlagsState(1) & 0x1e0000 != 0 || CGEventSourceButtonState(1, 0) {
-                if Instant::now() >= deadline {
-                    return Err(
-                        "Release modifiers and mouse before moving a window between Spaces".into(),
-                    );
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
             let system = Owned::new(AXUIElementCreateSystemWide()).ok_or("Cannot confirm focus")?;
             AXUIElementSetMessagingTimeout(system.0, 0.05);
             let focused = attr(system.0, "AXFocusedApplication")
                 .and_then(|app| attr(app.0, "AXFocusedWindow"));
             if !focused.is_some_and(|focused| CFEqual(focused.0, element)) {
-                return Err("Focused window changed before native drag".into());
+                return Err("Focused window changed before Space transfer".into());
             }
-            let point = grab_point(element)?;
+            let window_number = i64::from(window);
+            let window_value = Owned::new(CFNumberCreate(
+                null(),
+                4,
+                (&window_number as *const i64).cast(),
+            ))
+            .ok_or("Cannot create window identity")?;
+            let windows = Owned::new(CFArrayCreate(null(), &window_value.0, 1, null()))
+                .ok_or("Cannot create window list")?;
+            let source_number =
+                Owned::new(CFNumberCreate(null(), 4, (&source as *const u64).cast()))
+                    .ok_or("Cannot create source identity")?;
+            let sources = Owned::new(CFArrayCreate(null(), &source_number.0, 1, null()))
+                .ok_or("Cannot create source list")?;
+            // Resolve and validate every operation before mutating membership.
+            let move_class = AnyClass::get(c"SLSBridgedMoveWindowsToManagedSpaceOperation")
+                .ok_or("Native Space transfer unavailable")?;
+            let allocated: *mut AnyObject = msg_send![move_class, alloc];
+            let operation: *mut AnyObject = msg_send![allocated, initWithWindows: &*(windows.0 as *const AnyObject), spaceID: target];
+            let movement =
+                Retained::from_raw(operation).ok_or("Cannot create native Space transfer")?;
+            let switch_class = AnyClass::get(c"SLSBridgedManagedDisplaySetCurrentSpaceOperation")
+                .ok_or("Native Space switching unavailable")?;
+            let allocated: *mut AnyObject = msg_send![switch_class, alloc];
+            let operation: *mut AnyObject = msg_send![allocated, initWithDisplayIdentifier: &*(identifier as *const AnyObject), spaceID: target];
+            let switching =
+                Retained::from_raw(operation).ok_or("Cannot create native Space switch")?;
+            let hide_class = AnyClass::get(c"SLSBridgedHideSpacesOperation")
+                .ok_or("Native Space compositor transition unavailable")?;
+            let allocated: *mut AnyObject = msg_send![hide_class, alloc];
+            let operation: *mut AnyObject =
+                msg_send![allocated, initWithSpaces: &*(sources.0 as *const AnyObject)];
+            let hiding = Retained::from_raw(operation).ok_or("Cannot create native source hide")?;
+            for class in [move_class, switch_class, hide_class] {
+                validate_bridge(class)?;
+            }
             // Keep a source-only witness: merely changing WindowServer's current
             // Space pointer can leave these windows rendered on the destination.
             let witnesses: Vec<_> = onscreen()
                 .into_iter()
                 .filter(|id| *id != window && window_space(*id).ok() == Some(Some(source)))
                 .collect();
-            let drag = Grab::begin(point)?;
-            std::thread::sleep(Duration::from_millis(100));
-            drag.key(key, flags)?;
-            // Dock owns the slide; keep the title bar held until it settles.
-            // The guard releases on every error path as well.
-            std::thread::sleep(Duration::from_millis(650));
-            drop(drag);
+            perform_bridge(move_class, &movement);
+            let deadline = Instant::now() + Duration::from_millis(750);
+            while window_space(window)? != Some(target) {
+                if Instant::now() >= deadline {
+                    return Err("WindowServer did not move the window".into());
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            perform_bridge(switch_class, &switching);
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 let current = Owned::new(displays(connection))
@@ -122,6 +144,9 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
+            // A changed current-Space pointer alone leaves origin windows
+            // composited. Hide only after confirming the destination was set.
+            perform_bridge(hide_class, &hiding);
             let deadline = Instant::now() + Duration::from_secs(1);
             loop {
                 let visible = onscreen();
@@ -133,7 +158,7 @@ pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, S
                 }
                 if Instant::now() >= deadline {
                     return Err(format!(
-                        "Native drag did not carry window {window} ({source} -> {target}; membership {:?}; visible {}; source witnesses {:?})",
+                        "Native Space transfer did not reveal window {window} ({source} -> {target}; membership {:?}; visible {}; source witnesses {:?})",
                         window_space(window)?,
                         visible.contains(&window),
                         witnesses
@@ -167,161 +192,29 @@ fn onscreen() -> Vec<u32> {
     }
 }
 
-fn space_shortcut(forward: bool) -> Result<(u16, u64), String> {
-    // The effective default includes SecondaryFn for arrows, although System
-    // Settings displays only Control. Preferences omit these default values.
-    // Query the registered shortcut so custom bindings work as well.
-    type Get = unsafe extern "C" fn(i32, *mut u16, *mut u16, *mut u32) -> i32;
-    type Enabled = unsafe extern "C" fn(i32) -> bool;
+fn validate_bridge(class: &AnyClass) -> Result<(), String> {
+    let method = class
+        .instance_method(sel!(performWithWMBridgeDelegate))
+        .ok_or("Native Space operation unavailable")?;
+    match method.return_type().to_bytes() {
+        b"v" | b"@" => Ok(()),
+        _ => Err("Unsupported native Space operation signature".into()),
+    }
+}
+unsafe fn perform_bridge(class: &AnyClass, operation: &AnyObject) {
     unsafe {
-        let get: Get = symbol(c"CGSGetSymbolicHotKeyValue")?;
-        let enabled: Enabled = symbol(c"CGSIsSymbolicHotKeyEnabled")?;
-        let id = if forward { 81 } else { 79 };
-        if !enabled(id) {
-            return Err(
-                "Enable macOS Move left/right a Space shortcuts in Keyboard settings".into(),
-            );
-        }
-        let (mut equivalent, mut key, mut flags) = (0, 0, 0);
-        if get(id, &mut equivalent, &mut key, &mut flags) != 0
-            || key == u16::MAX
-            || (key == 0 && equivalent == u16::MAX)
+        // Validated before any write. This private selector returns void on
+        // macOS 26.2, while other releases describe an object result.
+        if class
+            .instance_method(sel!(performWithWMBridgeDelegate))
+            .unwrap()
+            .return_type()
+            .to_bytes()
+            == b"v"
         {
-            return Err("Cannot read the configured macOS Space shortcut".into());
-        }
-        Ok((key, u64::from(flags)))
-    }
-}
-
-fn grab_point(window: Ref) -> Result<Point, String> {
-    let rect = frame(window).ok_or("Cannot read focused window frame")?;
-    if bool_attr(window, "AXFullScreen") {
-        return Err("Cannot drag a fullscreen window between desktops".into());
-    }
-    unsafe {
-        let system = Owned::new(AXUIElementCreateSystemWide()).ok_or("Cannot inspect title bar")?;
-        AXUIElementSetMessagingTimeout(system.0, 0.05);
-        for fraction in [0.5, 0.75, 0.25] {
-            let point = Point {
-                x: rect.x + rect.width * fraction,
-                y: rect.y + 16.,
-            };
-            let mut hit = null();
-            if AXUIElementCopyElementAtPosition(system.0, point.x as f32, point.y as f32, &mut hit)
-                != 0
-            {
-                continue;
-            }
-            let Some(hit) = Owned::new(hit) else { continue };
-            let own_window = CFEqual(hit.0, window)
-                || attr(hit.0, "AXWindow").is_some_and(|owner| CFEqual(owner.0, window));
-            if own_window
-                && matches!(
-                    text_attr(hit.0, "AXRole").as_str(),
-                    "AXWindow" | "AXStaticText" | "AXGroup"
-                )
-            {
-                return Ok(point);
-            }
-        }
-    }
-    Err("No unobstructed title-bar grab point for the focused window".into())
-}
-
-struct Grab {
-    source: Owned,
-    original: Point,
-    point: Point,
-    release: Owned,
-}
-impl Grab {
-    unsafe fn begin(point: Point) -> Result<Self, String> {
-        unsafe {
-            let source =
-                Owned::new(CGEventSourceCreate(1)).ok_or("Cannot create native input source")?;
-            let event = Owned::new(CGEventCreate(null())).ok_or("Cannot read pointer")?;
-            let original = CGEventGetLocation(event.0);
-            let release = Owned::new(CGEventCreateMouseEvent(source.0, 2, point, 0))
-                .ok_or("Cannot create mouse release")?;
-            let down = Owned::new(CGEventCreateMouseEvent(source.0, 1, point, 0))
-                .ok_or("Cannot create title-bar grab")?;
-            let grab = Self {
-                source,
-                original,
-                point,
-                release,
-            };
-            CGWarpMouseCursorPosition(point);
-            let moved = Owned::new(CGEventCreateMouseEvent(grab.source.0, 5, point, 0))
-                .ok_or("Cannot focus window display")?;
-            grab.post(moved.0, 0);
-            std::thread::sleep(Duration::from_millis(50));
-            grab.post(down.0, 0);
-            std::thread::sleep(Duration::from_millis(50));
-            let dragged = Owned::new(CGEventCreateMouseEvent(grab.source.0, 6, point, 0))
-                .ok_or("Cannot begin native drag")?;
-            grab.post(dragged.0, 0);
-            Ok(grab)
-        }
-    }
-    unsafe fn post(&self, event: Ref, flags: u64) {
-        unsafe {
-            CGEventSetFlags(event, flags);
-            CGEventSetIntegerValueField(event, 42, INPUT_TAG);
-            CGEventPost(0, event);
-        }
-    }
-    unsafe fn key(&self, key: u16, flags: u64) -> Result<(), String> {
-        unsafe {
-            let down = Owned::new(CGEventCreateKeyboardEvent(self.source.0, key, true))
-                .ok_or("Cannot create Space key")?;
-            let up = Owned::new(CGEventCreateKeyboardEvent(self.source.0, key, false))
-                .ok_or("Cannot create Space key release")?;
-            let modifiers: Vec<_> = [(59, 1 << 18), (56, 1 << 17), (58, 1 << 19), (55, 1 << 20)]
-                .into_iter()
-                .filter(|(_, mask)| flags & mask != 0)
-                .map(|(key, _)| {
-                    let down = Owned::new(CGEventCreateKeyboardEvent(self.source.0, key, true))
-                        .ok_or("Cannot create modifier")?;
-                    let up = Owned::new(CGEventCreateKeyboardEvent(self.source.0, key, false))
-                        .ok_or("Cannot create modifier release")?;
-                    CGEventSetType(down.0, 12);
-                    CGEventSetType(up.0, 12);
-                    Ok((down, up))
-                })
-                .collect::<Result<_, &str>>()?;
-            for event in [&down, &up]
-                .into_iter()
-                .chain(modifiers.iter().flat_map(|(down, up)| [down, up]))
-            {
-                CGEventSetLocation(event.0, self.point);
-            }
-            for (event, _) in &modifiers {
-                self.post(event.0, flags);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-            self.post(down.0, flags);
-            std::thread::sleep(Duration::from_millis(20));
-            self.post(up.0, flags);
-            for (_, event) in modifiers.iter().rev() {
-                self.post(event.0, 0);
-            }
-            Ok(())
-        }
-    }
-}
-impl Drop for Grab {
-    fn drop(&mut self) {
-        unsafe {
-            let current = Owned::new(CGEventCreate(null()))
-                .map(|event| CGEventGetLocation(event.0))
-                .unwrap_or(self.point);
-            CGEventSetLocation(self.release.0, current);
-            self.post(self.release.0, 0);
-            // Do not fight the user if they moved the pointer during the slide.
-            if (current.x - self.point.x).abs() < 2. && (current.y - self.point.y).abs() < 2. {
-                CGWarpMouseCursorPosition(self.original);
-            }
+            let _: () = msg_send![operation, performWithWMBridgeDelegate];
+        } else {
+            let _: *mut AnyObject = msg_send![operation, performWithWMBridgeDelegate];
         }
     }
 }

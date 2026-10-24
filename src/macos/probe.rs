@@ -753,7 +753,6 @@ pub fn space_smoke() -> Result<(), String> {
         let quartz = handle.quartz_id.ok_or("No fixture Quartz ID")?;
         let original = frame(handle.element.0).ok_or("No fixture frame")?;
         let source = super::spaces::window_space(quartz)?.ok_or("No source desktop")?;
-        let ax_app = Owned::new(AXUIElementCreateApplication(pid)).ok_or("No fixture app")?;
         let siblings: Vec<_> = discovery
             .handles
             .values()
@@ -771,45 +770,50 @@ pub fn space_smoke() -> Result<(), String> {
             return Err("Native Space test needs two neighboring regular desktops".into());
         };
         let target = super::spaces::window_space(quartz)?.ok_or("No destination desktop")?;
-        for step in 0..5 {
-            let returning = step % 2 == 0;
-            if returning && siblings.iter().any(|id| super::spaces::is_onscreen(*id)) {
-                return Err("Source windows remain rendered on destination desktop".into());
-            }
-            // Validate the same background queue used by production shortcuts.
-            super::tiling::submit_space(
-                pid,
-                handle.element.0,
-                quartz,
-                if returning { !direction } else { direction },
-            )?;
-            let expected = if returning { source } else { target };
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            loop {
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
-                if super::spaces::window_space(quartz)? == Some(expected)
-                    && super::spaces::is_onscreen(quartz)
-                    && siblings
-                        .iter()
-                        .all(|id| super::spaces::is_onscreen(*id) == returning)
-                    && attr(ax_app.0, "AXFocusedWindow")
-                        .is_some_and(|w| CFEqual(w.0, handle.element.0))
-                {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(format!(
-                        "Queued native Space transfer {step} did not complete with correct visibility/focus"
-                    ));
-                }
-            }
-            if !frame(handle.element.0).is_some_and(|actual| actual.near(original)) {
-                return Err("Native drag changed fixture geometry".into());
+        let app = Owned::new(AXUIElementCreateApplication(pid)).ok_or("No fixture app")?;
+        AXUIElementSetAttributeValue(app.0, string("AXFocusedWindow").0, handle.element.0);
+        AXUIElementSetAttributeValue(handle.element.0, string("AXMain").0, kCFBooleanTrue);
+        AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
+        AXUIElementSetAttributeValue(app.0, string("AXFrontmost").0, kCFBooleanTrue);
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.15, false);
+        let snapshot = discovery.scan(mtm, &[]);
+        let display = snapshot
+            .windows
+            .iter()
+            .find(|w| w.id == id)
+            .ok_or("Missing transferred fixture")?
+            .display;
+        let ids: Vec<_> = discovery
+            .handles
+            .values()
+            .filter(|h| h.pid == pid && h.visible)
+            .map(|h| h.id)
+            .collect();
+        let mut engine = Engine::new(8.);
+        engine.bounds = snapshot.bounds;
+        for window in snapshot.windows {
+            if discovery
+                .handles
+                .get(&window.id)
+                .is_some_and(|h| h.pid == pid)
+            {
+                engine.windows.insert(window.id, window);
             }
         }
-        println!(
-            "PASS: six native drag-and-follow transitions, source windows disappear/reappear, background queue preserves focus and geometry"
-        );
+        engine.set_display_visible(display, 1, &ids, Some(id));
+        super::input_probe::space_moves(
+            engine,
+            discovery,
+            super::input_probe::SpaceScenario {
+                id,
+                original,
+                source_space: source,
+                target_space: target,
+                direction,
+                siblings,
+            },
+            mtm,
+        )?;
         Ok(())
     }
 }

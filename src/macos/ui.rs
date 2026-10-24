@@ -204,9 +204,17 @@ impl Ui {
             }
         });
     }
+    pub fn suspend_overview(&self) {
+        self.panel.setIgnoresMouseEvents(true);
+        self.clicks.reset();
+        self.visibility_epoch.set(self.visibility_epoch.get() + 1);
+    }
     pub fn reset_overview(&self) {
         self.hide();
-        self.visibility_epoch.set(self.visibility_epoch.get() + 1);
+        self.refresh_overview();
+    }
+    pub fn refresh_overview(&self) {
+        self.suspend_overview();
         for card in self.cards.borrow_mut().values() {
             card.view.removeFromSuperview();
         }

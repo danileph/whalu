@@ -26,6 +26,7 @@ impl Drop for Target {
         }
     }
 }
+#[derive(Clone, Copy)]
 enum Operation {
     Tile(NativeShortcut),
     MoveSpace { window: u32, forward: bool },
@@ -75,6 +76,9 @@ fn enqueue(pid: i32, window: Ref, operation: Operation) -> Result<(), String> {
                                 eprintln!("Native window command: {error}");
                             }
                         });
+                        if matches!(request.operation, Operation::MoveSpace { .. }) {
+                            super::enqueue(super::Event::SpaceTransferFinished);
+                        }
                         super::enqueue(super::Event::Dirty);
                     }
                 })

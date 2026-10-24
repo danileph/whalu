@@ -9,7 +9,6 @@ pub(super) fn run(
     tap: Owned,
     mtm: MainThreadMarker,
 ) -> Result<(), String> {
-    let (tx, rx) = mpsc::channel();
     let ids = engine
         .context()
         .ok_or("Missing input probe context")?
@@ -20,58 +19,7 @@ pub(super) fn run(
         .iter()
         .map(|id| engine.windows[id].app_id.clone())
         .collect();
-    let ignored_apps = NSWorkspace::sharedWorkspace()
-        .runningApplications()
-        .iter()
-        .filter(|app| !fixture_pids.contains(&app.processIdentifier()))
-        .map(|app| {
-            app.bundleIdentifier()
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| format!("pid:{}", app.processIdentifier()))
-        })
-        .filter(|id| !fixture_app_ids.contains(id))
-        .collect();
-    let mut runtime = Runtime {
-        mtm,
-        rx,
-        config: Config {
-            magnetic: false,
-            ignored_apps,
-            ..Config::default()
-        },
-        config_path: std::env::temp_dir().join("whalu-input-probe.toml"),
-        state_writer: None,
-        engine,
-        discovery,
-        ui,
-        observers: BTreeMap::new(),
-        tap: tap.clone(),
-        gestures: None,
-        gesture: None,
-        click_travel: None,
-        pending_focus: None,
-        motion_due: None,
-        linger_until: None,
-        motion_tick: Instant::now(),
-        _tap_source: tap,
-        timer: None,
-        deadline: None,
-        overlay_deadline: None,
-        held: false,
-        mouse: false,
-        dragging: false,
-        manual_until: None,
-        switched_space: false,
-        pending_commands: vec![],
-        space_until: None,
-        space_retries: 0,
-        modal: false,
-        recovery: SavedState::default(),
-        restored: BTreeSet::new(),
-        context_tracker: DisplayContexts::default(),
-        navigation_display: None,
-        _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
-    };
+    let (mut runtime, tx) = fixture_runtime(engine, discovery, ui, tap, mtm)?;
     // Use restored bindings through the actual Runtime command path, after
     // repeated native tiling in the smoke test, and confirm AX focus each time.
     runtime.held = true;
@@ -821,4 +769,241 @@ fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Res
         "PASS: pointer monitor overview opens without prior focus, survives refreshes and keyboard/gesture/wheel preparation, preserves native focus, and retargets after closing"
     );
     Ok(())
+}
+
+fn fixture_runtime(
+    engine: Engine,
+    discovery: Discovery,
+    ui: ui::Ui,
+    tap: Owned,
+    mtm: MainThreadMarker,
+) -> Result<(Runtime, Sender<Event>), String> {
+    let (tx, rx) = mpsc::channel();
+    let ids = engine
+        .context()
+        .ok_or("Missing input probe context")?
+        .order
+        .clone();
+    let fixture_pids: BTreeSet<_> = ids.iter().map(|id| discovery.handles[id].pid).collect();
+    let fixture_app_ids: BTreeSet<_> = ids
+        .iter()
+        .map(|id| engine.windows[id].app_id.clone())
+        .collect();
+    let ignored_apps = NSWorkspace::sharedWorkspace()
+        .runningApplications()
+        .iter()
+        .filter(|app| !fixture_pids.contains(&app.processIdentifier()))
+        .map(|app| {
+            app.bundleIdentifier()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| format!("pid:{}", app.processIdentifier()))
+        })
+        .filter(|id| !fixture_app_ids.contains(id))
+        .collect();
+    let runtime = Runtime {
+        mtm,
+        rx,
+        config: Config {
+            magnetic: false,
+            ignored_apps,
+            ..Config::default()
+        },
+        config_path: std::env::temp_dir().join("whalu-input-probe.toml"),
+        state_writer: None,
+        engine,
+        discovery,
+        ui,
+        observers: BTreeMap::new(),
+        tap: tap.clone(),
+        gestures: None,
+        gesture: None,
+        click_travel: None,
+        pending_focus: None,
+        motion_due: None,
+        linger_until: None,
+        motion_tick: Instant::now(),
+        _tap_source: tap,
+        timer: None,
+        deadline: None,
+        overlay_deadline: None,
+        held: false,
+        mouse: false,
+        dragging: false,
+        manual_until: None,
+        switched_space: false,
+        pending_commands: vec![],
+        space_until: None,
+        space_retries: 0,
+        space_transfer_display: None,
+        space_overview: false,
+        modal: false,
+        recovery: SavedState::default(),
+        restored: BTreeSet::new(),
+        context_tracker: DisplayContexts::default(),
+        navigation_display: None,
+        _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
+    };
+    Ok((runtime, tx))
+}
+
+pub(super) struct SpaceScenario {
+    pub id: u64,
+    pub original: whalu::geometry::Rect,
+    pub source_space: u64,
+    pub target_space: u64,
+    pub direction: bool,
+    pub siblings: Vec<u32>,
+}
+pub(super) fn space_moves(
+    engine: Engine,
+    discovery: Discovery,
+    scenario: SpaceScenario,
+    mtm: MainThreadMarker,
+) -> Result<(), String> {
+    let SpaceScenario {
+        id,
+        original,
+        source_space,
+        target_space,
+        direction,
+        siblings,
+    } = scenario;
+    unsafe {
+        let tap = Owned::new(CGEventTapCreate(
+            1,
+            0,
+            0,
+            1 << 12,
+            super::event_callback,
+            null_mut(),
+        ))
+        .ok_or("Cannot create fixture tap")?;
+        CGEventTapEnable(tap.0, false);
+        let (mut runtime, tx) = fixture_runtime(engine, discovery, ui::Ui::new(mtm), tap, mtm)?;
+        let mut context = SourceContext {
+            version: 0,
+            info: null_mut(),
+            retain: None,
+            release: None,
+            description: None,
+            equal: None,
+            hash: None,
+            schedule: None,
+            cancel: None,
+            perform: None,
+        };
+        let source = Owned::new(CFRunLoopSourceCreate(null(), 0, &mut context))
+            .ok_or("Cannot create probe dispatch")?;
+        struct DispatchRestore(Option<(Sender<Event>, usize)>);
+        impl Drop for DispatchRestore {
+            fn drop(&mut self) {
+                *DISPATCH.lock().unwrap() = self.0.take();
+            }
+        }
+        let _restore = DispatchRestore(
+            DISPATCH
+                .lock()
+                .unwrap()
+                .replace((tx.clone(), source.0 as usize)),
+        );
+        let pointer = || {
+            Owned::new(CGEventCreate(null()))
+                .map(|event| CGEventGetLocation(event.0))
+                .ok_or("No pointer state")
+        };
+        let cursor = pointer()?;
+        let modifiers = Modifiers {
+            control: true,
+            option: true,
+            command: true,
+            shift: false,
+        };
+        tx.send(Event::Modifiers(modifiers))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.overlay_deadline = None;
+        runtime.render();
+        for step in 0..5 {
+            let returning = step % 2 == 0;
+            let expected = if returning {
+                source_space
+            } else {
+                target_space
+            };
+            let quartz = runtime.discovery.handles[&id]
+                .quartz_id
+                .ok_or("No transfer identity")?;
+            tx.send(Event::Command(Command::MoveSpace(if returning {
+                !direction
+            } else {
+                direction
+            })))
+            .map_err(|e| e.to_string())?;
+            runtime.drain();
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            runtime.drain();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if !runtime.held || !runtime.ui.is_visible() || runtime.ui.is_key() {
+                    return Err("Held-modifier overview disappeared during Space transfer".into());
+                }
+                let position = pointer()?;
+                if (position.x - cursor.x).abs() > 0.01 || (position.y - cursor.y).abs() > 0.01 {
+                    return Err(format!(
+                        "Space transfer cursor changed: ({}, {}) -> ({}, {})",
+                        cursor.x, cursor.y, position.x, position.y
+                    ));
+                }
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+                runtime.drain();
+                if runtime.space_until.is_none()
+                    && super::spaces::window_space(quartz)? == Some(expected)
+                {
+                    let order = &runtime.engine.context().ok_or("No destination list")?.order;
+                    if !order.contains(&id)
+                        || order.len() != if returning { siblings.len() + 1 } else { 1 }
+                    {
+                        return Err(format!(
+                            "Overview did not replace its window list on destination: {order:?}"
+                        ));
+                    }
+                    if runtime.engine.focused() != Some(id)
+                        || !super::spaces::is_onscreen(quartz)
+                        || siblings
+                            .iter()
+                            .any(|id| super::spaces::is_onscreen(*id) != returning)
+                    {
+                        return Err("Space transfer lost focus or retained source windows".into());
+                    }
+                    if !frame(runtime.discovery.handles[&id].element.0)
+                        .is_some_and(|actual| actual.near(original))
+                    {
+                        return Err("Space transfer changed geometry".into());
+                    }
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("Held-modifier Space transfer timed out".into());
+                }
+            }
+        }
+        // Late workspace notifications must refresh without closing a held HUD.
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        runtime.drain();
+        if !runtime.ui.is_visible() {
+            return Err("Late Space notification hid held overview".into());
+        }
+        runtime.space_until = Some(Instant::now());
+        runtime.drain();
+        tx.send(Event::Modifiers(Modifiers::default()))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        if runtime.ui.is_visible() {
+            return Err("Overview remained visible after modifier release".into());
+        }
+        println!(
+            "PASS: five Runtime Space moves with modifiers continuously held, unchanged cursor, visible non-key overview, refreshed destination lists, preserved focus/geometry, and source-window isolation"
+        );
+        Ok(())
+    }
 }

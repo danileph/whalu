@@ -46,6 +46,7 @@ pub(super) enum Event {
     Dirty,
     DisplaysChanged,
     SpaceChanged,
+    SpaceTransferFinished,
     NativeGesture,
     Command(Command),
     Modifiers(Modifiers),
@@ -173,6 +174,8 @@ struct Runtime {
     pending_commands: Vec<Command>,
     space_until: Option<Instant>,
     space_retries: u8,
+    space_transfer_display: Option<u32>,
+    space_overview: bool,
     modal: bool,
     recovery: SavedState,
     restored: BTreeSet<u64>,
@@ -245,7 +248,21 @@ impl Runtime {
                     }
                     self.deadline = Some(Instant::now() + Duration::from_millis(70));
                 }
-                Event::SpaceChanged => self.yield_to_system(true),
+                Event::SpaceChanged => {
+                    if self.space_transfer_display.is_some() {
+                        // The worker owns settlement and focus. Preserve user
+                        // commands queued during this particular transfer.
+                        self.switched_space = true;
+                        self.discovery.invalidate_navigation();
+                    } else {
+                        self.yield_to_system(true);
+                    }
+                }
+                Event::SpaceTransferFinished => {
+                    if self.space_transfer_display.is_some() {
+                        self.space_until = Some(Instant::now());
+                    }
+                }
                 Event::NativeGesture => self.yield_to_system(false),
                 Event::Modifiers(m) => {
                     let held = m.overlay(self.config.overlay_modifiers);
@@ -340,16 +357,24 @@ impl Runtime {
                                 .and_then(|id| self.discovery.handles.get(&id))
                             {
                                 if let Some(window) = handle.quartz_id {
-                                    if let Err(error) = tiling::submit_space(
+                                    let submitted = tiling::submit_space(
                                         handle.pid,
                                         handle.element.0,
                                         window,
                                         forward,
-                                    ) {
-                                        eprintln!("Space transfer: {error}");
+                                    );
+                                    match submitted {
+                                        Ok(()) => {
+                                            self.space_transfer_display = self.engine.display();
+                                            self.navigation_display = self.engine.display();
+                                            self.yield_to_system(true);
+                                            // Bridge completion ends this early; bound a lost
+                                            // completion without replaying stale focus work.
+                                            self.space_until =
+                                                Some(Instant::now() + Duration::from_secs(4));
+                                        }
+                                        Err(error) => eprintln!("Space transfer: {error}"),
                                     }
-                                    self.pending_focus = None;
-                                    self.discovery.invalidate_navigation();
                                 }
                             }
                         }
@@ -425,10 +450,12 @@ impl Runtime {
         if self.space_until.is_some_and(|d| d <= now) {
             self.space_until = None;
             self.deadline = None;
-            if self.held {
+            if self.held && self.navigation_display.is_none() {
                 self.use_pointer_display();
             }
             self.reconcile(false);
+            self.space_transfer_display = None;
+            self.space_overview = false;
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
             }
@@ -484,20 +511,30 @@ impl Runtime {
         }
     }
     fn yield_to_system(&mut self, space_changed: bool) {
-        self.navigation_display = None;
+        self.space_overview = space_changed;
+        if !space_changed || !self.held {
+            self.navigation_display = self.space_transfer_display;
+        }
         // Four-finger contact precedes the workspace notification. Abandon the
         // session before its cancellation event can restore an old-Space window.
         self.clear_scroll();
         self.discovery.invalidate_navigation();
         self.pending_focus = None;
-        self.pending_commands.clear();
+        if self.space_transfer_display.is_none() {
+            self.pending_commands.clear();
+        }
         self.switched_space |= space_changed;
         self.manual_until = None;
         self.space_until = Some(Instant::now() + Duration::from_millis(850));
         self.space_retries = 8;
         self.engine.frozen = true;
         self.overlay_deadline = None;
-        self.ui.reset_overview();
+        if self.held && self.space_overview {
+            self.ui.suspend_overview();
+            self.render();
+        } else {
+            self.ui.reset_overview();
+        }
         self.deadline = None;
     }
     fn clear_scroll(&mut self) {
@@ -1018,7 +1055,11 @@ impl Runtime {
         }
         if context_changed {
             self.linger_until = None;
-            self.ui.reset_overview();
+            if self.held && self.space_overview {
+                self.ui.refresh_overview();
+            } else {
+                self.ui.reset_overview();
+            }
         }
         self.switched_space = false;
         self.observe();
@@ -1178,6 +1219,16 @@ impl Runtime {
     }
     fn render(&self) {
         let keyboard = self.held && self.overlay_deadline.is_none();
+        if self.space_until.is_some() && self.space_overview && keyboard && self.config.overlay {
+            // Keep the non-key panel visible, but discard old click targets.
+            // Completion replaces its cards with a fresh destination census.
+            if !self.ui.is_visible() {
+                self.ui.sync_sources(&self.discovery);
+                self.ui.show(&self.engine);
+            }
+            self.ui.suspend_overview();
+            return;
+        }
         if (keyboard
             || self.gesture.is_some()
             || self.click_travel.is_some()
@@ -1232,9 +1283,6 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
             (*queue).shortcuts = ShortcutRouter::default();
         }
         enqueue(Event::TapDisabled);
-        return event;
-    }
-    if CGEventGetIntegerValueField(event, 42) == spaces::INPUT_TAG {
         return event;
     }
     let modifiers = Modifiers::from_flags(CGEventGetFlags(event));
@@ -1507,6 +1555,8 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             pending_commands: vec![],
             space_until: None,
             space_retries: 0,
+            space_transfer_display: None,
+            space_overview: false,
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),
