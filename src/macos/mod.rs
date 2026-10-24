@@ -52,7 +52,7 @@ pub(super) enum Event {
     SpaceTransferPreparing(u64),
     NativeGesture,
     Command(Command),
-    Modifiers(Modifiers),
+    OverviewHeld(bool),
     Mouse(bool),
     SelectThumbnail {
         context: u64,
@@ -78,9 +78,22 @@ struct Queue {
     shortcuts: ShortcutRouter,
     runtime: *mut Runtime,
     scroll_modifiers: Modifiers,
+    overview_held: bool,
     wheel: WheelRouter,
     clock: Instant,
     clicks: ui::ThumbnailClicks,
+}
+impl Queue {
+    fn update_overview_hold(&mut self, modifiers: Modifiers) -> bool {
+        let held = self
+            .shortcuts
+            .overview_held(modifiers, self.scroll_modifiers);
+        if held != self.overview_held {
+            self.overview_held = held;
+            enqueue(Event::OverviewHeld(held));
+        }
+        held
+    }
 }
 pub(super) fn enqueue(event: Event) {
     if let Ok(dispatch) = DISPATCH.lock() {
@@ -289,8 +302,7 @@ impl Runtime {
                     }
                 }
                 Event::NativeGesture => self.yield_to_system(false),
-                Event::Modifiers(m) => {
-                    let held = m.overlay(self.config.overlay_modifiers);
+                Event::OverviewHeld(held) => {
                     let opening = held && !self.held && self.config.overlay;
                     if opening {
                         self.overlay_deadline = Some(
@@ -467,6 +479,7 @@ impl Runtime {
                         if !q.is_null() {
                             (*q).wheel.reset();
                             (*q).clicks.reset();
+                            (*q).overview_held = false;
                         }
                     }
                     self.held = false;
@@ -998,6 +1011,7 @@ impl Runtime {
                     let q = QUEUE.load(Ordering::Acquire);
                     (*q).bindings = self.config.bindings.clone();
                     (*q).scroll_modifiers = self.config.overlay_modifiers;
+                    (*q).overview_held = false;
                     (*q).wheel.reset();
                 }
                 self.clear_scroll();
@@ -1479,8 +1493,9 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
                 CGEventGetIntegerValueField(event, 11) as f64
             };
             let now = (*q).clock.elapsed().as_secs_f64();
+            let held = (*q).update_overview_hold(modifiers);
             match (*q).wheel.route(
-                modifiers.overlay((*q).scroll_modifiers),
+                held,
                 delta,
                 continuous,
                 momentum,
@@ -1490,7 +1505,6 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
                 WheelRoute::Pass => {}
                 WheelRoute::Consume => return null_mut(),
                 WheelRoute::Navigate(delta) => {
-                    enqueue(Event::Modifiers(modifiers));
                     enqueue(Event::Wheel(delta, now));
                     return null_mut();
                 }
@@ -1498,7 +1512,10 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         }
     }
     if ty == 12 {
-        enqueue(Event::Modifiers(modifiers));
+        let q = QUEUE.load(Ordering::Acquire);
+        if !q.is_null() {
+            (*q).update_overview_hold(modifiers);
+        }
     }
     if ty == 6 {
         enqueue(Event::Drag);
@@ -1513,10 +1530,11 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         let q = QUEUE.load(Ordering::Acquire);
         if !q.is_null() {
             let key = CGEventGetIntegerValueField(event, 9) as u16;
-            match (*q)
+            let route = (*q)
                 .shortcuts
-                .key(&(*q).bindings, key, CGEventGetFlags(event), ty == 10)
-            {
+                .key(&(*q).bindings, key, CGEventGetFlags(event), ty == 10);
+            (*q).update_overview_hold(modifiers);
+            match route {
                 KeyRoute::Pass => {}
                 KeyRoute::Consume(command) => {
                     if let Some(command) = command {
@@ -1604,6 +1622,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             shortcuts: ShortcutRouter::default(),
             runtime: null_mut(),
             scroll_modifiers: config.overlay_modifiers,
+            overview_held: false,
             wheel: WheelRouter::default(),
             clock: Instant::now(),
             clicks: ui::ThumbnailClicks::default(),

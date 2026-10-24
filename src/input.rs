@@ -56,8 +56,20 @@ pub enum KeyRoute {
 #[derive(Default)]
 pub struct ShortcutRouter {
     held: std::collections::BTreeMap<u16, Command>,
+    overview_keys: std::collections::BTreeSet<u16>,
+    command_session: bool,
 }
 impl ShortcutRouter {
+    /// Command alone opens nothing. After a switch, retain the overview between
+    /// presses until Command is released, and through modifier-first key release.
+    /// Use the same ownership for the overview and mouse-wheel interception.
+    pub fn overview_held(&mut self, modifiers: Modifiers, required: Modifiers) -> bool {
+        if !modifiers.command {
+            self.command_session = false;
+        }
+        modifiers.overlay(required) || self.command_session || !self.overview_keys.is_empty()
+    }
+
     pub fn key(&mut self, bindings: &[Binding], key: u16, flags: u64, down: bool) -> KeyRoute {
         // Keep the original mapping through repeat/release, even if modifiers
         // are released first or configuration is reloaded while a key is held.
@@ -67,10 +79,18 @@ impl ShortcutRouter {
                     return None;
                 }
                 let command = route(bindings, key, Modifiers::from_flags(flags))?;
+                if [48, 50].contains(&key)
+                    && flags & (1 << 20) != 0
+                    && matches!(command, Command::FocusNext | Command::FocusPrevious)
+                {
+                    self.overview_keys.insert(key);
+                    self.command_session = true;
+                }
                 self.held.insert(key, command);
                 Some(command)
             })
         } else {
+            self.overview_keys.remove(&key);
             self.held.remove(&key)
         };
         match command {

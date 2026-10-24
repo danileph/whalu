@@ -102,6 +102,22 @@ impl Default for Config {
         };
         let mut bindings = vec![];
         for (keys, action, modifiers) in [
+            (
+                &[48][..],
+                Action::Next,
+                Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                &[50][..],
+                Action::Previous,
+                Modifiers {
+                    command: true,
+                    ..Default::default()
+                },
+            ),
             (&[126, 40][..], Action::Previous, base),
             (&[125, 38][..], Action::Next, base),
             (&[123, 4][..], Action::AppPrevious, base),
@@ -162,7 +178,6 @@ impl Config {
                 return Err("bindings require Control, Option, or Command".into());
             }
             if (m.control && !m.option && !m.command && [123, 124, 125, 126].contains(&b.keycode))
-                || (m.command && !m.control && !m.option && [48, 50].contains(&b.keycode))
                 || (m.option && !m.control && !m.command && b.keycode == 46)
             {
                 return Err("binding uses a reserved macOS/spec shortcut".into());

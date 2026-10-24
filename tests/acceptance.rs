@@ -150,7 +150,7 @@ fn default_shortcuts_respect_native_and_reserved_keys() {
             ..Default::default()
         },
     ] {
-        for key in [123, 124, 125, 126, 48, 46] {
+        for key in [123, 124, 125, 126, 46] {
             assert_eq!(route(&c.bindings, key, m), None);
         }
     }

@@ -95,6 +95,7 @@ pub(super) fn run(
     println!(
         "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
     );
+    command_switching(&mut runtime, &tx, &ids)?;
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
         runtime.clear_scroll();
         runtime.apply(vec![Effect::Focus(ids[0])]);
@@ -578,6 +579,75 @@ pub(super) fn run(
     Ok(())
 }
 
+fn command_switching(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> Result<(), String> {
+    let command = Modifiers {
+        command: true,
+        ..Default::default()
+    };
+    for key in [48, 50] {
+        runtime.clear_scroll();
+        runtime.apply(vec![Effect::Focus(ids[1])]);
+        let mut router = ShortcutRouter::default();
+        let KeyRoute::Consume(Some(action)) =
+            router.key(&runtime.config.bindings, key, 1 << 20, true)
+        else {
+            return Err("Missing Command window-switch binding".into());
+        };
+        tx.send(Event::OverviewHeld(
+            router.overview_held(command, runtime.config.overlay_modifiers),
+        ))
+        .map_err(|e| e.to_string())?;
+        tx.send(Event::Command(action)).map_err(|e| e.to_string())?;
+        runtime.drain();
+        let epoch = runtime.ui.visibility_epoch();
+        runtime.advance_scroll(Instant::now() + Duration::from_secs(2));
+        runtime.render();
+        if !runtime.ui.is_visible() || runtime.ui.is_key() {
+            return Err("Held Command shortcut lost its non-key overview".into());
+        }
+        let before = runtime.engine.focused();
+        let delta = if key == 48 { -1. } else { 1. };
+        tx.send(Event::Wheel(delta, 0.))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        if runtime.engine.focused() == before || runtime.ui.visibility_epoch() != epoch {
+            return Err("Wheel did not navigate within the held Command overview".into());
+        }
+        runtime.clear_scroll();
+        // Cover key-first release for Tab and modifier-first release for grave.
+        if key == 48 {
+            router.key(&[], key, 1 << 20, false);
+        }
+        let modifiers = if key == 48 {
+            command
+        } else {
+            Modifiers::default()
+        };
+        tx.send(Event::OverviewHeld(
+            router.overview_held(modifiers, runtime.config.overlay_modifiers),
+        ))
+        .map_err(|e| e.to_string())?;
+        runtime.drain();
+        if !runtime.ui.is_visible() || runtime.ui.visibility_epoch() != epoch {
+            return Err("First shortcut release hid the held overview".into());
+        }
+        router.key(&[], key, 0, false);
+        tx.send(Event::OverviewHeld(router.overview_held(
+            Modifiers::default(),
+            runtime.config.overlay_modifiers,
+        )))
+        .map_err(|e| e.to_string())?;
+        runtime.drain();
+        if runtime.ui.is_visible() {
+            return Err("Command overview did not dismiss after full release".into());
+        }
+    }
+    println!(
+        "PASS: Command-Tab/grave keep a non-key overview through holds and wheel navigation, then dismiss after either release order"
+    );
+    Ok(())
+}
+
 fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
     let displays: Vec<_> = runtime.engine.bounds.keys().copied().take(2).collect();
     if displays.len() < 2 {
@@ -949,8 +1019,10 @@ pub(super) fn space_moves(
             command: true,
             shift: false,
         };
-        tx.send(Event::Modifiers(modifiers))
-            .map_err(|e| e.to_string())?;
+        tx.send(Event::OverviewHeld(
+            modifiers.overlay(runtime.config.overlay_modifiers),
+        ))
+        .map_err(|e| e.to_string())?;
         runtime.drain();
         runtime.overlay_deadline = None;
         runtime.render();
@@ -1107,7 +1179,7 @@ pub(super) fn space_moves(
         }
         // Opening while the native navigation pause is still active must read
         // the destination, instead of using the previous stack for 850 ms.
-        tx.send(Event::Modifiers(Modifiers::default()))
+        tx.send(Event::OverviewHeld(false))
             .map_err(|e| e.to_string())?;
         tx.send(Event::NativeGesture).map_err(|e| e.to_string())?;
         runtime.drain();
@@ -1115,8 +1187,10 @@ pub(super) fn space_moves(
         super::spaces::move_adjacent(h.element.0, quartz, !direction)?;
         refocus(&runtime)?;
         tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
-        tx.send(Event::Modifiers(modifiers))
-            .map_err(|e| e.to_string())?;
+        tx.send(Event::OverviewHeld(
+            modifiers.overlay(runtime.config.overlay_modifiers),
+        ))
+        .map_err(|e| e.to_string())?;
         runtime.drain();
         runtime.overlay_deadline = Some(Instant::now());
         runtime.drain();
@@ -1139,7 +1213,7 @@ pub(super) fn space_moves(
         println!(
             "PASS: external Space changes reject stale renders before notification; opening during the navigation pause shows the destination stack immediately"
         );
-        tx.send(Event::Modifiers(Modifiers::default()))
+        tx.send(Event::OverviewHeld(false))
             .map_err(|e| e.to_string())?;
         runtime.drain();
         if runtime.ui.is_visible() {

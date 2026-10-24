@@ -12,10 +12,95 @@ const SHIFT: u64 = 1 << 17;
 const FN: u64 = 1 << 23;
 
 #[test]
+fn command_switching_owns_repeat_release_overview_and_wheel_navigation() {
+    use whalu::scroll::{WheelRoute, WheelRouter};
+
+    let config = Config::default();
+    let command = Modifiers::from_flags(COMMAND);
+    let released = Modifiers::default();
+    for (key, action) in [(48, Command::FocusNext), (50, Command::FocusPrevious)] {
+        let mut router = ShortcutRouter::default();
+        let mut wheel = WheelRouter::default();
+        assert!(!router.overview_held(command, config.overlay_modifiers));
+        assert_eq!(
+            router.key(&config.bindings, key, COMMAND, true),
+            KeyRoute::Consume(Some(action))
+        );
+        assert!(router.overview_held(command, config.overlay_modifiers));
+        // A held key continues to navigate and survives configuration changes.
+        assert_eq!(
+            router.key(&[], key, COMMAND, true),
+            KeyRoute::Consume(Some(action))
+        );
+        assert_eq!(
+            wheel.route(
+                router.overview_held(command, config.overlay_modifiers),
+                -1.,
+                false,
+                0,
+                0,
+                0.,
+            ),
+            WheelRoute::Navigate(1.)
+        );
+        // Releasing Tab/grave first retains the session while Command is down.
+        assert_eq!(
+            router.key(&[], key, COMMAND, false),
+            KeyRoute::Consume(None)
+        );
+        assert!(router.overview_held(command, config.overlay_modifiers));
+        assert!(!router.overview_held(released, config.overlay_modifiers));
+        // Releasing Command first must not hide a still-held navigation key.
+        router.key(&config.bindings, key, COMMAND, true);
+        assert!(router.overview_held(released, config.overlay_modifiers));
+        assert_eq!(
+            router.key(&[], key, 0, true),
+            KeyRoute::Consume(Some(action))
+        );
+        assert!(router.overview_held(released, config.overlay_modifiers));
+        assert_eq!(router.key(&[], key, 0, false), KeyRoute::Consume(None));
+        assert!(!router.overview_held(released, config.overlay_modifiers));
+        assert_eq!(router.key(&[], key, 0, false), KeyRoute::Pass);
+        assert_eq!(wheel.route(false, -1., false, 0, 0, 1.), WheelRoute::Pass);
+    }
+}
+
+#[test]
+fn overview_ownership_preserves_custom_bindings_modifiers_and_simultaneous_keys() {
+    let config = Config::default();
+    let mut router = ShortcutRouter::default();
+    let command = Modifiers::from_flags(COMMAND);
+    for flags in [0, COMMAND | SHIFT, COMMAND | OPTION, FN | COMMAND] {
+        assert_eq!(
+            router.key(&config.bindings, 48, flags, true),
+            KeyRoute::Pass
+        );
+        assert!(!router.overview_held(command, config.overlay_modifiers));
+    }
+    assert_eq!(router.key(&[], 48, COMMAND, true), KeyRoute::Pass);
+    assert!(!router.overview_held(command, config.overlay_modifiers));
+    assert!(router.overview_held(
+        Modifiers::from_flags(CONTROL | OPTION),
+        config.overlay_modifiers
+    ));
+    router.key(&config.bindings, 48, COMMAND, true);
+    router.key(&config.bindings, 50, COMMAND, true);
+    assert!(router.overview_held(Modifiers::default(), config.overlay_modifiers));
+    router.key(&[], 48, 0, false);
+    assert!(router.overview_held(Modifiers::default(), config.overlay_modifiers));
+    router.key(&[], 50, 0, false);
+    assert!(!router.overview_held(command, config.overlay_modifiers));
+    // A disabled/recreated tap starts with no stale hold or switch session.
+    router.key(&config.bindings, 48, COMMAND, true);
+    router = ShortcutRouter::default();
+    assert!(!router.overview_held(command, config.overlay_modifiers));
+}
+
+#[test]
 fn screenshot_shortcuts_route_to_stack_spaces_and_native_tiling() {
     let config = Config::default();
     config.validate().unwrap();
-    assert_eq!(config.bindings.len(), 35);
+    assert_eq!(config.bindings.len(), 37);
     for (keys, command) in [
         (&[126, 40][..], Command::StackUp),
         (&[125, 38][..], Command::StackDown),
@@ -70,7 +155,7 @@ fn native_navigation_and_tiling_remain_available_without_whalu_interception() {
     let config = Config::default();
     let mut router = ShortcutRouter::default();
     for (keys, flags) in [
-        (&[48, 50][..], COMMAND),
+        (&[48, 50][..], COMMAND | SHIFT),
         (&[123, 124, 125, 126][..], CONTROL),
         (&[123, 124, 125, 126, 3, 8, 15][..], FN | CONTROL),
         (&[123, 124, 125, 126][..], FN | CONTROL | SHIFT),
