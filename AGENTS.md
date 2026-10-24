@@ -1,5 +1,15 @@
 # Agent instructions
 
+## Apply each development iteration
+
+- After every iteration that changes application code, dependencies, bundled assets, or build configuration, run the appropriate checks, rebuild the release app with `./scripts/build-app.sh`, and reinstall it at `~/Applications/Whalu.app` before reporting completion.
+- Quit the running installed app before replacing it, preserve the previous bundle for rollback, then launch the newly installed app. Verify its signature and confirm that the installed executable matches the freshly built executable.
+- After each reinstall, reset and refresh Whalu's existing Accessibility and Screen & System Audio Recording permissions for the newly signed bundle. Refresh Input Monitoring too when it is used. Scope resets to Whalu (`dev.danileph.whalu`), preserving other applications' grants.
+- Complete the permission reset/regrant workflow, including removing stale entries and re-adding the installed bundle or using Quit & Reopen when required. An enabled toggle for an older signature is insufficient.
+- Verify that the installed GUI app reaches its running state and that existing window-preview access works. Terminal diagnostics can inherit the terminal's permissions and do not establish that the installed app is authorized.
+- Rebuilding, reinstalling, and refreshing existing permissions are part of the authorized development workflow; do not ask for separate confirmation each time. If macOS requires the user's authentication or a permission action that tools cannot complete, request only that necessary action and clearly report that activation remains pending. Do not describe an app waiting for permissions as fully applied or ready to use.
+- Documentation-only iterations that do not change the app bundle require the documentation checks below; they do not require rebuilding, reinstalling, or resetting permissions.
+
 ## Commits
 
 - Commit each completed, coherent change after running the appropriate checks. Do not leave completed work uncommitted.
