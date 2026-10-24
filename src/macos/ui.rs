@@ -235,6 +235,7 @@ impl Ui {
     /// Opt-in diagnostic: exercise real compositor interpolation and interrupted reversal.
     pub fn verify_wheel_animation(&self, engine: &mut Engine) -> Result<(), String> {
         self.verify_display_layout(engine)?;
+        self.verify_first_open(engine)?;
         let ids = engine.context().ok_or("No overview context")?.order.clone();
         if ids.len() < 2 {
             return Err("Wheel probe requires two windows".into());
@@ -363,6 +364,39 @@ impl Ui {
         println!(
             "PASS: opaque wheel cards interpolate, reverse continuously, remain centered, retain 3D transforms, and draw badges in front of borders"
         );
+        Ok(())
+    }
+    fn verify_first_open(&self, engine: &Engine) -> Result<(), String> {
+        let reduce_motion: bool = unsafe {
+            msg_send![
+                &*NSWorkspace::sharedWorkspace(),
+                accessibilityDisplayShouldReduceMotion
+            ]
+        };
+        // Space transitions discard every card. Exercise the very first layout
+        // commit, before selection or a preview callback can place them again.
+        for _ in 0..3 {
+            self.reset_overview();
+            self.show(engine);
+            pump(0.1);
+            for card in self.cards.borrow().values() {
+                let layer = card.view.layer().unwrap();
+                let pose = card.pose.unwrap();
+                if !reduce_motion && pose.pitch.abs() > 0.01 {
+                    let visible = unsafe { layer.presentationLayer() }
+                        .ok_or("First opening has no presentation layer")?;
+                    if layer.transform().m23.abs() < 0.01 || visible.transform().m23.abs() < 0.01 {
+                        return Err(format!(
+                            "First opening lost the wheel transform: model {:?}, presentation {:?}",
+                            layer.transform(),
+                            visible.transform()
+                        ));
+                    }
+                }
+            }
+            self.verify_thumbnail_clicks()?;
+        }
+        println!("PASS: first opening retains wheel perspective after repeated Space resets");
         Ok(())
     }
     fn verify_display_layout(&self, engine: &Engine) -> Result<(), String> {
@@ -730,6 +764,21 @@ impl Ui {
         });
         drop(cards);
         self.panel.orderFrontRegardless();
+        if !animate {
+            // Ordering a hidden panel lets AppKit initialize backing-layer
+            // geometry, which resets fresh cards' transforms. Complete that
+            // display pass, then restore the poses before the compositor commits.
+            self.panel.displayIfNeeded();
+            for card in self.cards.borrow_mut().values_mut() {
+                card.place(
+                    card.pose.unwrap(),
+                    height,
+                    false,
+                    card.active,
+                    reduce_motion,
+                );
+            }
+        }
         previews::capture(targets);
     }
 }
