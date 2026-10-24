@@ -1234,6 +1234,9 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         enqueue(Event::TapDisabled);
         return event;
     }
+    if CGEventGetIntegerValueField(event, 42) == spaces::INPUT_TAG {
+        return event;
+    }
     let modifiers = Modifiers::from_flags(CGEventGetFlags(event));
     if matches!(ty, 1 | 2 | 6) {
         let q = QUEUE.load(Ordering::Acquire);

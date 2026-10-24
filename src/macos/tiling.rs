@@ -94,7 +94,7 @@ fn enqueue(pid: i32, window: Ref, operation: Operation) -> Result<(), String> {
 }
 
 fn move_and_focus(pid: i32, element: Ref, window: u32, forward: bool) -> Result<(), String> {
-    if !super::spaces::move_adjacent(window, forward)? {
+    if !super::spaces::move_adjacent(element, window, forward)? {
         return Ok(());
     }
     unsafe {

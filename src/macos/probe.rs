@@ -576,9 +576,9 @@ pub fn smoke() -> Result<(), String> {
         let quartz = handle.quartz_id.ok_or("Fixture has no Quartz identity")?;
         let before_transfer = frame(handle.element.0).ok_or("No fixture frame")?;
         let source_space = super::spaces::window_space(quartz)?.ok_or("No unique fixture Space")?;
-        let direction = if super::spaces::move_adjacent(quartz, true)? {
+        let direction = if super::spaces::move_adjacent(handle.element.0, quartz, true)? {
             Some(true)
-        } else if super::spaces::move_adjacent(quartz, false)? {
+        } else if super::spaces::move_adjacent(handle.element.0, quartz, false)? {
             Some(false)
         } else {
             None
@@ -713,5 +713,103 @@ fn settle_native_tiling() {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.03, false);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Exercise only native Space transfers, without preceding tiling animations.
+pub fn space_smoke() -> Result<(), String> {
+    unsafe {
+        let mtm = MainThreadMarker::new().ok_or("Requires main thread")?;
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        app.finishLaunching();
+        if !AXIsProcessTrusted() {
+            return Err(super::permission_help());
+        }
+        let _restore = RestoreFocus(NSWorkspace::sharedWorkspace().frontmostApplication());
+        let fixture = Fixture(
+            ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
+                .arg("--fixture")
+                .spawn()
+                .map_err(|e| e.to_string())?,
+        );
+        let pid = fixture.0.id() as i32;
+        let mut discovery = Discovery::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let id = loop {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+            let snapshot = discovery.scan(mtm, &[]);
+            if let Some(id) = snapshot
+                .focused
+                .filter(|id| discovery.handles[id].pid == pid)
+            {
+                break id;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("No focused Space fixture".into());
+            }
+        };
+        let handle = &discovery.handles[&id];
+        let quartz = handle.quartz_id.ok_or("No fixture Quartz ID")?;
+        let original = frame(handle.element.0).ok_or("No fixture frame")?;
+        let source = super::spaces::window_space(quartz)?.ok_or("No source desktop")?;
+        let ax_app = Owned::new(AXUIElementCreateApplication(pid)).ok_or("No fixture app")?;
+        let siblings: Vec<_> = discovery
+            .handles
+            .values()
+            .filter(|h| h.pid == pid && h.id != id)
+            .filter_map(|h| h.quartz_id)
+            .collect();
+        if siblings.is_empty() {
+            return Err("Missing source-only witness windows".into());
+        }
+        let direction = if super::spaces::move_adjacent(handle.element.0, quartz, true)? {
+            true
+        } else if super::spaces::move_adjacent(handle.element.0, quartz, false)? {
+            false
+        } else {
+            return Err("Native Space test needs two neighboring regular desktops".into());
+        };
+        let target = super::spaces::window_space(quartz)?.ok_or("No destination desktop")?;
+        for step in 0..5 {
+            let returning = step % 2 == 0;
+            if returning && siblings.iter().any(|id| super::spaces::is_onscreen(*id)) {
+                return Err("Source windows remain rendered on destination desktop".into());
+            }
+            // Validate the same background queue used by production shortcuts.
+            super::tiling::submit_space(
+                pid,
+                handle.element.0,
+                quartz,
+                if returning { !direction } else { direction },
+            )?;
+            let expected = if returning { source } else { target };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+                if super::spaces::window_space(quartz)? == Some(expected)
+                    && super::spaces::is_onscreen(quartz)
+                    && siblings
+                        .iter()
+                        .all(|id| super::spaces::is_onscreen(*id) == returning)
+                    && attr(ax_app.0, "AXFocusedWindow")
+                        .is_some_and(|w| CFEqual(w.0, handle.element.0))
+                {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "Queued native Space transfer {step} did not complete with correct visibility/focus"
+                    ));
+                }
+            }
+            if !frame(handle.element.0).is_some_and(|actual| actual.near(original)) {
+                return Err("Native drag changed fixture geometry".into());
+            }
+        }
+        println!(
+            "PASS: six native drag-and-follow transitions, source windows disappear/reappear, background queue preserves focus and geometry"
+        );
+        Ok(())
     }
 }

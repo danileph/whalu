@@ -102,6 +102,7 @@ unsafe extern "C" {
     pub static kAXTrustedCheckOptionPrompt: Ref;
     pub fn AXUIElementCreateApplication(pid: i32) -> Ref;
     pub fn AXUIElementCreateSystemWide() -> Ref;
+    pub fn AXUIElementCopyElementAtPosition(element: Ref, x: f32, y: f32, result: *mut Ref) -> i32;
     pub fn AXUIElementGetPid(element: Ref, pid: *mut i32) -> i32;
     pub fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
     pub fn AXUIElementSetAttributeValue(element: Ref, attr: Ref, value: Ref) -> i32;
@@ -136,6 +137,18 @@ unsafe extern "C" {
         info: MutRef,
     ) -> Ref;
     pub fn CGEventTapEnable(tap: Ref, enable: bool);
+    pub fn CGPreflightPostEventAccess() -> bool;
+    pub fn CGEventSourceCreate(state: i32) -> Ref;
+    pub fn CGEventSourceFlagsState(state: i32) -> u64;
+    pub fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+    pub fn CGEventCreateMouseEvent(source: Ref, ty: u32, point: Point, button: u32) -> Ref;
+    pub fn CGEventCreateKeyboardEvent(source: Ref, key: u16, down: bool) -> Ref;
+    pub fn CGEventSetType(event: Ref, ty: u32);
+    pub fn CGEventSetFlags(event: Ref, flags: u64);
+    pub fn CGEventSetLocation(event: Ref, point: Point);
+    pub fn CGEventSetIntegerValueField(event: Ref, field: u32, value: i64);
+    pub fn CGEventPost(location: u32, event: Ref);
+    pub fn CGWarpMouseCursorPosition(point: Point) -> i32;
     pub fn CGEventGetFlags(event: Ref) -> u64;
     pub fn CGEventCreate(source: Ref) -> Ref;
     pub fn CGEventGetLocation(event: Ref) -> Point;
