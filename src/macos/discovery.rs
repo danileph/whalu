@@ -22,6 +22,41 @@ pub struct Snapshot {
     pub modal: bool,
     pub bounds: BTreeMap<u32, Rect>,
 }
+impl Snapshot {
+    pub fn active_display(&self) -> u32 {
+        self.focused
+            .and_then(|id| self.windows.iter().find(|window| window.id == id))
+            .map(|window| window.display)
+            .or_else(|| {
+                // A desktop/empty Space has no manageable AX focus. Read the
+                // pointer in Quartz coordinates; include the menu bar and Dock.
+                let event = unsafe { Owned::new(CGEventCreate(std::ptr::null())) }?;
+                let point = unsafe { CGEventGetLocation(event.0) };
+                self.bounds.keys().copied().find(|display| {
+                    let frame = unsafe { CGDisplayBounds(*display) };
+                    point.x >= frame.origin.x
+                        && point.x < frame.origin.x + frame.size.width
+                        && point.y >= frame.origin.y
+                        && point.y < frame.origin.y + frame.size.height
+                })
+            })
+            .unwrap_or(unsafe { CGMainDisplayID() })
+    }
+
+    pub fn visible_on_display(&self, display: u32) -> Vec<WindowId> {
+        let local: BTreeSet<_> = self
+            .windows
+            .iter()
+            .filter(|window| window.display == display)
+            .map(|window| window.id)
+            .collect();
+        self.visible
+            .iter()
+            .copied()
+            .filter(|id| local.contains(id))
+            .collect()
+    }
+}
 pub struct Discovery {
     pub handles: BTreeMap<WindowId, NativeWindow>,
     next: u64,
@@ -81,6 +116,15 @@ impl Discovery {
     }
     /// A click must still belong to an on-screen Quartz window at dispatch time.
     pub fn is_onscreen(&self, id: WindowId) -> bool {
+        self.is_onscreen_on_display(id, None)
+    }
+    pub fn is_onscreen_on_display(
+        &self,
+        id: WindowId,
+        display: Option<(u32, &BTreeMap<u32, Rect>)>,
+    ) -> bool {
+        let local =
+            |frame| display.is_none_or(|(id, bounds)| frame_display(frame, bounds) == Some(id));
         self.handles.get(&id).is_some_and(|handle| {
             if !handle.visible {
                 return false;
@@ -89,9 +133,12 @@ impl Discovery {
                 return false;
             };
             if let Some(cg) = handle.quartz_id {
-                return windows
-                    .iter()
-                    .any(|window| window.id == cg && window.pid == handle.pid && window.onscreen);
+                return windows.iter().any(|window| {
+                    window.id == cg
+                        && window.pid == handle.pid
+                        && window.onscreen
+                        && local(window.frame)
+                });
             }
             // Identical, fully on-screen windows can have distinct AX identities
             // without a reliable per-window Quartz match. Revalidate the whole
@@ -99,6 +146,9 @@ impl Discovery {
             let Some(frame) = frame(handle.element.0) else {
                 return false;
             };
+            if !local(frame) {
+                return false;
+            }
             let Some(app) = (unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) })
             else {
                 return false;
@@ -302,16 +352,8 @@ impl Discovery {
                     } else {
                         direct.is_none() && cohort_is_onscreen(&candidates, ax_matches)
                     };
-                let display = result
-                    .bounds
-                    .iter()
-                    .max_by(|(_, a), (_, b)| {
-                        a.intersection(frame)
-                            .area()
-                            .total_cmp(&b.intersection(frame).area())
-                    })
-                    .map(|(id, _)| *id)
-                    .unwrap_or(unsafe { CGMainDisplayID() });
+                let display =
+                    frame_display(frame, &result.bounds).unwrap_or(unsafe { CGMainDisplayID() });
                 result.windows.push(Window {
                     id,
                     app_id: app_id.clone(),
@@ -378,6 +420,14 @@ impl Discovery {
         });
         result
     }
+}
+fn frame_display(frame: Rect, bounds: &BTreeMap<u32, Rect>) -> Option<u32> {
+    bounds
+        .iter()
+        .map(|(id, bounds)| (*id, bounds.intersection(frame).area()))
+        .filter(|(_, area)| *area > 0.)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 /// macOS exposes this permission prompt as an AXStandardWindow, although it
 /// belongs to the system authorization flow and cannot be navigated normally.
@@ -490,6 +540,63 @@ fn quartz_windows(options: u32) -> Option<Vec<QuartzWindow>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_limits_visible_windows_to_the_focused_display() {
+        let windows = [(1, 1), (2, 2), (3, 2)]
+            .into_iter()
+            .map(|(id, display)| Window {
+                id,
+                display,
+                app_id: "Editor".into(),
+                app_name: "Editor".into(),
+                title: format!("Document {id}"),
+                frame: Rect::new(0., 30., 800., 600.),
+                mode: Mode::Magnetic,
+                last_floating_frame: None,
+                snap: None,
+                restore_frame: None,
+            })
+            .collect();
+        let mut snapshot = Snapshot {
+            windows,
+            visible: vec![1, 2],
+            focused: Some(2),
+            modal: false,
+            bounds: BTreeMap::new(),
+        };
+        assert_eq!(snapshot.active_display(), 2);
+        assert_eq!(snapshot.visible_on_display(2), [2]);
+        assert_eq!(snapshot.visible_on_display(1), [1]);
+        assert!(snapshot.visible_on_display(3).is_empty());
+        snapshot.focused = Some(1);
+        assert_eq!(snapshot.active_display(), 1);
+    }
+
+    #[test]
+    fn display_membership_tracks_majority_area_and_rejects_removed_displays() {
+        let bounds = BTreeMap::from([
+            (1, Rect::new(0., 30., 1440., 850.)),
+            (2, Rect::new(-1920., -200., 1920., 1080.)),
+        ]);
+        assert_eq!(
+            frame_display(Rect::new(-800., 50., 600., 600.), &bounds),
+            Some(2)
+        );
+        assert_eq!(
+            frame_display(Rect::new(-100., 50., 600., 600.), &bounds),
+            Some(1)
+        );
+        assert_eq!(
+            frame_display(Rect::new(-500., 50., 600., 600.), &bounds),
+            Some(2)
+        );
+        let remaining = BTreeMap::from([(1, bounds[&1])]);
+        assert_eq!(
+            frame_display(Rect::new(-800., 50., 600., 600.), &remaining),
+            None
+        );
+    }
 
     #[test]
     fn accessibility_authorization_helper_is_never_an_application_window_owner() {

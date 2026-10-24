@@ -33,7 +33,7 @@ use whalu::{
     navigation::{ClickSequence, ScrubSession},
     persistence::{SavedState, StateWriter},
     scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
-    visibility::ContextTracker,
+    visibility::DisplayContexts,
 };
 
 static QUEUE: AtomicPtr<Queue> = AtomicPtr::new(null_mut());
@@ -175,7 +175,7 @@ struct Runtime {
     modal: bool,
     recovery: SavedState,
     restored: BTreeSet<u64>,
-    context_tracker: ContextTracker,
+    context_tracker: DisplayContexts,
     _lock: std::fs::File,
 }
 impl Runtime {
@@ -242,7 +242,8 @@ impl Runtime {
                 Event::NativeGesture => self.yield_to_system(false),
                 Event::Modifiers(m) => {
                     let held = m.overlay(self.config.overlay_modifiers);
-                    if held && !self.held && self.config.overlay {
+                    let opening = held && !self.held && self.config.overlay;
+                    if opening {
                         self.overlay_deadline = Some(
                             Instant::now() + Duration::from_millis(self.config.overlay_delay_ms),
                         );
@@ -251,6 +252,9 @@ impl Runtime {
                         self.overlay_deadline = None;
                     }
                     self.held = held;
+                    if opening && self.space_until.is_none() && !self.mouse {
+                        self.reconcile(false);
+                    }
                     self.render();
                 }
                 Event::Gesture(device, event, time) => self.gesture_event(device, event, time),
@@ -466,6 +470,17 @@ impl Runtime {
         );
         if navigation && !self.modal {
             if let Some(observed) = self.discovery.navigation_focus() {
+                if !self
+                    .engine
+                    .context()
+                    .is_some_and(|context| context.order.contains(&observed))
+                {
+                    // Fresh focus on another monitor cannot enter the old
+                    // monitor's cached stack. Rebuild its display/Space context.
+                    self.reconcile(false);
+                    self.deadline = None;
+                    return;
+                }
                 let visible: Vec<_> = self
                     .discovery
                     .handles
@@ -508,7 +523,12 @@ impl Runtime {
         }
         // Validate against fresh Quartz visibility; indistinguishable overlapping
         // windows also need their application's AX cohort checked.
-        if !self.discovery.is_onscreen(window) {
+        if !self.discovery.is_onscreen_on_display(
+            window,
+            self.engine
+                .display()
+                .map(|display| (display, &self.engine.bounds)),
+        ) {
             self.ui.reset_overview();
             self.deadline = Some(Instant::now());
             return;
@@ -607,7 +627,12 @@ impl Runtime {
             .linger_until
             .is_some_and(|until| until > Instant::now())
             && self.deadline.is_none()
-            && !self.switched_space;
+            && !self.switched_space
+            && self.discovery.navigation_focus().is_some_and(|id| {
+                self.engine
+                    .context()
+                    .is_some_and(|context| context.order.contains(&id))
+            });
         self.gesture = None;
         self.motion_due = None;
         // Do not clear feedback before reconciliation: it can render, and a
@@ -836,23 +861,25 @@ impl Runtime {
         let previous = self.engine.focused();
         self.modal = snap.modal;
         self.engine.frozen = self.mouse || self.modal || self.space_until.is_some();
+        let display = snap.active_display();
+        let visible = snap.visible_on_display(display);
         self.engine.bounds = snap.bounds;
-        let context = self
-            .context_tracker
-            .resolve(&snap.visible, self.switched_space);
-        let context_changed = self.engine.current != context || self.switched_space;
         // A missing AX entry on another Space is not a destroyed window.
         self.engine
             .windows
             .retain(|id, _| self.discovery.handles.contains_key(id));
-        let live: BTreeSet<_> = self
+        let live = self
             .engine
             .windows
-            .keys()
-            .copied()
-            .chain(snap.windows.iter().map(|w| w.id))
+            .values()
+            .chain(snap.windows.iter())
+            .map(|window| (window.id, window.display))
             .collect();
         self.context_tracker.retain(&live);
+        let context = self
+            .context_tracker
+            .resolve(display, &visible, self.switched_space);
+        let context_changed = self.engine.current != context || self.switched_space;
         let direct_manipulation = (self.mouse && self.dragging)
             || self
                 .manual_until
@@ -871,7 +898,7 @@ impl Runtime {
             let manual = direct_manipulation
                 && !context_changed
                 && self.space_until.is_none()
-                && snap.visible.contains(&id);
+                && visible.contains(&id);
             self.engine.observed_frame(id, frame, manual);
         }
         let mut uninitialized: BTreeMap<_, _> = self
@@ -895,18 +922,19 @@ impl Runtime {
             snap.focused
         } else {
             self.pending_focus.as_ref().map_or(snap.focused, |pending| {
-                pending.observed(context, &snap.visible, snap.focused, Instant::now())
+                pending.observed(context, &visible, snap.focused, Instant::now())
             })
         };
         if snap.modal
             || context_changed
             || self.pending_focus.as_ref().is_some_and(|pending| {
-                snap.focused == Some(pending.window) || !snap.visible.contains(&pending.window)
+                snap.focused == Some(pending.window) || !visible.contains(&pending.window)
             })
         {
             self.pending_focus = None;
         }
-        self.engine.set_visible(context, &snap.visible, focused);
+        self.engine
+            .set_display_visible(display, context, &visible, focused);
         if (context_changed && self.click_travel.is_some())
             || self
                 .gesture
@@ -928,7 +956,7 @@ impl Runtime {
         self.render();
         self.save();
         if self.space_retries > 0 {
-            if snap.visible.is_empty() {
+            if visible.is_empty() {
                 self.space_retries -= 1;
                 self.deadline = Some(Instant::now() + Duration::from_millis(120));
             } else {
@@ -960,7 +988,14 @@ impl Runtime {
             // Cached visibility may still describe the previous Space before
             // NSWorkspace delivers its change notification. Never raise or move
             // a window that has already left the screen.
-            if !h.visible || !self.discovery.is_onscreen(id) {
+            if !h.visible
+                || !self.discovery.is_onscreen_on_display(
+                    id,
+                    self.engine
+                        .display()
+                        .map(|display| (display, &self.engine.bounds)),
+                )
+            {
                 self.pending_focus = None;
                 self.deadline = Some(Instant::now());
                 continue;
@@ -1444,7 +1479,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),
-            context_tracker: ContextTracker::default(),
+            context_tracker: DisplayContexts::default(),
             _lock: lock,
         });
         queue.runtime = &mut *runtime;

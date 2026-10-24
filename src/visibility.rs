@@ -46,3 +46,37 @@ impl ContextTracker {
         }
     }
 }
+
+/// Visible windows on another monitor must not identify or merge this monitor's
+/// Spaces. Allocate globally unique engine contexts for each display's cohorts.
+#[derive(Default)]
+pub struct DisplayContexts {
+    trackers: BTreeMap<u32, ContextTracker>,
+    contexts: BTreeMap<(u32, u64), u64>,
+    next: u64,
+}
+impl DisplayContexts {
+    pub fn resolve(&mut self, display: u32, visible: &[u64], space_changed: bool) -> u64 {
+        let local = self
+            .trackers
+            .entry(display)
+            .or_default()
+            .resolve(visible, space_changed);
+        *self.contexts.entry((display, local)).or_insert_with(|| {
+            self.next += 1;
+            self.next
+        })
+    }
+
+    /// Forget destroyed windows and remove migrated windows from their former
+    /// display's cohorts, while retaining off-Space windows on their own display.
+    pub fn retain(&mut self, displays: &BTreeMap<u64, u32>) {
+        for (display, tracker) in &mut self.trackers {
+            let live = displays
+                .iter()
+                .filter_map(|(id, owner)| (owner == display).then_some(*id))
+                .collect();
+            tracker.retain(&live);
+        }
+    }
+}

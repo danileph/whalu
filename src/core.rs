@@ -25,6 +25,8 @@ pub struct Window {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Context {
+    #[serde(default)]
+    pub display: Option<u32>,
     pub order: Vec<WindowId>,
     pub focused: Option<WindowId>,
     pub last_focused: Option<WindowId>,
@@ -66,6 +68,28 @@ impl Engine {
     }
     pub fn focused(&self) -> Option<WindowId> {
         self.context()?.focused
+    }
+    pub fn display(&self) -> Option<u32> {
+        self.context()?.display.or_else(|| {
+            self.focused()
+                .and_then(|id| self.windows.get(&id))
+                .map(|window| window.display)
+        })
+    }
+    pub fn set_display_visible(
+        &mut self,
+        display: u32,
+        context: u64,
+        ids: &[WindowId],
+        focused: Option<WindowId>,
+    ) {
+        let visible: Vec<_> = ids
+            .iter()
+            .copied()
+            .filter(|id| self.windows.get(id).is_some_and(|w| w.display == display))
+            .collect();
+        self.set_visible(context, &visible, focused);
+        self.contexts.get_mut(&context).unwrap().display = Some(display);
     }
     pub fn set_visible(&mut self, context: u64, ids: &[WindowId], focused: Option<WindowId>) {
         self.current = context;

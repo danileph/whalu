@@ -369,22 +369,34 @@ impl Ui {
         let Some(template) = engine.windows.values().next() else {
             return Err("Display layout probe requires a window".into());
         };
-        for screen in NSScreen::screens(self.panel.mtm()) {
+        let screens = NSScreen::screens(self.panel.mtm());
+        for screen in screens.iter() {
             let bounds = screen.visibleFrame();
             let height = (bounds.size.height - 16.).max(132.);
             let wheel = Wheel::new(height);
             let count = 2 * wheel.radius + 3;
+            let display = discovery::display_id(&screen);
             let mut sample = Engine::new(8.);
-            let ids: Vec<_> = (1..=count as u64).collect();
+            let mut ids: Vec<_> = (1..=count as u64).collect();
             for id in &ids {
                 let mut window = template.clone();
                 window.id = *id;
-                window.display = discovery::display_id(&screen);
+                window.display = display;
                 sample.windows.insert(*id, window);
             }
+            let foreign = count as u64 + 1;
+            let mut window = template.clone();
+            window.id = foreign;
+            window.display = screens
+                .iter()
+                .map(|screen| discovery::display_id(&screen))
+                .find(|other| *other != display)
+                .unwrap_or(u32::MAX);
+            sample.windows.insert(foreign, window);
+            ids.push(foreign);
             // Deliberately omit cached bounds: placement must use the current
             // NSScreen identity and usable frame, even during reconfiguration.
-            sample.set_visible(1, &ids, Some(ids[count / 2]));
+            sample.set_display_visible(display, 1, &ids, Some(ids[count / 2]));
             self.hide();
             self.show(&sample);
             let expected = rect(
@@ -402,11 +414,17 @@ impl Ui {
                 return Err("Display layout probe made the overview key".into());
             }
             self.verify_thumbnail_clicks()?;
+            if self.cards.borrow().contains_key(&foreign) {
+                return Err("Overview included a window from another display".into());
+            }
+            sample.set_display_visible(display, 1, &ids, None);
+            self.show(&sample);
+            if self.panel.frame() != expected || self.selected_thumbnail().is_some() {
+                return Err("Unfocused overview lost its display or borrowed another focus".into());
+            }
             println!(
                 "PASS: overview display {} uses {:.0} logical points of height with {} neighbors per side",
-                discovery::display_id(&screen),
-                height,
-                wheel.radius
+                display, height, wheel.radius
             );
         }
         self.hide();
@@ -539,10 +557,7 @@ impl Ui {
         }
         let mtm = self.panel.mtm();
         // Display IDs remain stable when resolution or monitor origins change.
-        let display = ctx
-            .focused
-            .and_then(|id| engine.windows.get(&id))
-            .map(|w| w.display);
+        let display = engine.display();
         let screens = NSScreen::screens(mtm);
         let desktop_top = screens.firstObject().map_or(0., |s| s.frame().size.height);
         let screen = display

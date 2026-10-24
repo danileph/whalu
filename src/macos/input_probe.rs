@@ -69,7 +69,7 @@ pub(super) fn run(
         modal: false,
         recovery: SavedState::default(),
         restored: BTreeSet::new(),
-        context_tracker: ContextTracker::default(),
+        context_tracker: DisplayContexts::default(),
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
@@ -559,6 +559,7 @@ pub(super) fn run(
     println!(
         "PASS: empty Space snapshot schedules a bounded retry and overview recovers without new user input"
     );
+    display_isolation(&mut runtime, &ids)?;
     if let Some(timer) = runtime.timer.take() {
         unsafe {
             CFRunLoopTimerInvalidate(timer.0);
@@ -566,6 +567,128 @@ pub(super) fn run(
     }
     println!(
         "PASS: real fixture short-swipe focus, kinetic selection, wheel burst, 650ms non-key feedback, dismissal, rapid-swipe visibility continuity and Space interruption; no recovery writes"
+    );
+    Ok(())
+}
+
+fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
+    let displays: Vec<_> = runtime.engine.bounds.keys().copied().take(2).collect();
+    if displays.len() < 2 {
+        println!("SKIP: native monitor isolation requires two connected displays");
+        return Ok(());
+    }
+    // This is a new external-focus scenario, independent of the preceding
+    // click probe's bounded focus confirmation and feedback timers.
+    runtime.pending_focus = None;
+    runtime.clear_scroll();
+    // Move only the four disposable child windows: two per real monitor.
+    for (index, id) in ids.iter().enumerate() {
+        let bounds = runtime.engine.bounds[&displays[index / 2]];
+        let element = runtime.discovery.handles[id].element.0;
+        let before = frame(element).ok_or("Missing monitor fixture geometry")?;
+        set_position(
+            element,
+            whalu::geometry::Rect {
+                x: bounds.x + 100. + (index % 2) as f64 * 140.,
+                y: bounds.y + 100.,
+                ..before
+            },
+        )
+        .map_err(|code| format!("Could not move monitor fixture: AX {code}"))?;
+    }
+    let mut previous = None;
+    for side in [0, 1, 0] {
+        let selected = ids[side * 2];
+        let neighbor = ids[side * 2 + 1];
+        let foreign = ids[(1 - side) * 2];
+        let handle = &runtime.discovery.handles[&selected];
+        let app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+            .ok_or("Missing monitor fixture app")?;
+        unsafe {
+            AXUIElementSetAttributeValue(handle.element.0, string("AXMain").0, kCFBooleanTrue);
+            AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
+            #[allow(deprecated)]
+            handle
+                .app
+                .activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+        }
+        let mut confirmed = false;
+        for _ in 0..20 {
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) };
+            if attr(app.0, "AXFocusedWindow")
+                .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
+                && NSWorkspace::sharedWorkspace()
+                    .frontmostApplication()
+                    .is_some_and(|app| app.processIdentifier() == handle.pid)
+            {
+                confirmed = true;
+                break;
+            }
+        }
+        if !confirmed {
+            return Err("External focus did not reach the monitor fixture".into());
+        }
+        // Exercise the fast navigation path after focus changes displays while
+        // the global Quartz cohort stays unchanged.
+        runtime.prepare_command(Command::FocusNext);
+        runtime.held = true;
+        runtime.overlay_deadline = None;
+        runtime.render();
+        let expected = BTreeSet::from([selected, neighbor]);
+        if runtime.engine.display() != Some(displays[side])
+            || runtime.engine.focused() != Some(selected)
+            || runtime
+                .engine
+                .context()
+                .unwrap()
+                .order
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                != expected
+            || runtime.ui.selected_thumbnail() != Some(selected)
+            || runtime
+                .ui
+                .thumbnail_point(foreign, objc2_foundation::NSPoint::new(64., 41.))
+                .is_ok()
+            || runtime
+                .discovery
+                .is_onscreen_on_display(foreign, Some((displays[side], &runtime.engine.bounds)))
+        {
+            return Err(format!(
+                "Monitor isolation failed: expected display {} and windows {:?}, display {:?}, focused {:?} (expected {}), order {:?}, selected thumbnail {:?}, foreign thumbnail {}, foreign still on display {}, foreign frame {:?}",
+                displays[side],
+                expected,
+                runtime.engine.display(),
+                runtime.engine.focused(),
+                selected,
+                runtime.engine.context().map(|context| &context.order),
+                runtime.ui.selected_thumbnail(),
+                runtime
+                    .ui
+                    .thumbnail_point(foreign, objc2_foundation::NSPoint::new(64., 41.))
+                    .is_ok(),
+                runtime.discovery.is_onscreen_on_display(
+                    foreign,
+                    Some((displays[side], &runtime.engine.bounds))
+                ),
+                frame(runtime.discovery.handles[&foreign].element.0)
+            ));
+        }
+        if let Some((context, window)) = previous {
+            runtime.select_thumbnail(context, window);
+            if runtime.engine.focused() != Some(selected) {
+                return Err("A stale monitor thumbnail changed focus".into());
+            }
+        }
+        if runtime.engine.command(Command::FocusNext) != [Effect::Focus(neighbor)] {
+            return Err("Keyboard navigation escaped the active monitor".into());
+        }
+        previous = Some((runtime.engine.current, selected));
+    }
+    runtime.ui.hide();
+    println!(
+        "PASS: real fixtures on two monitors retain separate overview/navigation stacks, refresh cached external focus, and reject foreign/stale thumbnail targets"
     );
     Ok(())
 }

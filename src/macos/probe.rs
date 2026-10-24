@@ -458,6 +458,9 @@ pub fn smoke() -> Result<(), String> {
         ui.hide();
         println!("PASS: AppKit HUD renders without becoming key");
         super::input_probe::run(e, discovery, ui, tap.clone(), mtm)?;
+        // Bundled child processes share one application identity. Close this
+        // cohort before the next probe so its windows cannot join that stack.
+        drop(fixture);
         cross_app_click_smoke(mtm, tap)?;
         constrained_smoke(mtm)?;
         println!("Native smoke test passed; fixture windows closed automatically.");
