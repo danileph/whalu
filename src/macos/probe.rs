@@ -72,6 +72,10 @@ pub fn preview(path: &str, hold: bool) -> Result<(), String> {
         (9, "Preview", "Reference", 700.),
         (10, "Music", "Library", 900.),
         (11, "Settings", "Preferences", 1000.),
+        (12, "Photos", "Library", 200.),
+        (13, "Reminders", "Today", 300.),
+        (14, "Messages", "Conversations", 400.),
+        (15, "Activity Monitor", "Processes", 500.),
     ] {
         e.windows.insert(
             id,
@@ -93,10 +97,11 @@ pub fn preview(path: &str, hold: bool) -> Result<(), String> {
             },
         );
     }
-    e.set_visible(1, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], Some(6));
+    let ids: Vec<_> = (1..=15).collect();
+    e.set_visible(1, &ids, Some(8));
     let ui = Ui::new(mtm);
     ui.verify_wheel_animation(&mut e)?;
-    e.focus(6);
+    e.focus(8);
     ui.hide();
     ui.show(&e);
     let result = ui.snapshot(path);

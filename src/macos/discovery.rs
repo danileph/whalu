@@ -420,6 +420,11 @@ fn cohort_is_onscreen(candidates: &[&QuartzWindow], ax_matches: usize) -> bool {
         && candidates.iter().all(|window| window.onscreen)
 }
 
+pub fn display_id(screen: &NSScreen) -> u32 {
+    let desc = screen.deviceDescription();
+    unsafe { number(dict(Retained::as_ptr(&desc).cast(), "NSScreenNumber")) as u32 }
+}
+
 pub fn display_bounds(mtm: MainThreadMarker) -> BTreeMap<u32, Rect> {
     // AppKit's Y increases up; Accessibility/Quartz's Y increases down from primary top.
     let primary = unsafe { CGDisplayBounds(CGMainDisplayID()) };
@@ -427,10 +432,8 @@ pub fn display_bounds(mtm: MainThreadMarker) -> BTreeMap<u32, Rect> {
     let mut result = BTreeMap::new();
     for screen in NSScreen::screens(mtm) {
         let v = screen.visibleFrame();
-        let desc = screen.deviceDescription();
-        let id = unsafe { number(dict(Retained::as_ptr(&desc).cast(), "NSScreenNumber")) } as u32;
         result.insert(
-            id,
+            display_id(&screen),
             Rect::new(
                 v.origin.x,
                 top - v.origin.y - v.size.height,

@@ -42,6 +42,7 @@ static DISPATCH: Mutex<Option<(Sender<Event>, usize)>> = Mutex::new(None);
 #[derive(Debug)]
 pub(super) enum Event {
     Dirty,
+    DisplaysChanged,
     SpaceChanged,
     NativeGesture,
     Command(Command),
@@ -228,6 +229,15 @@ impl Runtime {
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
+                Event::DisplaysChanged => {
+                    // Rebuild display geometry without treating a monitor change
+                    // as a new Space or retaining clicks in the old coordinates.
+                    self.clear_scroll();
+                    self.discovery.invalidate_navigation();
+                    self.pending_focus = None;
+                    self.ui.reset_overview();
+                    self.deadline = Some(Instant::now() + Duration::from_millis(70));
+                }
                 Event::SpaceChanged => self.yield_to_system(true),
                 Event::NativeGesture => self.yield_to_system(false),
                 Event::Modifiers(m) => {
@@ -1378,7 +1388,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         );
         NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
             &ui.delegate,
-            sel!(spaceChanged:),
+            sel!(displaysChanged:),
             Some(&NSString::from_str(
                 "NSApplicationDidChangeScreenParametersNotification",
             )),

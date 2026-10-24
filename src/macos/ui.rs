@@ -1,4 +1,4 @@
-use super::{Event, discovery::Discovery, enqueue, previews};
+use super::{Event, discovery, discovery::Discovery, enqueue, previews};
 use objc2::{
     AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
     runtime::AnyObject, sel,
@@ -32,6 +32,8 @@ define_class!(
         fn changed(&self,_note:&NSNotification) {enqueue(Event::Dirty);}
         #[unsafe(method(spaceChanged:))]
         fn space_changed(&self,_note:&NSNotification) {enqueue(Event::SpaceChanged);}
+        #[unsafe(method(displaysChanged:))]
+        fn displays_changed(&self,_note:&NSNotification) {enqueue(Event::DisplaysChanged);}
         #[unsafe(method(pause:))]
         fn pause(&self,_sender:Option<&NSObject>) {enqueue(Event::TogglePause);}
         #[unsafe(method(refresh:))]
@@ -232,6 +234,7 @@ impl Ui {
     }
     /// Opt-in diagnostic: exercise real compositor interpolation and interrupted reversal.
     pub fn verify_wheel_animation(&self, engine: &mut Engine) -> Result<(), String> {
+        self.verify_display_layout(engine)?;
         let ids = engine.context().ok_or("No overview context")?.order.clone();
         if ids.len() < 2 {
             return Err("Wheel probe requires two windows".into());
@@ -325,8 +328,29 @@ impl Ui {
                 }
             }
         }
+        // Core Animation can retain a completed animation until a later commit.
+        // Compare the live cards' animation origins across an unchanged refresh
+        // rather than requiring a previously retained layer's key to disappear.
+        let animation_origins = || {
+            self.cards
+                .borrow()
+                .iter()
+                .filter(|(_, card)| card.retiring.is_none())
+                .map(|(id, card)| {
+                    let layer = card.view.layer().unwrap();
+                    let origin = unsafe { layer.animationForKey(&NSString::from_str("position")) }
+                        .and_then(|animation| {
+                            let from: Option<Retained<AnyObject>> =
+                                unsafe { msg_send![&*animation, fromValue] };
+                            from.map(|value| unsafe { msg_send![&*value, pointValue] })
+                        });
+                    (*id, origin)
+                })
+                .collect::<Vec<(u64, Option<NSPoint>)>>()
+        };
+        let before = animation_origins();
         self.show(engine);
-        if unsafe { layer.animationForKey(&NSString::from_str("position")) }.is_some() {
+        if animation_origins() != before {
             return Err("Unchanged overview refresh restarted motion".into());
         }
         self.verify_thumbnail_clicks()?;
@@ -338,6 +362,56 @@ impl Ui {
         self.show(engine);
         println!(
             "PASS: opaque wheel cards interpolate, reverse continuously, remain centered, retain 3D transforms, and draw badges in front of borders"
+        );
+        Ok(())
+    }
+    fn verify_display_layout(&self, engine: &Engine) -> Result<(), String> {
+        let Some(template) = engine.windows.values().next() else {
+            return Err("Display layout probe requires a window".into());
+        };
+        for screen in NSScreen::screens(self.panel.mtm()) {
+            let bounds = screen.visibleFrame();
+            let height = (bounds.size.height - 16.).max(132.);
+            let wheel = Wheel::new(height);
+            let count = 2 * wheel.radius + 3;
+            let mut sample = Engine::new(8.);
+            let ids: Vec<_> = (1..=count as u64).collect();
+            for id in &ids {
+                let mut window = template.clone();
+                window.id = *id;
+                window.display = discovery::display_id(&screen);
+                sample.windows.insert(*id, window);
+            }
+            // Deliberately omit cached bounds: placement must use the current
+            // NSScreen identity and usable frame, even during reconfiguration.
+            sample.set_visible(1, &ids, Some(ids[count / 2]));
+            self.hide();
+            self.show(&sample);
+            let expected = rect(
+                bounds.origin.x,
+                bounds.origin.y + (bounds.size.height - height) / 2.,
+                176.,
+                height,
+            );
+            if self.panel.frame() != expected || self.cards.borrow().len() != count {
+                return Err(
+                    "Overview did not fit the focused display's current usable frame".into(),
+                );
+            }
+            if self.is_key() {
+                return Err("Display layout probe made the overview key".into());
+            }
+            self.verify_thumbnail_clicks()?;
+            println!(
+                "PASS: overview display {} uses {:.0} logical points of height with {} neighbors per side",
+                discovery::display_id(&screen),
+                height,
+                wheel.radius
+            );
+        }
+        self.hide();
+        println!(
+            "PASS: display-ID placement, usable-height wheel capacity, non-key layout and click coordinates on every connected display"
         );
         Ok(())
     }
@@ -464,28 +538,17 @@ impl Ui {
             return;
         }
         let mtm = self.panel.mtm();
-        // Match the focused window's display, including displays with negative origins.
-        let bounds = ctx
+        // Display IDs remain stable when resolution or monitor origins change.
+        let display = ctx
             .focused
             .and_then(|id| engine.windows.get(&id))
-            .and_then(|w| engine.bounds.get(&w.display));
-        let desktop_top = NSScreen::screens(mtm)
-            .firstObject()
-            .map_or(0., |s| s.frame().size.height);
+            .map(|w| w.display);
         let screens = NSScreen::screens(mtm);
-        let screen = bounds
-            .and_then(|b| {
-                screens.iter().find(|s| {
-                    let f = s.frame();
-                    let x = b.x + b.width / 2.;
-                    let y = desktop_top - b.y - b.height / 2.;
-                    x >= f.origin.x
-                        && x < f.origin.x + f.size.width
-                        && y >= f.origin.y
-                        && y < f.origin.y + f.size.height
-                })
-            })
-            .or_else(|| NSScreen::mainScreen(mtm));
+        let desktop_top = screens.firstObject().map_or(0., |s| s.frame().size.height);
+        let screen = display
+            .and_then(|id| screens.iter().find(|s| discovery::display_id(s) == id))
+            .or_else(|| NSScreen::mainScreen(mtm))
+            .or_else(|| screens.firstObject());
         let Some(screen) = screen else {
             return;
         };
