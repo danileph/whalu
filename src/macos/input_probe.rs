@@ -20,6 +20,30 @@ pub(super) fn run(
         .map(|id| engine.windows[id].app_id.clone())
         .collect();
     let (mut runtime, tx) = fixture_runtime(engine, discovery, ui, tap, mtm)?;
+    // The preceding non-key HUD snapshot and Space transition can leave
+    // AppKit between activation callbacks (the fixture shares our bundle ID).
+    // Establish this keyboard scenario's focus explicitly, then verify every
+    // command changes the real focused window as before.
+    let first = &runtime.discovery.handles[&ids[0]];
+    let app = unsafe { Owned::new(AXUIElementCreateApplication(first.pid)) }
+        .ok_or("No keyboard fixture app")?;
+    unsafe {
+        AXUIElementSetAttributeValue(app.0, string("AXFocusedWindow").0, first.element.0);
+        AXUIElementSetAttributeValue(first.element.0, string("AXMain").0, kCFBooleanTrue);
+        AXUIElementPerformAction(first.element.0, string("AXRaise").0);
+        AXUIElementSetAttributeValue(app.0, string("AXFrontmost").0, kCFBooleanTrue);
+    }
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !attr(app.0, "AXFocusedWindow").is_some_and(|w| unsafe { CFEqual(w.0, first.element.0) })
+    {
+        if Instant::now() >= deadline {
+            return Err("Keyboard fixture did not establish focus".into());
+        }
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+        }
+    }
+    runtime.reconcile(false);
     // Use restored bindings through the actual Runtime command path, after
     // repeated native tiling in the smoke test, and confirm AX focus each time.
     runtime.held = true;
@@ -800,6 +824,9 @@ fn fixture_runtime(
         })
         .filter(|id| !fixture_app_ids.contains(id))
         .collect();
+    let overview_space = engine
+        .display()
+        .and_then(|display| super::spaces::active_space(display).map(|space| (display, space)));
     let runtime = Runtime {
         mtm,
         rx,
@@ -838,6 +865,8 @@ fn fixture_runtime(
         space_transfer_target: None,
         space_transfer_window: None,
         space_overview: false,
+        overview_space,
+        overview_refresh_pending: Cell::new(false),
         modal: false,
         recovery: SavedState::default(),
         restored: BTreeSet::new(),
@@ -1041,6 +1070,75 @@ pub(super) fn space_moves(
         }
         runtime.space_until = Some(Instant::now());
         runtime.drain();
+        let refocus = |runtime: &Runtime| -> Result<(), String> {
+            let h = &runtime.discovery.handles[&id];
+            let app = Owned::new(AXUIElementCreateApplication(h.pid))
+                .ok_or("No manual-Space fixture app")?;
+            AXUIElementSetAttributeValue(app.0, string("AXFocusedWindow").0, h.element.0);
+            AXUIElementSetAttributeValue(h.element.0, string("AXMain").0, kCFBooleanTrue);
+            AXUIElementPerformAction(h.element.0, string("AXRaise").0);
+            AXUIElementSetAttributeValue(app.0, string("AXFrontmost").0, kCFBooleanTrue);
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+            Ok(())
+        };
+        // Change the native Space without a Runtime MoveSpace command or a
+        // workspace notification. A late preview render must never flash the
+        // previous context, even before the notification reaches the app.
+        let h = &runtime.discovery.handles[&id];
+        let quartz = h.quartz_id.ok_or("Missing manual-Space identity")?;
+        if !super::spaces::move_adjacent(h.element.0, quartz, direction)? {
+            return Err("No manual-Space fixture destination".into());
+        }
+        refocus(&runtime)?;
+        runtime.render();
+        if runtime.ui.is_visible() {
+            return Err(
+                "Late render showed the previous Space stack before its workspace notification"
+                    .into(),
+            );
+        }
+        runtime.drain();
+        if !runtime.ui.is_visible()
+            || runtime.engine.context().is_none_or(|c| c.order != [id])
+            || super::spaces::active_space(runtime.engine.display().ok_or("No overview display")?)
+                != Some(target_space)
+        {
+            return Err("Overview did not refresh immediately to the real native Space".into());
+        }
+        // Opening while the native navigation pause is still active must read
+        // the destination, instead of using the previous stack for 850 ms.
+        tx.send(Event::Modifiers(Modifiers::default()))
+            .map_err(|e| e.to_string())?;
+        tx.send(Event::NativeGesture).map_err(|e| e.to_string())?;
+        runtime.drain();
+        let h = &runtime.discovery.handles[&id];
+        super::spaces::move_adjacent(h.element.0, quartz, !direction)?;
+        refocus(&runtime)?;
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        tx.send(Event::Modifiers(modifiers))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.overlay_deadline = Some(Instant::now());
+        runtime.drain();
+        if runtime.space_until.is_none()
+            || !runtime.engine.frozen
+            || !runtime.ui.is_visible()
+            || runtime
+                .engine
+                .context()
+                .is_none_or(|c| c.order.len() != siblings.len() + 1)
+            || super::spaces::active_space(
+                runtime
+                    .engine
+                    .display()
+                    .ok_or("No returned overview display")?,
+            ) != Some(source_space)
+        {
+            return Err("Opening during a native transition reused the previous stack or waited for the navigation pause".into());
+        }
+        println!(
+            "PASS: external Space changes reject stale renders before notification; opening during the navigation pause shows the destination stack immediately"
+        );
         tx.send(Event::Modifiers(Modifiers::default()))
             .map_err(|e| e.to_string())?;
         runtime.drain();

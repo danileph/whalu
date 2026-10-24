@@ -30,6 +30,34 @@ unsafe fn symbol<T: Copy>(name: &CStr) -> Result<T, String> {
     Ok(unsafe { std::mem::transmute_copy(&pointer) })
 }
 
+/// Read the current native Space for a specific display, independent of cursor
+/// position and Accessibility's occasionally delayed focused-window snapshot.
+pub(super) fn active_space(display: u32) -> Option<u64> {
+    unsafe {
+        let connection: Connection = symbol(c"SLSMainConnectionID").ok()?;
+        let displays: Displays = symbol(c"SLSCopyManagedDisplaySpaces").ok()?;
+        let uuid = Owned::new(CGDisplayCreateUUIDFromDisplayID(display))?;
+        let identifier = Owned::new(CFUUIDCreateString(null(), uuid.0))?;
+        let managed = Owned::new(displays(connection()))?;
+        let displays = array(managed.0);
+        displays.iter().find_map(|entry| {
+            let id = dict(*entry, "Display Identifier");
+            if id.is_null()
+                || !(CFEqual(id, identifier.0)
+                    || (displays.len() == 1 && text(id).as_deref() == Some("Main")))
+            {
+                return None;
+            }
+            let current = dict(*entry, "Current Space");
+            if current.is_null() {
+                return None;
+            }
+            let space = number(dict(current, "ManagedSpaceID")) as u64;
+            (space != 0).then_some(space)
+        })
+    }
+}
+
 pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, String> {
     unsafe {
         let connection: Connection = symbol(c"SLSMainConnectionID")?;

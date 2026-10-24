@@ -18,6 +18,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotificationCenter, NSString};
 use std::{
+    cell::Cell,
     collections::{BTreeMap, BTreeSet},
     ptr::{null, null_mut},
     sync::{
@@ -46,6 +47,7 @@ pub(super) enum Event {
     Dirty,
     DisplaysChanged,
     SpaceChanged,
+    OverviewRefresh,
     SpaceTransferFinished,
     SpaceTransferPreparing(u64),
     NativeGesture,
@@ -179,6 +181,8 @@ struct Runtime {
     space_transfer_target: Option<u64>,
     space_transfer_window: Option<u64>,
     space_overview: bool,
+    overview_space: Option<(u32, u64)>,
+    overview_refresh_pending: Cell<bool>,
     modal: bool,
     recovery: SavedState,
     restored: BTreeSet<u64>,
@@ -193,7 +197,7 @@ impl Runtime {
             if let Some(t) = self.timer.take() {
                 CFRunLoopTimerInvalidate(t.0);
             }
-            let scan_due = if self.space_until.is_none() {
+            let scan_due = if self.space_until.is_none() || (self.space_overview && self.held) {
                 self.deadline
             } else {
                 None
@@ -251,6 +255,12 @@ impl Runtime {
                     }
                     self.deadline = Some(Instant::now() + Duration::from_millis(70));
                 }
+                Event::OverviewRefresh => {
+                    self.overview_refresh_pending.set(false);
+                    self.deadline = None;
+                    self.discovery.invalidate_navigation();
+                    self.reconcile(false);
+                }
                 Event::SpaceChanged => {
                     if self.space_transfer_display.is_some() {
                         // The worker owns settlement and focus. Preserve user
@@ -294,7 +304,7 @@ impl Runtime {
                     if opening {
                         self.use_pointer_display();
                     }
-                    if opening && self.space_until.is_none() && !self.mouse {
+                    if opening && !self.mouse {
                         self.reconcile(false);
                     }
                     self.render();
@@ -483,7 +493,9 @@ impl Runtime {
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
             }
-        } else if self.space_until.is_none() && self.deadline.is_some_and(|d| d <= now) {
+        } else if (self.space_until.is_none() || (self.space_overview && self.held))
+            && self.deadline.is_some_and(|d| d <= now)
+        {
             self.deadline = None;
             self.reconcile(true);
         }
@@ -553,13 +565,21 @@ impl Runtime {
         self.space_retries = 8;
         self.engine.frozen = true;
         self.overlay_deadline = None;
-        if self.held && self.space_overview {
-            self.ui.suspend_overview();
-            self.render();
+        if self.space_transfer_display.is_some() {
+            if self.held && self.space_overview {
+                self.ui.suspend_overview();
+                self.render();
+            } else {
+                self.ui.reset_overview();
+            }
+            self.deadline = None;
         } else {
+            // Abandon old cards immediately. Only focus/navigation waits for
+            // the native gesture; a held overview gets a fresh census now.
+            self.overview_space = None;
             self.ui.reset_overview();
+            self.deadline = (self.held && self.space_overview).then(Instant::now);
         }
-        self.deadline = None;
     }
     fn clear_scroll(&mut self) {
         self.click_travel = None;
@@ -1025,6 +1045,7 @@ impl Runtime {
             &visible,
             self.space_transfer_window.filter(|id| visible.contains(id)),
         );
+        self.overview_space = Some((display, target));
         self.render();
     }
     fn reconcile(&mut self, _allow_layout: bool) {
@@ -1035,7 +1056,10 @@ impl Runtime {
             .navigation_display
             .filter(|display| snap.bounds.contains_key(display));
         let display = snap.active_display(self.navigation_display);
-        let visible = if let Some(target) = self.space_transfer_target {
+        let native_space = spaces::active_space(display);
+        let native_changed =
+            native_space.is_some_and(|space| self.overview_space != Some((display, space)));
+        let visible: Vec<_> = if let Some(target) = self.space_transfer_target {
             // The compositor can show both Spaces mid-slide. Stage only the
             // destination membership while input stays frozen until completion.
             self.discovery
@@ -1057,6 +1081,22 @@ impl Runtime {
                 .collect()
         } else {
             snap.visible_on_display(display)
+                .into_iter()
+                .filter(|id| {
+                    let Some(space) = native_space else {
+                        return true;
+                    };
+                    self.discovery
+                        .handles
+                        .get(id)
+                        .and_then(|h| h.quartz_id)
+                        .is_none_or(|quartz| match spaces::window_space(quartz) {
+                            Ok(None) => true,
+                            Ok(Some(member)) => member == space,
+                            Err(_) => false,
+                        })
+                })
+                .collect()
         };
         self.engine.bounds = snap.bounds;
         // A missing AX entry on another Space is not a destroyed window.
@@ -1071,9 +1111,9 @@ impl Runtime {
             .map(|window| (window.id, window.display))
             .collect();
         self.context_tracker.retain(&live);
-        let context = self
-            .context_tracker
-            .resolve(display, &visible, self.switched_space);
+        let context =
+            self.context_tracker
+                .resolve(display, &visible, self.switched_space || native_changed);
         let context_changed = self.engine.current != context || self.switched_space;
         let direct_manipulation = (self.mouse && self.dragging)
             || self
@@ -1149,6 +1189,10 @@ impl Runtime {
             }
         }
         self.switched_space = false;
+        self.overview_space = self
+            .space_transfer_target
+            .or(native_space)
+            .map(|space| (display, space));
         self.observe();
         self.render();
         self.save();
@@ -1306,9 +1350,31 @@ impl Runtime {
     }
     fn render(&self) {
         let keyboard = self.held && self.overlay_deadline.is_none();
+        if self.config.overlay
+            && (keyboard
+                || self.gesture.is_some()
+                || self.click_travel.is_some()
+                || self.linger_until.is_some()
+                || self.ui.is_visible())
+            && self.space_transfer_target.is_none()
+        {
+            if let Some((display, space)) = self
+                .engine
+                .display()
+                .and_then(|display| spaces::active_space(display).map(|space| (display, space)))
+            {
+                if self.overview_space != Some((display, space)) {
+                    self.ui.reset_overview();
+                    if !self.overview_refresh_pending.replace(true) {
+                        enqueue(Event::OverviewRefresh);
+                    }
+                    return;
+                }
+            }
+        }
         if self.space_until.is_some() && self.space_overview && keyboard && self.config.overlay {
-            // Keep the non-key panel visible, but discard old click targets.
-            // Completion replaces its cards with a fresh destination census.
+            // Fresh overview data can render while focus remains paused;
+            // discard click targets until the native transition settles.
             self.ui.sync_sources(&self.discovery);
             self.ui.show(&self.engine);
             self.ui.suspend_overview();
@@ -1647,6 +1713,8 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             space_transfer_target: None,
             space_transfer_window: None,
             space_overview: false,
+            overview_space: None,
+            overview_refresh_pending: Cell::new(false),
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),

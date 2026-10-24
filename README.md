@@ -84,7 +84,7 @@ Bindings use physical macOS keycodes and exact modifier combinations. A supplied
 
 Window modes are atomically saved in `state.json` beside the default configuration. Recovery matches unique, nonempty app/title identities and never moves or resizes windows at startup. Ambiguous windows start Magnetic. Old grouping metadata is ignored and no longer written. Previous-size history belongs to macOS; Whalu stores no restore rectangles. Stack order is retained across visibility changes and Space switches during the current session.
 
-After switching native Spaces without a focused window, the first navigation command enters the remembered visible window, or the first/last available entry. Commands during the native transition wait for it to settle.
+After switching native Spaces without a focused window, the first navigation command enters the remembered visible window, or the first/last available entry. Commands during the native transition wait for it to settle. Opening the overview still refreshes the destination immediately; the navigation pause does not postpone its window list. Before drawing, the overview checks the display's current native Space and rejects a stale stack, including when workspace notifications arrive late.
 
 ## Platform boundaries
 

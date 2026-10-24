@@ -53,6 +53,7 @@ unsafe extern "C" {
     pub fn CFBooleanGetTypeID() -> usize;
     pub fn CFArrayGetTypeID() -> usize;
     pub fn CFStringCreateWithCString(a: Ref, s: *const c_char, encoding: u32) -> Ref;
+    pub fn CFUUIDCreateString(allocator: Ref, uuid: Ref) -> Ref;
     pub fn CFStringGetLength(s: Ref) -> isize;
     pub fn CFStringGetMaximumSizeForEncoding(len: isize, encoding: u32) -> isize;
     pub fn CFStringGetCString(s: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> bool;
@@ -151,6 +152,7 @@ unsafe extern "C" {
     pub fn CGRequestScreenCaptureAccess() -> bool;
     pub fn CGWindowListCopyWindowInfo(options: u32, relative: u32) -> Ref;
     pub fn CGRectMakeWithDictionaryRepresentation(dict: Ref, rect: *mut CGRect) -> bool;
+    pub fn CGDisplayCreateUUIDFromDisplayID(id: u32) -> Ref;
     pub fn CGMainDisplayID() -> u32;
     pub fn CGDisplayBounds(id: u32) -> CGRect;
 }
