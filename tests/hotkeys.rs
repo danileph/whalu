@@ -15,7 +15,7 @@ const FN: u64 = 1 << 23;
 fn screenshot_shortcuts_route_to_stack_spaces_and_native_tiling() {
     let config = Config::default();
     config.validate().unwrap();
-    assert_eq!(config.bindings.len(), 27);
+    assert_eq!(config.bindings.len(), 35);
     for (keys, command) in [
         (&[126, 40][..], Command::StackUp),
         (&[125, 38][..], Command::StackDown),
@@ -74,7 +74,7 @@ fn native_navigation_and_tiling_remain_available_without_whalu_interception() {
         (&[123, 124, 125, 126][..], CONTROL),
         (&[123, 124, 125, 126, 3, 8, 15][..], FN | CONTROL),
         (&[123, 124, 125, 126][..], FN | CONTROL | SHIFT),
-        (&[123, 124, 125, 126, 49][..], CONTROL | OPTION),
+        (&[49][..], CONTROL | OPTION),
     ] {
         for &key in keys {
             assert_eq!(
@@ -89,6 +89,38 @@ fn native_navigation_and_tiling_remain_available_without_whalu_interception() {
         KeyRoute::Consume(Some(Command::StackUp))
     );
     assert_eq!(router.key(&[], 40, 0, false), KeyRoute::Consume(None));
+}
+
+#[test]
+fn control_option_arrows_and_vim_keys_navigate_without_conflicting_with_stack_edits() {
+    let config = Config::default();
+    for (keys, command) in [
+        (&[126, 40][..], Command::FocusPrevious),
+        (&[125, 38][..], Command::FocusNext),
+        (&[123, 4][..], Command::AppPrevious),
+        (&[124, 37][..], Command::AppNext),
+    ] {
+        for &key in keys {
+            let mut router = ShortcutRouter::default();
+            let flags = CONTROL | OPTION | if key >= 123 { FN | (1 << 21) } else { 0 };
+            assert_eq!(
+                router.key(&config.bindings, key, flags, true),
+                KeyRoute::Consume(Some(command))
+            );
+            assert_eq!(
+                router.key(&config.bindings, key, 0, false),
+                KeyRoute::Consume(None)
+            );
+        }
+    }
+    assert_eq!(
+        route(
+            &config.bindings,
+            126,
+            Modifiers::from_flags(CONTROL | OPTION | COMMAND)
+        ),
+        Some(Command::StackUp)
+    );
 }
 
 fn engine() -> Engine {

@@ -11,6 +11,86 @@ command = false
 
 [[bindings]]
 keycode = 126
+action = "previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 40
+action = "previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 125
+action = "next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 38
+action = "next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 123
+action = "app_previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 4
+action = "app_previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 124
+action = "app_next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 37
+action = "app_next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = false
+
+[[bindings]]
+keycode = 126
 action = "stack_up"
 
 [bindings.modifiers]

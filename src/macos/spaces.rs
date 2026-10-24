@@ -99,9 +99,91 @@ pub fn move_adjacent(window: u32, forward: bool) -> Result<bool, String> {
                 }
                 std::thread::sleep(Duration::from_millis(15));
             }
+            follow_display(connection, displays, display, target, window)?;
             return Ok(true);
         }
         Ok(false)
+    }
+}
+
+unsafe fn follow_display(
+    connection: i32,
+    displays: Displays,
+    display: Ref,
+    target: u64,
+    window: u32,
+) -> Result<(), String> {
+    unsafe {
+        let identifier = dict(display, "Display Identifier");
+        if identifier.is_null() {
+            return Err("Missing native display identifier".into());
+        }
+        let class = AnyClass::get(c"SLSBridgedManagedDisplaySetCurrentSpaceOperation")
+            .ok_or("Native Space switching is unavailable on this macOS")?;
+        let allocated: *mut AnyObject = msg_send![class, alloc];
+        let operation: *mut AnyObject = msg_send![allocated,
+            initWithDisplayIdentifier: &*(identifier as *const AnyObject), spaceID: target];
+        let operation = Retained::from_raw(operation).ok_or("Cannot create native Space switch")?;
+        let supported: bool =
+            msg_send![&operation, respondsToSelector: sel!(performWithWMBridgeDelegate)];
+        if !supported {
+            return Err("Native Space switch bridge is unavailable".into());
+        }
+        // This private selector returns void on macOS 26.2, while published
+        // reverse-engineered headers describe an object on other releases.
+        let method = class
+            .instance_method(sel!(performWithWMBridgeDelegate))
+            .ok_or("Native Space switch method is unavailable")?;
+        match method.return_type().to_bytes() {
+            b"v" => {
+                let _: () = msg_send![&operation, performWithWMBridgeDelegate];
+            }
+            b"@" => {
+                let _: *mut AnyObject = msg_send![&operation, performWithWMBridgeDelegate];
+            }
+            _ => return Err("Unsupported native Space switch signature".into()),
+        }
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        loop {
+            let managed = Owned::new(displays(connection)).ok_or("Cannot verify active desktop")?;
+            let active = array(managed.0).into_iter().any(|display| {
+                let display_id = dict(display, "Display Identifier");
+                let current = dict(display, "Current Space");
+                !display_id.is_null()
+                    && !current.is_null()
+                    && CFEqual(display_id, identifier)
+                    && number(dict(current, "ManagedSpaceID")) as u64 == target
+            });
+            let visible = Owned::new(CGWindowListCopyWindowInfo(17, 0)).is_some_and(|windows| {
+                array(windows.0)
+                    .into_iter()
+                    .any(|entry| number(dict(entry, "kCGWindowNumber")) as u32 == window)
+            });
+            if active && visible {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("Window moved, but macOS did not follow its destination Space".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// Read-only membership for the native fixture's asynchronous follow check.
+pub(super) fn window_space(window: u32) -> Result<Option<u64>, String> {
+    unsafe {
+        let connection: Connection = symbol(c"SLSMainConnectionID")?;
+        let query: WindowSpaces = symbol(c"SLSCopySpacesForWindows")?;
+        let value = i64::from(window);
+        let number = Owned::new(CFNumberCreate(null(), 4, (&value as *const i64).cast()))
+            .ok_or("Cannot create window identity")?;
+        let windows = Owned::new(CFArrayCreate(null(), &number.0, 1, null()))
+            .ok_or("Cannot create window list")?;
+        let spaces =
+            Owned::new(query(connection(), 7, windows.0)).ok_or("Cannot read window Spaces")?;
+        let ids = array(spaces.0);
+        Ok((ids.len() == 1).then(|| super::ffi::number(ids[0]) as u64))
     }
 }
 

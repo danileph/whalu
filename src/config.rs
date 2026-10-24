@@ -102,6 +102,10 @@ impl Default for Config {
         };
         let mut bindings = vec![];
         for (keys, action, modifiers) in [
+            (&[126, 40][..], Action::Previous, base),
+            (&[125, 38][..], Action::Next, base),
+            (&[123, 4][..], Action::AppPrevious, base),
+            (&[124, 37][..], Action::AppNext, base),
             (&[126, 40][..], Action::StackUp, navigation),
             (&[125, 38][..], Action::StackDown, navigation),
             (&[123, 4][..], Action::SpacePrevious, navigation),

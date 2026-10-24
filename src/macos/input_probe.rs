@@ -72,6 +72,57 @@ pub(super) fn run(
         navigation_display: None,
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
+    // Use restored bindings through the actual Runtime command path, after
+    // repeated native tiling in the smoke test, and confirm AX focus each time.
+    runtime.held = true;
+    runtime.navigation_display = runtime.engine.display();
+    for key in [125, 126, 38, 40, 124, 123, 37, 4] {
+        let command = whalu::input::route(
+            &runtime.config.bindings,
+            key,
+            Modifiers {
+                control: true,
+                option: true,
+                ..Default::default()
+            },
+        )
+        .ok_or("Missing Control-Option keyboard navigation binding")?;
+        runtime.prepare_command(command);
+        let expected = match runtime.engine.command(command).first() {
+            Some(Effect::Focus(id)) => *id,
+            None => runtime
+                .engine
+                .focused()
+                .ok_or("No keyboard fixture focus")?,
+        };
+        tx.send(Event::Command(command))
+            .map_err(|error| error.to_string())?;
+        runtime.drain();
+        if runtime.engine.focused() != Some(expected) {
+            return Err("Keyboard command failed after native tiling".into());
+        }
+        let target = &runtime.discovery.handles[&expected];
+        let app = unsafe { Owned::new(AXUIElementCreateApplication(target.pid)) }
+            .ok_or("No keyboard fixture app")?;
+        let deadline = Instant::now() + Duration::from_millis(800);
+        while !attr(app.0, "AXFocusedWindow")
+            .is_some_and(|focused| unsafe { CFEqual(focused.0, target.element.0) })
+        {
+            if Instant::now() >= deadline {
+                return Err("Keyboard navigation did not change actual AX focus".into());
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    runtime.held = false;
+    runtime.navigation_display = None;
+    runtime.ui.hide();
+    println!(
+        "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
+    );
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
         runtime.clear_scroll();
         runtime.apply(vec![Effect::Focus(ids[0])]);

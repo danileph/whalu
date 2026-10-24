@@ -159,7 +159,7 @@ fn default_shortcuts_respect_native_and_reserved_keys() {
         option: true,
         ..Default::default()
     };
-    assert_eq!(route(&c.bindings, 125, m), None);
+    assert_eq!(route(&c.bindings, 125, m), Some(Command::FocusNext));
     assert_eq!(
         route(&c.bindings, 126, Modifiers { shift: true, ..m }),
         None
@@ -275,7 +275,7 @@ fn legacy_saved_pairings_are_ignored_but_modes_are_recovered() {
     );
 }
 #[test]
-fn former_group_and_spatial_shortcuts_are_not_captured() {
+fn former_group_shortcuts_are_not_captured() {
     let c = Config::default();
     let base = Modifiers {
         control: true,
@@ -294,8 +294,5 @@ fn former_group_and_spatial_shortcuts_are_not_captured() {
             ),
             None
         );
-    }
-    for key in [4, 38, 40, 37] {
-        assert_eq!(route(&c.bindings, key, base), None);
     }
 }

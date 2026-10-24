@@ -334,18 +334,23 @@ impl Runtime {
                     }
                     if let Command::MoveSpace(forward) = cmd {
                         if !self.engine.frozen {
-                            if let Some(window) = self
+                            if let Some(handle) = self
                                 .engine
                                 .focused()
                                 .and_then(|id| self.discovery.handles.get(&id))
-                                .and_then(|handle| handle.quartz_id)
                             {
-                                if let Err(error) = spaces::move_adjacent(window, forward) {
-                                    eprintln!("Space transfer: {error}");
+                                if let Some(window) = handle.quartz_id {
+                                    if let Err(error) = tiling::submit_space(
+                                        handle.pid,
+                                        handle.element.0,
+                                        window,
+                                        forward,
+                                    ) {
+                                        eprintln!("Space transfer: {error}");
+                                    }
+                                    self.pending_focus = None;
+                                    self.discovery.invalidate_navigation();
                                 }
-                                self.pending_focus = None;
-                                self.discovery.invalidate_navigation();
-                                self.deadline = Some(Instant::now() + Duration::from_millis(100));
                             }
                         }
                     }
@@ -356,11 +361,11 @@ impl Runtime {
                                 .focused()
                                 .and_then(|id| self.discovery.handles.get(&id))
                             {
-                                if let Err(error) = tiling::perform(handle.pid, shortcut) {
+                                if let Err(error) =
+                                    tiling::submit(handle.pid, handle.element.0, shortcut)
+                                {
                                     eprintln!("Native tiling: {error}");
                                 }
-                                self.discovery.invalidate_navigation();
-                                self.deadline = Some(Instant::now() + Duration::from_millis(150));
                             }
                         }
                     }
@@ -525,7 +530,7 @@ impl Runtime {
             // Stack edits and Space transfers act on the actual focused window.
             self.navigation_display = None;
         }
-        if navigation && !self.modal {
+        if (navigation || matches!(command, Command::Native(_))) && !self.modal {
             if let Some(observed) = self.discovery.navigation_focus() {
                 if !self
                     .engine

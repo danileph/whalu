@@ -101,6 +101,8 @@ unsafe extern "C" {
     pub fn AXIsProcessTrustedWithOptions(options: Ref) -> bool;
     pub static kAXTrustedCheckOptionPrompt: Ref;
     pub fn AXUIElementCreateApplication(pid: i32) -> Ref;
+    pub fn AXUIElementCreateSystemWide() -> Ref;
+    pub fn AXUIElementGetPid(element: Ref, pid: *mut i32) -> i32;
     pub fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
     pub fn AXUIElementSetAttributeValue(element: Ref, attr: Ref, value: Ref) -> i32;
     pub fn AXUIElementIsAttributeSettable(element: Ref, attr: Ref, value: *mut bool) -> i32;

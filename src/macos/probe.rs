@@ -1,8 +1,11 @@
 //! Opt-in diagnostics. Only fixture windows owned by a child process are manipulated.
 use super::{discovery::Discovery, ffi::*, ui::Ui};
-use objc2::{MainThreadMarker, MainThreadOnly, sel};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained, sel};
 use objc2_app_kit::*;
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString,
+};
 use std::process::{Child, Command as ProcessCommand};
 use whalu::{
     core::{Engine, Mode, Window},
@@ -10,6 +13,24 @@ use whalu::{
     gestures::Axis,
     navigation::ScrubSession,
 };
+
+define_class!(
+    #[unsafe(super=NSObject)]
+    #[thread_kind=MainThreadOnly]
+    struct FixtureMenuObserver;
+    unsafe impl NSObjectProtocol for FixtureMenuObserver {}
+    impl FixtureMenuObserver {
+        #[unsafe(method(menuBegan:))]
+        fn menu_began(&self, _note: &NSNotification) {
+            if let Some(path) = std::env::var_os("WHALU_FIXTURE_MENU_LOG") {
+                use std::io::Write;
+                if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = file.write_all(b"tracking\n");
+                }
+            }
+        }
+    }
+);
 
 /// Read-only timings against the current desktop. No focus or geometry changes.
 pub fn performance() -> Result<(), String> {
@@ -155,6 +176,14 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
         main_menu.addItem(&window_item);
         app.setMainMenu(Some(&main_menu));
         app.setWindowsMenu(Some(&window_menu));
+        let menu_observer: Retained<FixtureMenuObserver> =
+            msg_send![FixtureMenuObserver::alloc(mtm), init];
+        NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+            &menu_observer,
+            sel!(menuBegan:),
+            Some(NSMenuDidBeginTrackingNotification),
+            None,
+        );
         let mut windows = vec![];
         let titles = [
             "Whalu fixture A",
@@ -221,6 +250,9 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
             windows.push(w);
         }
         app.finishLaunching();
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+        windows[0].makeKeyAndOrderFront(None);
         app.run();
         drop(windows);
         Ok(())
@@ -253,8 +285,12 @@ pub fn smoke() -> Result<(), String> {
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
         let _restore_focus = RestoreFocus(NSWorkspace::sharedWorkspace().frontmostApplication());
+        let menu_log =
+            std::env::temp_dir().join(format!("whalu-native-menu-{}.log", std::process::id()));
+        std::fs::write(&menu_log, "").map_err(|error| error.to_string())?;
         let child = ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
             .arg("--fixture")
+            .env("WHALU_FIXTURE_MENU_LOG", &menu_log)
             .env("WHALU_FIXTURE_OVERLAP", "1")
             .env("WHALU_FIXTURE_SAME_TITLE", "1")
             .spawn()
@@ -449,8 +485,97 @@ pub fn smoke() -> Result<(), String> {
             return Err("Native restore did not recover the fixture rectangle".into());
         }
         println!("PASS: native Window-menu left-half tiling and macOS previous-size restoration");
+        let center_original = frame(handle.element.0).ok_or("No center fixture frame")?;
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(8, false))?;
+        settle_native_tiling();
+        let centered = frame(handle.element.0).ok_or("No centered fixture frame")?;
+        let center_bounds = e.bounds[&e.windows[&id].display];
+        if (centered.width - center_original.width).abs() > 2.
+            || (centered.height - center_original.height).abs() > 2.
+            || (centered.center().0 - center_bounds.center().0).abs() > 2.
+            || (centered.center().1 - center_bounds.center().1).abs() > 2.
+        {
+            return Err(format!(
+                "Center did not preserve size and center the normal fixture: {center_original:?} -> {centered:?}"
+            ));
+        }
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(3, false))?;
+        settle_native_tiling();
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(8, false))?;
+        settle_native_tiling();
+        let centered_from_fill = frame(handle.element.0).ok_or("No centered restored fixture")?;
+        if (centered_from_fill.width - center_original.width).abs() > 2.
+            || (centered_from_fill.height - center_original.height).abs() > 2.
+        {
+            return Err(format!(
+                "Center retained the filled rectangle: {center_original:?} -> {centered_from_fill:?}"
+            ));
+        }
+        println!(
+            "PASS: Center preserves a normal window size and restores pre-tiling size after Fill"
+        );
+        // Repeated arrangements used to leave AppKit in menu tracking and stall
+        // subsequent keyboard navigation. Exercise every command and then reuse
+        // cached commands, while the fixture records any tracking notification.
+        let mut max_dispatch = std::time::Duration::ZERO;
+        for _ in 0..3 {
+            for (key, arrange) in [
+                (123, false),
+                (124, false),
+                (126, false),
+                (125, false),
+                (3, false),
+                (8, false),
+                (123, true),
+                (124, true),
+                (126, true),
+                (125, true),
+                (15, false),
+            ] {
+                let start = std::time::Instant::now();
+                super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(key, arrange))?;
+                max_dispatch = max_dispatch.max(start.elapsed());
+                // Yield for native handling without waiting for a full animation.
+                std::thread::sleep(std::time::Duration::from_millis(35));
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+            }
+        }
+        settle_native_tiling();
+        AXUIElementSetAttributeValue(handle.element.0, string("AXMain").0, kCFBooleanTrue);
+        AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
+        let worker_before = frame(handle.element.0).ok_or("No worker fixture frame")?;
+        let submitted = std::time::Instant::now();
+        super::tiling::submit(
+            pid,
+            handle.element.0,
+            whalu::input::NativeShortcut::tiling(124, false),
+        )?;
+        let submission = submitted.elapsed();
+        settle_native_tiling();
+        if frame(handle.element.0).is_none_or(|actual| actual.near(worker_before)) {
+            return Err("Background native tiling did not reach the focused fixture".into());
+        }
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(15, false))?;
+        settle_native_tiling();
+        println!(
+            "PASS: background native action executes without blocking submission ({:.1} ms)",
+            submission.as_secs_f64() * 1000.
+        );
+        if !std::fs::read(&menu_log)
+            .map_err(|error| error.to_string())?
+            .is_empty()
+        {
+            return Err("Native tiling opened an AppKit menu tracking loop".into());
+        }
+        std::fs::remove_file(&menu_log).map_err(|error| error.to_string())?;
+        println!(
+            "PASS: 33 repeated native tiling/arrangement/restore actions without menu tracking; maximum dispatch {:.1} ms",
+            max_dispatch.as_secs_f64() * 1000.
+        );
+
         let quartz = handle.quartz_id.ok_or("Fixture has no Quartz identity")?;
         let before_transfer = frame(handle.element.0).ok_or("No fixture frame")?;
+        let source_space = super::spaces::window_space(quartz)?.ok_or("No unique fixture Space")?;
         let direction = if super::spaces::move_adjacent(quartz, true)? {
             Some(true)
         } else if super::spaces::move_adjacent(quartz, false)? {
@@ -459,15 +584,38 @@ pub fn smoke() -> Result<(), String> {
             None
         };
         if let Some(direction) = direction {
-            if !super::spaces::move_adjacent(quartz, !direction)? {
-                return Err("Fixture could not return to its original Space".into());
+            // Follow back through the actual background command queue, with
+            // exact-window focus confirmation after the desktop transition.
+            AXUIElementSetAttributeValue(ax_app.0, string("AXFocusedWindow").0, handle.element.0);
+            AXUIElementSetAttributeValue(handle.element.0, string("AXFocused").0, kCFBooleanTrue);
+            AXUIElementSetAttributeValue(handle.element.0, string("AXMain").0, kCFBooleanTrue);
+            AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
+            AXUIElementSetAttributeValue(ax_app.0, string("AXFrontmost").0, kCFBooleanTrue);
+            super::tiling::submit_space(pid, handle.element.0, quartz, !direction)?;
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(4);
+            loop {
+                if super::spaces::window_space(quartz)? == Some(source_space)
+                    && discovery.is_onscreen(id)
+                    && attr(ax_app.0, "AXFocusedWindow")
+                        .is_some_and(|focused| CFEqual(focused.0, handle.element.0))
+                    && NSWorkspace::sharedWorkspace()
+                        .frontmostApplication()
+                        .is_some_and(|app| app.processIdentifier() == pid)
+                {
+                    break;
+                }
+                if std::time::Instant::now() >= until {
+                    return Err("Queued Space follow did not return the visible, focused fixture to its original desktop".into());
+                }
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+                std::thread::sleep(std::time::Duration::from_millis(15));
             }
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
             if !frame(handle.element.0).is_some_and(|actual| actual.near(before_transfer)) {
                 return Err("Native Space transfer changed fixture geometry".into());
             }
             println!(
-                "PASS: real fixture moves to adjacent native Space and back with unchanged geometry"
+                "PASS: real fixture moves and follows the adjacent native Space, then returns with unchanged geometry"
             );
         } else {
             println!("SKIP: Space transfer requires two regular desktops on this display");
