@@ -189,8 +189,6 @@ fn engine() -> Engine {
                 frame: Rect::new(id as f64 * 100., 0., 400., 300.),
                 mode: Mode::Magnetic,
                 last_floating_frame: None,
-                snap: None,
-                restore_frame: None,
             },
         );
     }

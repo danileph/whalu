@@ -1,4 +1,4 @@
-use crate::geometry::{Direction, Rect, Region, expose};
+use crate::{geometry::Rect, input::NativeShortcut};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,8 +20,6 @@ pub struct Window {
     pub frame: Rect,
     pub mode: Mode,
     pub last_floating_frame: Option<Rect>,
-    pub snap: Option<Region>,
-    pub restore_frame: Option<Rect>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Context {
@@ -39,13 +37,14 @@ pub enum Command {
     AppNext,
     AppPrevious,
     ToggleMode,
-    Snap(Direction),
+    StackUp,
+    StackDown,
+    MoveSpace(bool),
+    Native(NativeShortcut),
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Effect {
     Focus(WindowId),
-    Move(WindowId, Rect),
-    Snap(WindowId, Rect),
 }
 #[derive(Default)]
 pub struct Engine {
@@ -54,14 +53,10 @@ pub struct Engine {
     pub current: u64,
     pub bounds: BTreeMap<u32, Rect>,
     pub frozen: bool,
-    pub gap: f64,
 }
 impl Engine {
-    pub fn new(gap: f64) -> Self {
-        Self {
-            gap,
-            ..Self::default()
-        }
+    pub fn new(_legacy_gap: f64) -> Self {
+        Self::default()
     }
     pub fn context(&self) -> Option<&Context> {
         self.contexts.get(&self.current)
@@ -164,6 +159,28 @@ impl Engine {
                     .collect();
                 step(&list, id, matches!(cmd, Command::AppNext))
             }
+            Command::StackUp | Command::StackDown => {
+                let ctx = self.contexts.get_mut(&self.current).unwrap();
+                let index = ctx.order.iter().position(|window| *window == id).unwrap();
+                let neighbor = if cmd == Command::StackDown {
+                    index.checked_add(1).filter(|next| *next < ctx.order.len())
+                } else {
+                    index.checked_sub(1)
+                };
+                if let Some(neighbor) = neighbor {
+                    let other = ctx.order[neighbor];
+                    ctx.order.swap(index, neighbor);
+                    let a = ctx.history.iter().position(|window| *window == id).unwrap();
+                    let b = ctx
+                        .history
+                        .iter()
+                        .position(|window| *window == other)
+                        .unwrap();
+                    ctx.history.swap(a, b);
+                }
+                return vec![];
+            }
+            Command::MoveSpace(_) => return vec![],
             Command::ToggleMode => {
                 let w = self.windows.get_mut(&id).unwrap();
                 w.mode = match w.mode {
@@ -175,93 +192,17 @@ impl Engine {
                 };
                 return vec![];
             }
-            Command::Snap(dir) => {
-                let Some(bounds) = self.bounds.get(&w.display).copied() else {
-                    return vec![];
-                };
-                if dir == Direction::Down {
-                    if let Some(frame) = w.restore_frame {
-                        self.clear_snap(id);
-                        let w = self.windows.get_mut(&id).unwrap();
-                        w.snap = None;
-                        w.restore_frame = None;
-                        return vec![Effect::Snap(id, frame.accessible(bounds))];
-                    }
-                    return vec![];
-                }
-                let region = if dir == Direction::Up {
-                    Region::Full
-                } else {
-                    w.snap.unwrap_or(Region::Full).cycle(dir)
-                };
-                let frame = region.rect(bounds);
-                self.windows.get_mut(&id).unwrap().restore_frame =
-                    w.restore_frame.or(Some(w.frame));
-                self.clear_snap(id);
-                self.windows.get_mut(&id).unwrap().snap = Some(region);
-                return vec![Effect::Snap(id, frame)];
-            }
+            // Native menu actions run in the adapter, never as geometry effects.
+            Command::Native(_) => return vec![],
         };
         target
             .filter(|t| *t != id)
             .map(|t| vec![Effect::Focus(t)])
             .unwrap_or_default()
     }
-    pub fn clear_snap(&mut self, id: WindowId) {
-        if let Some(w) = self.windows.get_mut(&id) {
-            w.snap = None;
-        }
-    }
-
-    pub fn plan(&self) -> Vec<Effect> {
-        if self.frozen {
-            return vec![];
-        }
-        let Some(active) = self.focused().and_then(|id| self.windows.get(&id)) else {
-            return vec![];
-        };
-        let Some(ctx) = self.context() else {
-            return vec![];
-        };
-        let mut effects = vec![];
-        let active_bounds = self
-            .bounds
-            .get(&active.display)
-            .copied()
-            .unwrap_or(active.frame);
-        let active_frame = if active.mode == Mode::Magnetic {
-            active.frame.accessible(active_bounds)
-        } else {
-            active.frame
-        };
-        for id in &ctx.order {
-            let Some(w) = self.windows.get(id) else {
-                continue;
-            };
-            if w.mode == Mode::Floating || w.display != active.display {
-                continue;
-            }
-            // Explicit snapped rectangles stay owned by their snap until a direct edit.
-            if w.snap.is_some() {
-                continue;
-            }
-            let frame = if w.id == active.id {
-                active_frame
-            } else {
-                expose(w.frame, active_frame, active_bounds, self.gap)
-            };
-            if !w.frame.near(frame) {
-                effects.push(Effect::Move(w.id, frame));
-            }
-        }
-        effects
-    }
-    pub fn observed_frame(&mut self, id: WindowId, frame: Rect, manual: bool) {
+    pub fn observed_frame(&mut self, id: WindowId, frame: Rect, _manual: bool) {
         if !frame.valid() {
             return;
-        }
-        if manual && self.windows.get(&id).is_some_and(|w| !w.frame.near(frame)) {
-            self.clear_snap(id);
         }
         if let Some(w) = self.windows.get_mut(&id) {
             w.frame = frame;

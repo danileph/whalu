@@ -111,18 +111,6 @@ impl Discovery {
         Some(handle.id)
     }
 
-    pub fn observed_frame(&mut self, id: WindowId, frame: Rect) {
-        if let Some(quartz) = self.handles.get(&id).and_then(|handle| handle.quartz_id) {
-            if let Some(window) = self
-                .navigation_state
-                .as_mut()
-                .and_then(|windows| windows.iter_mut().find(|window| window.id == quartz))
-            {
-                window.frame = frame;
-            }
-        }
-    }
-
     pub fn invalidate_navigation(&mut self) {
         self.navigation_state = None;
     }
@@ -375,8 +363,6 @@ impl Discovery {
                     frame,
                     mode: Mode::Magnetic,
                     last_floating_frame: None,
-                    snap: None,
-                    restore_frame: None,
                 });
                 if shown {
                     result.visible.push(id);
@@ -566,8 +552,6 @@ mod tests {
                 frame: Rect::new(0., 30., 800., 600.),
                 mode: Mode::Magnetic,
                 last_floating_frame: None,
-                snap: None,
-                restore_frame: None,
             })
             .collect();
         let mut snapshot = Snapshot {

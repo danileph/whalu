@@ -1,9 +1,14 @@
-use crate::{core::Command, geometry::Direction, input::Modifiers};
+use crate::{
+    core::Command,
+    input::{Modifiers, NativeShortcut},
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, path::PathBuf};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Legacy layout setting, accepted but no longer used.
+    #[serde(skip_serializing)]
     pub gap: f64,
     pub overlay: bool,
     /// Legacy setting, accepted for existing configuration files but no longer used.
@@ -11,6 +16,8 @@ pub struct Config {
     pub overlay_brightness: f64,
     pub overlay_delay_ms: u64,
     pub overlay_modifiers: Modifiers,
+    /// Legacy layout setting, accepted but no longer used.
+    #[serde(skip_serializing)]
     pub magnetic: bool,
     pub gestures: bool,
     pub ignored_apps: Vec<String>,
@@ -31,9 +38,20 @@ pub enum Action {
     AppNext,
     AppPrevious,
     ToggleMode,
+    StackUp,
+    StackDown,
+    SpacePrevious,
+    SpaceNext,
     SnapLeft,
     SnapRight,
     SnapFull,
+    SnapTop,
+    SnapBottom,
+    Center,
+    ArrangeLeftRight,
+    ArrangeRightLeft,
+    ArrangeTopBottom,
+    ArrangeBottomTop,
     Restore,
 }
 impl Action {
@@ -43,11 +61,22 @@ impl Action {
             Self::Previous => Command::FocusPrevious,
             Self::AppNext => Command::AppNext,
             Self::AppPrevious => Command::AppPrevious,
+            Self::StackUp => Command::StackUp,
+            Self::StackDown => Command::StackDown,
+            Self::SpacePrevious => Command::MoveSpace(false),
+            Self::SpaceNext => Command::MoveSpace(true),
             Self::ToggleMode => Command::ToggleMode,
-            Self::SnapLeft => Command::Snap(Direction::Left),
-            Self::SnapRight => Command::Snap(Direction::Right),
-            Self::SnapFull => Command::Snap(Direction::Up),
-            Self::Restore => Command::Snap(Direction::Down),
+            Self::SnapLeft => Command::Native(NativeShortcut::tiling(123, false)),
+            Self::SnapRight => Command::Native(NativeShortcut::tiling(124, false)),
+            Self::SnapFull => Command::Native(NativeShortcut::tiling(3, false)),
+            Self::SnapTop => Command::Native(NativeShortcut::tiling(126, false)),
+            Self::SnapBottom => Command::Native(NativeShortcut::tiling(125, false)),
+            Self::Center => Command::Native(NativeShortcut::tiling(8, false)),
+            Self::ArrangeLeftRight => Command::Native(NativeShortcut::tiling(123, true)),
+            Self::ArrangeRightLeft => Command::Native(NativeShortcut::tiling(124, true)),
+            Self::ArrangeTopBottom => Command::Native(NativeShortcut::tiling(126, true)),
+            Self::ArrangeBottomTop => Command::Native(NativeShortcut::tiling(125, true)),
+            Self::Restore => Command::Native(NativeShortcut::tiling(15, false)),
         }
     }
 }
@@ -58,34 +87,42 @@ impl Default for Config {
             option: true,
             ..Default::default()
         };
+        let navigation = Modifiers {
+            command: true,
+            ..base
+        };
+        let positioning = Modifiers {
+            control: true,
+            command: true,
+            ..Default::default()
+        };
+        let arrangements = Modifiers {
+            shift: true,
+            ..positioning
+        };
         let mut bindings = vec![];
-        for (key, action) in [
-            (126, Action::Previous),
-            (125, Action::Next),
-            (123, Action::AppPrevious),
-            (124, Action::AppNext),
-            (49, Action::ToggleMode),
+        for (keys, action, modifiers) in [
+            (&[126, 40][..], Action::StackUp, navigation),
+            (&[125, 38][..], Action::StackDown, navigation),
+            (&[123, 4][..], Action::SpacePrevious, navigation),
+            (&[124, 37][..], Action::SpaceNext, navigation),
+            (&[123, 4][..], Action::SnapLeft, positioning),
+            (&[124, 37][..], Action::SnapRight, positioning),
+            (&[126, 40][..], Action::SnapTop, positioning),
+            (&[125, 38][..], Action::SnapBottom, positioning),
+            (&[46][..], Action::SnapFull, positioning),
+            (&[34][..], Action::Center, positioning),
+            (&[45][..], Action::Restore, positioning),
+            (&[123, 4][..], Action::ArrangeLeftRight, arrangements),
+            (&[124, 37][..], Action::ArrangeRightLeft, arrangements),
+            (&[126, 40][..], Action::ArrangeTopBottom, arrangements),
+            (&[125, 38][..], Action::ArrangeBottomTop, arrangements),
         ] {
-            bindings.push(Binding {
-                keycode: key,
-                modifiers: base,
+            bindings.extend(keys.iter().map(|&keycode| Binding {
+                keycode,
                 action,
-            });
-        }
-        for (key, action) in [
-            (126, Action::SnapFull),
-            (125, Action::Restore),
-            (123, Action::SnapLeft),
-            (124, Action::SnapRight),
-        ] {
-            bindings.push(Binding {
-                keycode: key,
-                modifiers: Modifiers {
-                    command: true,
-                    ..base
-                },
-                action,
-            });
+                modifiers,
+            }));
         }
         Self {
             gap: 8.,
@@ -93,7 +130,7 @@ impl Default for Config {
             overlay_brightness: 0.10,
             overlay_delay_ms: 120,
             overlay_modifiers: base,
-            magnetic: true,
+            magnetic: false,
             gestures: true,
             ignored_apps: vec![],
             bindings,
@@ -121,7 +158,7 @@ impl Config {
                 return Err("bindings require Control, Option, or Command".into());
             }
             if (m.control && !m.option && !m.command && [123, 124, 125, 126].contains(&b.keycode))
-                || (m.command && !m.control && !m.option && b.keycode == 48)
+                || (m.command && !m.control && !m.option && [48, 50].contains(&b.keycode))
                 || (m.option && !m.control && !m.command && b.keycode == 46)
             {
                 return Err("binding uses a reserved macOS/spec shortcut".into());

@@ -34,8 +34,6 @@ define_class!(
         fn space_changed(&self,_note:&NSNotification) {enqueue(Event::SpaceChanged);}
         #[unsafe(method(displaysChanged:))]
         fn displays_changed(&self,_note:&NSNotification) {enqueue(Event::DisplaysChanged);}
-        #[unsafe(method(pause:))]
-        fn pause(&self,_sender:Option<&NSObject>) {enqueue(Event::TogglePause);}
         #[unsafe(method(refresh:))]
         fn refresh(&self,_sender:Option<&NSObject>) {enqueue(Event::Dirty);}
         #[unsafe(method(reload:))]
@@ -75,7 +73,6 @@ pub struct Ui {
     visibility_epoch: Cell<u64>,
     pub clicks: ThumbnailClicks,
     _status: Retained<NSStatusItem>,
-    pause: Retained<NSMenuItem>,
     gesture_label: Retained<NSMenuItem>,
 }
 impl Ui {
@@ -116,9 +113,7 @@ impl Ui {
             gesture_label.setEnabled(false);
             menu.addItem(&gesture_label);
             menu.addItem(&NSMenuItem::separatorItem(mtm));
-            let mut pause = None;
             for (text, action) in [
-                ("Pause automatic positioning", sel!(pause:)),
                 ("Refresh windows", sel!(refresh:)),
                 ("Enable window previews…", sel!(previews:)),
                 ("Open configuration", sel!(settings:)),
@@ -133,9 +128,6 @@ impl Ui {
                 );
                 item.setTarget(Some(&delegate));
                 menu.addItem(&item);
-                if text.starts_with("Pause") {
-                    pause = Some(item);
-                }
             }
             status.setMenu(Some(&menu));
             Self {
@@ -148,7 +140,6 @@ impl Ui {
                 visibility_epoch: Cell::new(0),
                 clicks: ThumbnailClicks::default(),
                 _status: status,
-                pause: pause.unwrap(),
                 gesture_label,
             }
         }
@@ -221,13 +212,6 @@ impl Ui {
         }
         self.cards.borrow_mut().clear();
         self.sources.borrow_mut().clear();
-    }
-    pub fn paused(&self, paused: bool) {
-        self.pause.setTitle(&NSString::from_str(if paused {
-            "Resume automatic positioning"
-        } else {
-            "Pause automatic positioning"
-        }));
     }
     pub fn show(&self, engine: &Engine) {
         self.show_navigation(engine, None);

@@ -1,7 +1,5 @@
-gap = 8.0
 overlay = true
 overlay_delay_ms = 120
-magnetic = true
 gestures = true
 ignored_apps = []
 
@@ -13,57 +11,17 @@ command = false
 
 [[bindings]]
 keycode = 126
-action = "previous"
+action = "stack_up"
 
 [bindings.modifiers]
 control = true
 option = true
 shift = false
-command = false
+command = true
 
 [[bindings]]
-keycode = 125
-action = "next"
-
-[bindings.modifiers]
-control = true
-option = true
-shift = false
-command = false
-
-[[bindings]]
-keycode = 123
-action = "app_previous"
-
-[bindings.modifiers]
-control = true
-option = true
-shift = false
-command = false
-
-[[bindings]]
-keycode = 124
-action = "app_next"
-
-[bindings.modifiers]
-control = true
-option = true
-shift = false
-command = false
-
-[[bindings]]
-keycode = 49
-action = "toggle_mode"
-
-[bindings.modifiers]
-control = true
-option = true
-shift = false
-command = false
-
-[[bindings]]
-keycode = 126
-action = "snap_full"
+keycode = 40
+action = "stack_up"
 
 [bindings.modifiers]
 control = true
@@ -73,7 +31,57 @@ command = true
 
 [[bindings]]
 keycode = 125
-action = "restore"
+action = "stack_down"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 38
+action = "stack_down"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 123
+action = "space_previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 4
+action = "space_previous"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 124
+action = "space_next"
+
+[bindings.modifiers]
+control = true
+option = true
+shift = false
+command = true
+
+[[bindings]]
+keycode = 37
+action = "space_next"
 
 [bindings.modifiers]
 control = true
@@ -87,7 +95,17 @@ action = "snap_left"
 
 [bindings.modifiers]
 control = true
-option = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 4
+action = "snap_left"
+
+[bindings.modifiers]
+control = true
+option = false
 shift = false
 command = true
 
@@ -97,7 +115,167 @@ action = "snap_right"
 
 [bindings.modifiers]
 control = true
-option = true
+option = false
 shift = false
+command = true
+
+[[bindings]]
+keycode = 37
+action = "snap_right"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 126
+action = "snap_top"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 40
+action = "snap_top"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 125
+action = "snap_bottom"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 38
+action = "snap_bottom"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 46
+action = "snap_full"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 34
+action = "center"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 45
+action = "restore"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = false
+command = true
+
+[[bindings]]
+keycode = 123
+action = "arrange_left_right"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 4
+action = "arrange_left_right"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 124
+action = "arrange_right_left"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 37
+action = "arrange_right_left"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 126
+action = "arrange_top_bottom"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 40
+action = "arrange_top_bottom"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 125
+action = "arrange_bottom_top"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
+command = true
+
+[[bindings]]
+keycode = 38
+action = "arrange_bottom_top"
+
+[bindings.modifiers]
+control = true
+option = false
+shift = true
 command = true
 

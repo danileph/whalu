@@ -6,6 +6,8 @@ mod input_probe;
 mod onboarding;
 mod previews;
 pub mod probe;
+mod spaces;
+mod tiling;
 mod trackpad;
 mod ui;
 use discovery::Discovery;
@@ -29,7 +31,7 @@ use whalu::{
     config::{Config, config_dir},
     core::{Command, Effect, Engine},
     gestures::{Axis, GestureEvent},
-    input::{Modifiers, route},
+    input::{KeyRoute, Modifiers, ShortcutRouter},
     navigation::{ClickSequence, ScrubSession},
     persistence::{SavedState, StateWriter},
     scroll::{KineticScroll, WheelRoute, WheelRouter, WheelScroll},
@@ -58,7 +60,6 @@ pub(super) enum Event {
     GestureMotion(usize, f64, f64, bool),
     ContactBegan,
     Wheel(f64, f64),
-    TogglePause,
     Settings,
     PreviewAccess,
     PreviewReady(u64, u32, Option<previews::Image>),
@@ -70,6 +71,7 @@ struct Queue {
     tx: Sender<Event>,
     source: Ref,
     bindings: Vec<whalu::config::Binding>,
+    shortcuts: ShortcutRouter,
     runtime: *mut Runtime,
     scroll_modifiers: Modifiers,
     wheel: WheelRouter,
@@ -171,7 +173,6 @@ struct Runtime {
     pending_commands: Vec<Command>,
     space_until: Option<Instant>,
     space_retries: u8,
-    paused: bool,
     modal: bool,
     recovery: SavedState,
     restored: BTreeSet<u64>,
@@ -331,28 +332,44 @@ impl Runtime {
                             self.engine.focused()
                         );
                     }
-                    let old = self.engine.focused();
+                    if let Command::MoveSpace(forward) = cmd {
+                        if !self.engine.frozen {
+                            if let Some(window) = self
+                                .engine
+                                .focused()
+                                .and_then(|id| self.discovery.handles.get(&id))
+                                .and_then(|handle| handle.quartz_id)
+                            {
+                                if let Err(error) = spaces::move_adjacent(window, forward) {
+                                    eprintln!("Space transfer: {error}");
+                                }
+                                self.pending_focus = None;
+                                self.discovery.invalidate_navigation();
+                                self.deadline = Some(Instant::now() + Duration::from_millis(100));
+                            }
+                        }
+                    }
+                    if let Command::Native(shortcut) = cmd {
+                        if !self.engine.frozen {
+                            if let Some(handle) = self
+                                .engine
+                                .focused()
+                                .and_then(|id| self.discovery.handles.get(&id))
+                            {
+                                if let Err(error) = tiling::perform(handle.pid, shortcut) {
+                                    eprintln!("Native tiling: {error}");
+                                }
+                                self.discovery.invalidate_navigation();
+                                self.deadline = Some(Instant::now() + Duration::from_millis(150));
+                            }
+                        }
+                    }
                     let effects = self.engine.command(cmd);
                     self.apply(effects);
-                    if !matches!(cmd, Command::Snap(_)) && self.engine.focused() != old {
-                        self.reflow();
-                    }
-                    if matches!(cmd, Command::ToggleMode)
-                        && self
-                            .engine
-                            .focused()
-                            .and_then(|id| self.engine.windows.get(&id))
-                            .is_some_and(|w| w.mode == whalu::core::Mode::Magnetic)
-                    {
-                        self.reflow();
-                    }
                     self.render();
                     self.save();
                 }
-                Event::TogglePause => {
-                    self.paused = !self.paused;
-                    self.ui.paused(self.paused);
-                }
+
                 Event::PreviewAccess => previews::request_access(),
                 Event::PreviewReady(id, quartz, image) => {
                     self.ui.preview_ready(id, quartz, image);
@@ -505,7 +522,7 @@ impl Runtime {
                 return;
             }
         } else {
-            // Snapping and mode changes still act on the actual focused window.
+            // Stack edits and Space transfers act on the actual focused window.
             self.navigation_display = None;
         }
         if navigation && !self.modal {
@@ -626,7 +643,6 @@ impl Runtime {
         }
         self.click_travel = None;
         self.linger_until = Some(Instant::now() + Duration::from_millis(650));
-        self.reflow();
         self.render();
         self.save();
     }
@@ -830,7 +846,6 @@ impl Runtime {
         self.gesture = None;
         self.motion_due = None;
         self.linger_until = Some(Instant::now() + Duration::from_millis(650));
-        self.reflow();
         self.render();
         self.save();
     }
@@ -877,7 +892,6 @@ impl Runtime {
     fn reload(&mut self) {
         match Config::load(&self.config_path) {
             Ok(c) => {
-                self.engine.gap = c.gap;
                 if c.gestures != self.config.gestures {
                     if let Some(ScrollSource::Trackpad(device)) =
                         self.gesture.as_ref().map(|active| active.source)
@@ -908,9 +922,8 @@ impl Runtime {
             Err(e) => eprintln!("Configuration unchanged: {e}"),
         }
     }
-    fn reconcile(&mut self, allow_layout: bool) {
+    fn reconcile(&mut self, _allow_layout: bool) {
         let snap = self.discovery.scan(self.mtm, &self.config.ignored_apps);
-        let previous = self.engine.focused();
         self.modal = snap.modal;
         self.engine.frozen = self.mouse || self.modal || self.space_until.is_some();
         self.navigation_display = self
@@ -1004,10 +1017,6 @@ impl Runtime {
         }
         self.switched_space = false;
         self.observe();
-        let changed = previous != snap.focused;
-        if allow_layout && changed && !context_changed && !direct_manipulation {
-            self.reflow();
-        }
         self.render();
         self.save();
         if self.space_retries > 0 {
@@ -1019,24 +1028,12 @@ impl Runtime {
             }
         }
     }
-    fn reflow(&mut self) {
-        if !self.paused
-            && self.config.magnetic
-            && self.gesture.is_none()
-            && self.click_travel.is_none()
-        {
-            self.apply(self.engine.plan());
-        }
-    }
-
     fn apply(&mut self, effects: Vec<Effect>) {
         if self.space_until.is_some() || self.switched_space {
             return;
         }
         for effect in effects {
-            let id = match effect {
-                Effect::Focus(id) | Effect::Move(id, _) | Effect::Snap(id, _) => id,
-            };
+            let Effect::Focus(id) = effect;
             let Some(h) = self.discovery.handles.get(&id) else {
                 continue;
             };
@@ -1097,51 +1094,6 @@ impl Runtime {
                         eprintln!("Could not focus window {id}: AX {main}/{raised}");
                     }
                 },
-                Effect::Move(id, r) => {
-                    let Some(w) = self.engine.windows.get(&id) else {
-                        continue;
-                    };
-                    // Enforce M-01 at the native boundary, independently of the solver.
-                    if w.mode != whalu::core::Mode::Magnetic
-                        || (w.frame.width - r.width).abs() > 0.01
-                        || (w.frame.height - r.height).abs() > 0.01
-                    {
-                        continue;
-                    }
-                    if let Err(code) = set_position(h.element.0, r) {
-                        eprintln!("Window {id}: move rejected (AX {code})");
-                    }
-                    if let Some(actual) = frame(h.element.0) {
-                        self.discovery.observed_frame(id, actual);
-                        self.engine.observed_frame(id, actual, false);
-                    }
-                }
-                Effect::Snap(id, r) => {
-                    if !settable(h.element.0, "AXSize") {
-                        eprintln!("Window {id} does not support resizing");
-                        self.engine.clear_snap(id);
-                        continue;
-                    }
-                    // Respect the app-accepted size, then anchor it inside this display.
-                    let bounds = self
-                        .engine
-                        .windows
-                        .get(&id)
-                        .and_then(|w| self.engine.bounds.get(&w.display))
-                        .copied()
-                        .unwrap_or(r);
-                    let result = snap_frame(h.element.0, r, bounds);
-                    if let Err(code) = result {
-                        eprintln!("Window {id}: snap constrained/rejected (AX {code})");
-                    }
-                    if let Some(actual) = frame(h.element.0) {
-                        if !actual.near(r) {
-                            self.engine.clear_snap(id);
-                        }
-                        self.engine.observed_frame(id, actual, false);
-                        self.discovery.observed_frame(id, actual);
-                    }
-                }
             }
         }
     }
@@ -1270,6 +1222,10 @@ fn wake() {
 }
 unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef) -> MutRef {
     if ty == 0xffff_fffe || ty == 0xffff_ffff {
+        let queue = QUEUE.load(Ordering::Acquire);
+        if !queue.is_null() {
+            (*queue).shortcuts = ShortcutRouter::default();
+        }
         enqueue(Event::TapDisabled);
         return event;
     }
@@ -1347,11 +1303,23 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         let q = QUEUE.load(Ordering::Acquire);
         if !q.is_null() {
             let key = CGEventGetIntegerValueField(event, 9) as u16;
-            if let Some(cmd) = route(&(*q).bindings, key, modifiers) {
-                if ty == 10 {
-                    enqueue(Event::Command(cmd));
+            match (*q)
+                .shortcuts
+                .key(&(*q).bindings, key, CGEventGetFlags(event), ty == 10)
+            {
+                KeyRoute::Pass => {}
+                KeyRoute::Consume(command) => {
+                    if let Some(command) = command {
+                        enqueue(Event::Command(command));
+                    }
+                    return null_mut();
                 }
-                return null_mut();
+                KeyRoute::Native(shortcut) => {
+                    if ty == 10 {
+                        enqueue(Event::Command(Command::Native(shortcut)));
+                    }
+                    return null_mut();
+                }
             }
         }
     }
@@ -1423,6 +1391,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             tx,
             source: null(),
             bindings: config.bindings.clone(),
+            shortcuts: ShortcutRouter::default(),
             runtime: null_mut(),
             scroll_modifiers: config.overlay_modifiers,
             wheel: WheelRouter::default(),
@@ -1530,7 +1499,6 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             pending_commands: vec![],
             space_until: None,
             space_retries: 0,
-            paused: false,
             modal: false,
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),
@@ -1544,7 +1512,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         runtime.ui.gesture_status(runtime.gestures.is_some());
         runtime.reconcile(false);
         eprintln!(
-            "Whalu running. Hold Control + Option to navigate; use the W menu to pause or quit."
+            "Whalu running. Hold Control + Option to navigate; use the W menu to refresh or quit."
         );
         app.run();
         *DISPATCH.lock().unwrap() = None;

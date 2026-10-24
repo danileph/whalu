@@ -65,7 +65,6 @@ pub(super) fn run(
         pending_commands: vec![],
         space_until: None,
         space_retries: 0,
-        paused: false,
         modal: false,
         recovery: SavedState::default(),
         restored: BTreeSet::new(),
@@ -447,23 +446,7 @@ pub(super) fn run(
         tx.send(Event::Gesture(1, GestureEvent::Update(1), 0.22))
             .map_err(|e| e.to_string())?;
         runtime.drain();
-        runtime.apply(vec![
-            Effect::Focus(ids[0]),
-            Effect::Move(
-                ids[0],
-                whalu::geometry::Rect {
-                    x: before.x + 25.,
-                    ..before
-                },
-            ),
-            Effect::Snap(
-                ids[0],
-                whalu::geometry::Rect {
-                    y: before.y + 25.,
-                    ..before
-                },
-            ),
-        ]);
+        runtime.apply(vec![Effect::Focus(ids[0])]);
         if runtime.engine.focused() != selected
             || runtime.gesture.is_some()
             || runtime.motion_due.is_some()

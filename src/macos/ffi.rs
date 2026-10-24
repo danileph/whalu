@@ -69,6 +69,8 @@ unsafe extern "C" {
         value_callbacks: Ref,
     ) -> Ref;
     pub fn CFNumberGetValue(n: Ref, ty: isize, out: MutRef) -> bool;
+    pub fn CFNumberCreate(allocator: Ref, ty: isize, value: Ref) -> Ref;
+    pub fn CFArrayCreate(allocator: Ref, values: *const Ref, count: isize, callbacks: Ref) -> Ref;
     pub fn CFRunLoopGetMain() -> Ref;
     pub fn CFRunLoopRunInMode(mode: Ref, seconds: f64, return_after_source: bool) -> i32;
     pub static kCFRunLoopDefaultMode: Ref;
@@ -260,36 +262,9 @@ pub fn set_position(e: Ref, r: whalu::geometry::Rect) -> Result<(), i32> {
         if code == 0 { Ok(()) } else { Err(code) }
     }
 }
-pub fn set_size(e: Ref, r: whalu::geometry::Rect) -> Result<(), i32> {
-    unsafe {
-        let s = Size {
-            width: r.width,
-            height: r.height,
-        };
-        let v = Owned::new(AXValueCreate(2, (&s as *const Size).cast())).ok_or(-1)?;
-        let code = AXUIElementSetAttributeValue(e, string("AXSize").0, v.0);
-        if code == 0 { Ok(()) } else { Err(code) }
-    }
-}
 pub fn settable(e: Ref, key: &str) -> bool {
     unsafe {
         let mut value = false;
         AXUIElementIsAttributeSettable(e, string(key).0, &mut value) == 0 && value
     }
-}
-
-/// Reapply size after moving, then anchor the size actually accepted by the app.
-pub fn snap_frame(
-    element: Ref,
-    target: whalu::geometry::Rect,
-    bounds: whalu::geometry::Rect,
-) -> Result<(), i32> {
-    let _ = set_size(element, target);
-    let _ = set_position(element, target);
-    let resized = set_size(element, target);
-    // Even a rejected resize must not leave the old width hanging off-screen.
-    let actual = frame(element).ok_or(-25202)?;
-    let aligned = whalu::geometry::constrained_snap(target, actual, bounds);
-    set_position(element, aligned)?;
-    resized
 }

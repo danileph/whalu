@@ -1,9 +1,9 @@
 [package]
 name = "whalu"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
-description = "A native macOS focus and magnetic window manager"
+description = "Native macOS window navigation and tiling shortcuts"
 license = "MIT"
 
 [dependencies]

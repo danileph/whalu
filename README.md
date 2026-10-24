@@ -4,34 +4,35 @@
 
 # Whalu
 
-Whalu is a Rust window manager for macOS with individual-window navigation, a temporary overview, and explicit snapping. Native Spaces, Mission Control, Dock, fullscreen, and application switching stay system-owned.
+Whalu provides individual-window navigation, a temporary overview, stack reordering, and shortcuts for native macOS window tiling. macOS owns window sizes, tiling margins, multi-window arrangements, and previous-size restoration. Whalu never automatically repositions background windows.
 
-Grouping is deferred. Every window has its own entry in one Space-local stack. Snapping does not pair windows, and navigation focuses one window at a time. Existing saved pairings are ignored while Magnetic/Floating modes are retained.
+Every window has its own entry in a Space-local stack. Reordering changes that list without changing focus or window geometry. The focused window can also move to the previous or next regular desktop on its display, without switching the desktop you are viewing.
 
 ## Controls
 
-| Input | Action |
-| --- | --- |
-| Hold Control + Option | Show overview; release either modifier to dismiss |
-| Click an overview thumbnail or app badge | Focus that window immediately; the overview moves through the stack in order |
-| Control + Option + Up / Down | Previous / next individual window |
-| Control + Option + Left / Right | Previous / next window of the active application |
-| Three fingers down / up | Previous / next window (natural scrolling) |
-| Control + Option + mouse wheel | Scroll through individual windows |
-| Three fingers left / right | Continuously select windows of the active application |
-| Control + Option + Space | Toggle Magnetic / Floating |
-| Control + Option + Command + Up | Snap to full usable display |
-| Control + Option + Command + Left | Cycle left half → top-left quarter → bottom-left quarter |
-| Control + Option + Command + Right | Cycle right half → top-right quarter → bottom-right quarter |
-| Control + Option + Command + Down | Restore the rectangle from before snapping |
+| Action | Arrow shortcut | Vim-style / key |
+| --- | --- | --- |
+| Move focused window up in stack | Control + Option + Command + Up | Control + Option + Command + K |
+| Move focused window down in stack | Control + Option + Command + Down | Control + Option + Command + J |
+| Move focused window to previous Space | Control + Option + Command + Left | Control + Option + Command + H |
+| Move focused window to next Space | Control + Option + Command + Right | Control + Option + Command + L |
+| Native left half | Control + Command + Left | Control + Command + H |
+| Native bottom half | Control + Command + Down | Control + Command + J |
+| Native top half | Control + Command + Up | Control + Command + K |
+| Native right half | Control + Command + Right | Control + Command + L |
+| Native fill desktop | — | Control + Command + M |
+| Native center window | — | Control + Command + I |
+| Native restore previous size | — | Control + Command + N |
+| Native arrange left and right | Control + Command + Shift + Left | Control + Command + Shift + H |
+| Native arrange right and left | Control + Command + Shift + Right | Control + Command + Shift + L |
+| Native arrange top and bottom | Control + Command + Shift + Up | Control + Command + Shift + K |
+| Native arrange bottom and top | Control + Command + Shift + Down | Control + Command + Shift + J |
 
-The former Shift + Control + Option group shortcuts and group-local H/J/K/L shortcuts are no longer captured. Control + arrows, Command + Tab, Option + M, two-finger scrolling, and native four-finger gestures pass through.
+Hold Control + Option to show the overview; release either modifier to dismiss. Click a thumbnail or app badge, use Control + Option + mouse wheel, or swipe with three fingers to navigate. Vertical swipes select individual windows; horizontal swipes select windows of the active app. The old Control + Option + arrow and mode-toggle shortcuts are no longer captured. Command + Tab, Command + grave accent, Control + arrows, two-finger scrolling, and native four-finger gestures remain available.
+
+Tiling shortcuts invoke the foreground app's native Window-menu actions through Accessibility, locating their Fn + Control key equivalents (with Shift for arrangements). Whalu does not synthesize Fn events or compute window rectangles. Native Fn + Control + R remains available alongside the custom Control + Command + N restore alias. Apps must support the corresponding native command. Repeating a half shortcut keeps that native half; the former quarter-cycling behavior is removed. See [Apple's native tiling shortcuts](https://support.apple.com/en-gb/guide/mac-help/mchl9674d0b0/26/mac/26).
 
 During a three-finger swipe, the overview stays open and focus follows your movement live. An ordinary swipe moves exactly one window, even when fast. To traverse more windows, keep your fingers down and continue moving after the overview appears; only then does speed-dependent acceleration engage. Lift after a fast sustained scroll for a stronger coast whose speed and distance follow your swipe velocity. Simply holding still does not unlock acceleration. A short swipe selects one window and holds the overview for 650 ms so the change stays visible. Rapid separate swipes keep that same overview open, advance one window per swipe, and restart the dismissal delay after the final swipe. Once sustained scrolling is active, holding near an edge continues through longer lists and gradually speeds up. A fourth contact immediately yields to native Space/Mission Control gestures, cancels Whalu navigation without restoring focus, and pauses window changes until the transition settles. Gestures and mouse-wheel navigation stop at the list ends; keyboard navigation wraps. New input catches momentum immediately. Hold the configured `overlay_modifiers` (Control + Option by default) to use the mouse wheel; scrolling is consumed while navigating so the active app does not scroll too. Mouse-wheel bursts start with one window; longer continued scrolling enables slower traversal and a restrained coast of at most one extra window.
-
-Snaps use exact full/half/quarter fractions of the usable display with no added gap. When an app enforces a minimum size, the accepted rectangle stays aligned to the requested right/bottom edges and within the display whenever it can fit. Snapping never enters native fullscreen.
-
-Magnetic mode permits automatic position changes with fixed dimensions. Floating windows retain their rectangle. Explicit snaps can resize either mode; snapped rectangles stay fixed until another explicit snap or direct edit. The overview alone does not move windows, and automatic layout pauses during swiping.
 
 ## Install and run
 
@@ -39,7 +40,7 @@ Magnetic mode permits automatic position changes with fixed dimensions. Floating
 ./scripts/install.sh
 ```
 
-Requires macOS 14.2 or later, Rust, and Apple's Command Line Tools. The script builds an ad-hoc signed bundle, installs `~/Applications/Whalu.app`, and opens it. It does not install a login item. Quit the former Magnetic app before installing Whalu. Whalu has its own bundle identity (`dev.danileph.whalu`), so grant Accessibility and window-preview permissions to **Whalu** when prompted.
+Requires macOS 15.0 or later, Rust, and Apple's Command Line Tools. The script builds an ad-hoc signed bundle, installs `~/Applications/Whalu.app`, and opens it. It does not install a login item. Quit the former Magnetic app before installing Whalu. Whalu has its own bundle identity (`dev.danileph.whalu`), so grant Accessibility and window-preview permissions to **Whalu** when prompted.
 
 On first launch, Whalu retains a setup window and **W •** menu until permissions are ready. Enable the installed app in **System Settings → Privacy & Security → Accessibility**. If keyboard access is separately blocked, setup offers Input Monitoring settings. It starts automatically after permission is granted.
 
@@ -47,30 +48,28 @@ The overview is a vertical 3D wheel along the left edge of the display where it 
 
 The wheel fills the display's usable height, with clearance for the menu bar, Dock, shadows, and app badges. Taller displays show more neighbors; card size and minimum spacing stay consistent in macOS logical points, including on Retina displays. Connecting, disconnecting, rearranging, or changing the resolution of a monitor refreshes its layout and click targets without treating the change as a Space switch.
 
-The monitor under the pointer when opening the overview shows windows visible in its current Space, even while another monitor's window has focus. Opening the overview leaves native focus unchanged; keyboard, wheel, trackpad, or thumbnail selection then navigates that monitor's list. Its monitor stays fixed through refreshes and the current navigation session; closing and reopening selects the pointer's current monitor. Each monitor keeps its own window order and remembered selection across Spaces. An empty monitor stays empty even when another monitor has visible windows. Snap and mode commands continue to act on the actual focused window.
+The monitor under the pointer when opening the overview shows windows visible in its current Space, even while another monitor's window has focus. Opening the overview leaves native focus unchanged; keyboard, wheel, trackpad, or thumbnail selection then navigates that monitor's list. Its monitor stays fixed through refreshes and the current navigation session; closing and reopening selects the pointer's current monitor. Each monitor keeps its own window order and remembered selection across Spaces. An empty monitor stays empty even when another monitor has visible windows. Stack edits, Space transfers, and tiling commands act on the actual focused window.
 
 Window thumbnails require **Screen & System Audio Recording → Whalu** in Privacy & Security. Choose **W → Enable window previews…** to request access. Whalu takes small, individual-window snapshots on demand while the overview is open; it does not record audio, start a video stream, upload captures, or save them to disk. Without access, the same cards show app icons. Only the visible card set is cached in memory.
 
-The **W** menu provides pause, refresh, preview access, configuration, reload, and quit. This development bundle's ad-hoc signature changes when rebuilt. If setup reports denied while Settings shows Whalu enabled, remove that stale entry and add the current installed bundle again. The running GUI app's permission result is authoritative; terminal diagnostics can inherit the terminal's access.
+The **W** menu provides refresh, preview access, configuration, reload, and quit. This development bundle's ad-hoc signature changes when rebuilt. If setup reports denied while Settings shows Whalu enabled, remove that stale entry and add the current installed bundle again. The running GUI app's permission result is authoritative; terminal diagnostics can inherit the terminal's access.
 
 ## Configuration and recovery
 
-Default location: `~/Library/Application Support/Whalu/config.toml`. On the first default launch, Whalu copies `config.toml` and `state.json` from the former `Magnetic` support directory when the corresponding Whalu file is absent. Existing Whalu files take precedence; the originals are retained. The `magnetic` setting and Magnetic/Floating modes keep their existing meaning.
+Default location: `~/Library/Application Support/Whalu/config.toml`. On the first default launch, Whalu copies `config.toml` and `state.json` from the former `Magnetic` support directory when the corresponding Whalu file is absent. Existing Whalu files take precedence; the originals are retained. Legacy Magnetic/Floating metadata is retained for compatibility and has no effect on geometry.
 
 Choose **W → Open configuration**, edit, then **W → Reload configuration**. Errors leave the previous valid configuration active. `--config /absolute/path/config.toml` selects another file.
 
 ```toml
-gap = 8.0
 overlay = true
 overlay_delay_ms = 120
-magnetic = true
 gestures = true
 ignored_apps = ["com.apple.QuickTimePlayerX"]
 ```
 
-Legacy `overlay_brightness` values are accepted and ignored; generated configurations omit that removed setting.
+Legacy `overlay_brightness`, `gap`, and `magnetic` values are accepted and ignored; generated configurations omit them.
 
-`gap` affects automatic background exposure only. Set `magnetic = false` for navigation without automatic arrangement, or `gestures = false` for keyboard and modifier-wheel operation without three-finger navigation.
+Set `gestures = false` for overview and modifier-wheel operation without three-finger navigation.
 
 Bindings use physical macOS keycodes and exact modifier combinations. A supplied `bindings` array replaces the defaults. Removed actions (`group_next`, `group_previous`, and the former group-local `left`, `down`, `up`, `right`) must be removed from older custom configurations. Generate and check the current schema with:
 
@@ -79,17 +78,17 @@ Bindings use physical macOS keycodes and exact modifier combinations. A supplied
 ~/.cargo/bin/cargo run -- --check-config whalu.example.toml
 ```
 
-Window modes are atomically saved in `state.json` beside the default configuration. Recovery matches unique, nonempty app/title identities and never moves or resizes windows at startup. Ambiguous windows start Magnetic. Old grouping metadata is ignored and no longer written. Snap restore rectangles remain session-only.
+Window modes are atomically saved in `state.json` beside the default configuration. Recovery matches unique, nonempty app/title identities and never moves or resizes windows at startup. Ambiguous windows start Magnetic. Old grouping metadata is ignored and no longer written. Previous-size history belongs to macOS; Whalu stores no restore rectangles. Stack order is retained across visibility changes and Space switches during the current session.
 
 After switching native Spaces without a focused window, the first navigation command enters the remembered visible window, or the first/last available entry. Commands during the native transition wait for it to settle.
 
 ## Platform boundaries
 
-- Public APIs do not provide stable native Space IDs. The adapter uses AX/Quartz window identity and overlapping visibility cohorts tracked separately for each display. Sticky windows, identical windows across Spaces, and wholesale window replacement can confuse context identity. It does not move windows between Spaces or use private SkyLight APIs.
+- Public APIs do not provide stable native Space IDs. The adapter uses AX/Quartz window identity and overlapping visibility cohorts tracked separately for each display. Sticky windows, identical windows across Spaces, and wholesale window replacement can confuse context identity. Space transfers separately resolve private WindowServer APIs at runtime, using the [asynchronous native window-management bridge](https://gist.github.com/stephancasas-openai/1b31a8d76c6a103e4676ac196e06e9d8). They move only the focused window between regular desktops on the same display, skip fullscreen Spaces, stop at the first/last desktop, and verify membership after the move. Sticky windows are left alone. These undocumented calls may become unavailable on future macOS releases; no accessibility drag or custom geometry fallback runs.
 - Window capture IDs use the optional Accessibility `_AXUIElementGetWindow` SPI so windows with identical titles and bounds (including Finder windows) retain their own thumbnails. If that symbol is unavailable, discovery falls back to title/geometry matching and independent icon cards for fully visible ambiguous windows.
 - Three-finger detection uses the experimental, read-only private MultitouchSupport framework. The public CGEvent tap consumes the three-contact scroll stream, including its trailing native momentum, so it cannot also scroll the active app. Ordinary two-finger and native four-finger input remain available, and no trackpad settings are changed. Keep system Space/Mission Control gestures on four fingers and three-finger dragging disabled. Keyboard navigation remains available if the listener is unavailable. ABI reference: [Hammerspoon touchdevice header](https://github.com/asmagill/hs._asm.undocumented.touchdevice/blob/master/MultitouchSupport.h).
-- Dialogs, minimized/fullscreen windows, and windows without settable AX positions are excluded from active navigation. Focused modal/sheet/fullscreen UI suspends layout. Apps can reject size/position requests; windows larger than the whole display retain a reachable top-left corner.
-- Display-aware snapping supports negative origins and usable bounds. Hardware validation covers this Mac, not every app, monitor configuration, or macOS release.
+- Dialogs, minimized/fullscreen windows, and windows without settable AX positions are excluded from active navigation. Focused modal/sheet/fullscreen UI suspends Whalu commands. Native tiling availability and minimum-size behavior belong to macOS and the target app.
+- Hardware validation covers this Mac, not every app, monitor configuration, or macOS release.
 
 ## Empty Spaces immediately switch back
 
@@ -120,10 +119,10 @@ The [brand assets](assets/README.md) include the glass app icon, silver wordmark
 
 Append `--hold` to `--preview` to watch a 25-second native wheel demonstration, including selection changes, reversal, and list ends. The preview also checks live compositor interpolation, interrupted reversal, stable card identity, selection centering, and 3D transform retention.
 
-Tests cover independent window/app navigation, continuous swipe reversal and isolation, unfocused Spaces, legacy-state migration, fixed-size automatic layout, Floating ownership, exact snaps, minimum-size anchoring, restore, and configuration validation. The optional native smoke check manipulates only temporary child-process fixture windows and requires Accessibility. It verifies enumeration, real focus, continuous selection, fixed-size movement, snap/restore, minimum-size constraints, keyboard-tap creation, and a non-key HUD.
+Tests cover independent window/app navigation, continuous swipe reversal and isolation, unfocused Spaces, legacy-state migration, stack reordering without focus/geometry changes, all screenshot shortcut aliases, modifier-first key release, native-shortcut passthrough, and configuration validation. The optional native smoke check manipulates only temporary child-process fixture windows and requires Accessibility. It verifies enumeration, real focus, continuous selection, unchanged selection geometry, fixture-only Space transfer and return when two regular desktops exist, keyboard-tap creation, and a non-key HUD.
 
-Scroll tests also cover natural direction, early three-contact ownership, partial release, native momentum isolation, modifier-wheel routing, bounded deceleration, reversal, and fresh-input interruption. Native fixture checks exercise short-swipe selection, kinetic focus, wheel bursts, and the 650 ms feedback/dismissal lifecycle without writing recovery state. Quit the running manager before the native smoke check so its automatic layout cannot move the test fixtures.
+Scroll tests also cover natural direction, early three-contact ownership, partial release, native momentum isolation, modifier-wheel routing, bounded deceleration, reversal, and fresh-input interruption. Native fixture checks exercise short-swipe selection, kinetic focus, wheel bursts, and the 650 ms feedback/dismissal lifecycle without writing recovery state. Quit the running manager before the native smoke check to isolate fixture focus and input.
 
 The runtime coalesces AX/workspace/display notifications on the main run loop and uses one-shot timers for bursts and transitions. No periodic window enumeration runs at idle. Input callbacks enqueue work without performing Accessibility calls.
 
-Keyboard navigation reuses discovered windows after checking fresh Quartz visibility/geometry and the focused AX window. Window changes, dialogs, Space/display transitions, configuration reloads, and uncertain focus fall back to full discovery; snap and mode commands always refresh metadata. Overview icons are cached per application process. Recovery snapshots are coalesced on a background writer, which flushes the latest state on quit. `--performance-probe` measures full discovery and validated cache checks without changing focus or moving windows; keep the desktop steady while it runs. These timings exclude native focus activation and compositor animation.
+Keyboard navigation reuses discovered windows after checking fresh Quartz visibility/geometry and the focused AX window. Window changes, dialogs, Space/display transitions, configuration reloads, and uncertain focus fall back to full discovery; stack edits and Space transfers always refresh metadata. Overview icons are cached per application process. Recovery snapshots are coalesced on a background writer, which flushes the latest state on quit. `--performance-probe` measures full discovery and validated cache checks without changing focus or moving windows; keep the desktop steady while it runs. These timings exclude native focus activation and compositor animation.

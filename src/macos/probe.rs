@@ -1,12 +1,12 @@
 //! Opt-in diagnostics. Only fixture windows owned by a child process are manipulated.
 use super::{discovery::Discovery, ffi::*, ui::Ui};
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::{MainThreadMarker, MainThreadOnly, sel};
 use objc2_app_kit::*;
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use std::process::{Child, Command as ProcessCommand};
 use whalu::{
-    core::{Command, Effect, Engine, Mode, Window},
-    geometry::{Direction, Rect},
+    core::{Engine, Mode, Window},
+    geometry::Rect,
     gestures::Axis,
     navigation::ScrubSession,
 };
@@ -92,8 +92,6 @@ pub fn preview(path: &str, hold: bool) -> Result<(), String> {
                     Mode::Magnetic
                 },
                 last_floating_frame: None,
-                snap: None,
-                restore_frame: None,
             },
         );
     }
@@ -138,6 +136,25 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
         let mtm = MainThreadMarker::new().ok_or("Requires main thread")?;
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        let main_menu = NSMenu::new(mtm);
+        let app_item = NSMenuItem::new(mtm);
+        app_item.setSubmenu(Some(&NSMenu::new(mtm)));
+        main_menu.addItem(&app_item);
+        let window_item = NSMenuItem::new(mtm);
+        window_item.setTitle(&NSString::from_str("Window"));
+        let window_menu = NSMenu::new(mtm);
+        window_menu.setTitle(&NSString::from_str("Window"));
+        let zoom = NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &NSString::from_str("Zoom"),
+            Some(sel!(zoom:)),
+            &NSString::from_str(""),
+        );
+        window_menu.addItem(&zoom);
+        window_item.setSubmenu(Some(&window_menu));
+        main_menu.addItem(&window_item);
+        app.setMainMenu(Some(&main_menu));
+        app.setWindowsMenu(Some(&window_menu));
         let mut windows = vec![];
         let titles = [
             "Whalu fixture A",
@@ -419,34 +436,42 @@ pub fn smoke() -> Result<(), String> {
         println!(
             "PASS: continuous selection reverses live AX focus with a non-key overview and unchanged geometry"
         );
-        e.observed_frame(id, moved, false);
-        e.command(Command::ToggleMode);
-        let effects = e.command(Command::Snap(Direction::Left));
-        let Some(Effect::Snap(_, target)) = effects.first() else {
-            return Err("No floating snap effect".into());
-        };
-        snap_frame(handle.element.0, *target, e.bounds[&e.windows[&id].display])
-            .map_err(|c| format!("AX snap failed: {c}"))?;
-        let snapped = frame(handle.element.0).ok_or("Cannot read snapped geometry")?;
-        if !snapped.near(*target) {
-            return Err(format!(
-                "App did not accept snap: {snapped:?}, expected {target:?}"
-            ));
+        let before_tiling = frame(handle.element.0).ok_or("Missing native tiling fixture frame")?;
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(123, false))?;
+        settle_native_tiling();
+        let tiled = frame(handle.element.0).ok_or("Missing native tiled frame")?;
+        if tiled.near(before_tiling) {
+            return Err("Native left-half action did not change the fixture".into());
         }
-        println!("PASS: explicit floating-window snap to usable display region");
-        let effects = e.command(Command::Snap(Direction::Down));
-        let Some(Effect::Snap(_, restore)) = effects.first() else {
-            return Err("No restore effect".into());
-        };
-        set_size(handle.element.0, *restore).map_err(|c| c.to_string())?;
-        set_position(handle.element.0, *restore).map_err(|c| c.to_string())?;
-        if !frame(handle.element.0)
-            .ok_or("No restore geometry")?
-            .near(moved)
-        {
-            return Err("Restore did not recover prior rectangle".into());
+        super::tiling::perform(pid, whalu::input::NativeShortcut::tiling(15, false))?;
+        settle_native_tiling();
+        if !frame(handle.element.0).is_some_and(|actual| actual.near(before_tiling)) {
+            return Err("Native restore did not recover the fixture rectangle".into());
         }
-        println!("PASS: explicit restore returns the pre-snap rectangle");
+        println!("PASS: native Window-menu left-half tiling and macOS previous-size restoration");
+        let quartz = handle.quartz_id.ok_or("Fixture has no Quartz identity")?;
+        let before_transfer = frame(handle.element.0).ok_or("No fixture frame")?;
+        let direction = if super::spaces::move_adjacent(quartz, true)? {
+            Some(true)
+        } else if super::spaces::move_adjacent(quartz, false)? {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(direction) = direction {
+            if !super::spaces::move_adjacent(quartz, !direction)? {
+                return Err("Fixture could not return to its original Space".into());
+            }
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.2, false);
+            if !frame(handle.element.0).is_some_and(|actual| actual.near(before_transfer)) {
+                return Err("Native Space transfer changed fixture geometry".into());
+            }
+            println!(
+                "PASS: real fixture moves to adjacent native Space and back with unchanged geometry"
+            );
+        } else {
+            println!("SKIP: Space transfer requires two regular desktops on this display");
+        }
         let tap = Owned::new(CGEventTapCreate(
             1,
             0,
@@ -474,7 +499,6 @@ pub fn smoke() -> Result<(), String> {
         // cohort before the next probe so its windows cannot join that stack.
         drop(fixture);
         cross_app_click_smoke(mtm, tap)?;
-        constrained_smoke(mtm)?;
         println!("Native smoke test passed; fixture windows closed automatically.");
         Ok(())
     }
@@ -534,59 +558,12 @@ fn ui_is_key(ui: &Ui) -> bool {
     ui.is_key()
 }
 
-fn constrained_smoke(mtm: MainThreadMarker) -> Result<(), String> {
-    let child = ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
-        .arg("--fixture-minimum-size")
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    let fixture = Fixture(child);
-    let pid = fixture.0.id() as i32;
-    let mut discovery = Discovery::new();
-    let mut found = None;
-    for _ in 0..60 {
+fn settle_native_tiling() {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < until {
         unsafe {
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.03, false);
         }
-        let snapshot = discovery.scan(mtm, &[]);
-        if let Some(w) = snapshot
-            .windows
-            .into_iter()
-            .find(|w| discovery.handles[&w.id].pid == pid && snapshot.visible.contains(&w.id))
-        {
-            let bounds = snapshot.bounds[&w.display];
-            found = Some((w.id, bounds));
-            break;
-        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let (id, bounds) = found.ok_or("Minimum-size fixture was not discovered")?;
-    let handle = &discovery.handles[&id];
-    for region in [
-        whalu::geometry::Region::Right,
-        whalu::geometry::Region::BottomRight,
-        whalu::geometry::Region::TopLeft,
-    ] {
-        let target = region.rect(bounds);
-        snap_frame(handle.element.0, target, bounds)
-            .map_err(|c| format!("Constrained fixture snap failed: {c}"))?;
-        let actual = frame(handle.element.0).ok_or("Cannot read constrained fixture")?;
-        if actual.width <= target.width || !actual.intersection(bounds).near(actual) {
-            return Err(format!(
-                "Minimum-width snap is not fully visible: {actual:?} in {bounds:?}"
-            ));
-        }
-        if region != whalu::geometry::Region::TopLeft
-            && (actual.right() - bounds.right()).abs() > 1.
-        {
-            return Err("Minimum-width snap lost right-edge alignment".into());
-        }
-        if region == whalu::geometry::Region::BottomRight
-            && (actual.bottom() - bounds.bottom()).abs() > 1.
-        {
-            return Err("Minimum-height snap lost bottom-edge alignment".into());
-        }
-    }
-    println!(
-        "PASS: real minimum-width/height windows remain on-screen and preserve right/bottom snap anchors"
-    );
-    Ok(())
 }

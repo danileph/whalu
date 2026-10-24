@@ -24,8 +24,6 @@ fn engine() -> Engine {
                 frame: Rect::new(if display == 1 { 50. } else { -1800. }, 50., 600., 700.),
                 mode: Mode::Magnetic,
                 last_floating_frame: None,
-                snap: None,
-                restore_frame: None,
             },
         );
     }
