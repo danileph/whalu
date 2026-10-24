@@ -156,11 +156,23 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
         };
         let overlap = std::env::var_os("WHALU_FIXTURE_OVERLAP").is_some();
         let same_title = std::env::var_os("WHALU_FIXTURE_SAME_TITLE").is_some();
+        // Navigation is invoked on the pointer's monitor. Place this independent
+        // fixture cohort there without moving the user's pointer or windows.
+        let display = super::discovery::pointer_display(mtm);
+        let screen = NSScreen::screens(mtm)
+            .iter()
+            .find(|screen| Some(super::discovery::display_id(screen)) == display)
+            .or_else(|| NSScreen::mainScreen(mtm))
+            .ok_or("No fixture screen")?;
+        let bounds = screen.visibleFrame();
         for (i, title) in titles.iter().take(count).enumerate() {
             let w = NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
                 NSRect::new(
-                    NSPoint::new(130. + if overlap { 0. } else { i as f64 * 120. }, 180.),
+                    NSPoint::new(
+                        bounds.origin.x + 130. + if overlap { 0. } else { i as f64 * 120. },
+                        bounds.origin.y + 180.,
+                    ),
                     NSSize::new(400., 300.),
                 ),
                 NSWindowStyleMask::Titled
@@ -170,10 +182,10 @@ fn fixture_with_minimum(constrained: bool) -> Result<(), String> {
                 false,
             );
             if constrained {
-                let b = NSScreen::mainScreen(mtm)
-                    .ok_or("No fixture screen")?
-                    .visibleFrame();
-                w.setMinSize(NSSize::new(b.size.width * 0.7, b.size.height * 0.6));
+                w.setMinSize(NSSize::new(
+                    bounds.size.width * 0.7,
+                    bounds.size.height * 0.6,
+                ));
             }
 
             w.setReleasedWhenClosed(false);

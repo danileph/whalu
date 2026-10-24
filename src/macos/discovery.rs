@@ -23,23 +23,15 @@ pub struct Snapshot {
     pub bounds: BTreeMap<u32, Rect>,
 }
 impl Snapshot {
-    pub fn active_display(&self) -> u32 {
-        self.focused
-            .and_then(|id| self.windows.iter().find(|window| window.id == id))
-            .map(|window| window.display)
+    pub fn active_display(&self, requested: Option<u32>) -> u32 {
+        requested
+            .filter(|display| self.bounds.contains_key(display))
             .or_else(|| {
-                // A desktop/empty Space has no manageable AX focus. Read the
-                // pointer in Quartz coordinates; include the menu bar and Dock.
-                let event = unsafe { Owned::new(CGEventCreate(std::ptr::null())) }?;
-                let point = unsafe { CGEventGetLocation(event.0) };
-                self.bounds.keys().copied().find(|display| {
-                    let frame = unsafe { CGDisplayBounds(*display) };
-                    point.x >= frame.origin.x
-                        && point.x < frame.origin.x + frame.size.width
-                        && point.y >= frame.origin.y
-                        && point.y < frame.origin.y + frame.size.height
-                })
+                self.focused
+                    .and_then(|id| self.windows.iter().find(|window| window.id == id))
+                    .map(|window| window.display)
             })
+            .or_else(|| pointer_display_among(self.bounds.keys().copied()))
             .unwrap_or(unsafe { CGMainDisplayID() })
     }
 
@@ -56,6 +48,26 @@ impl Snapshot {
             .filter(|id| local.contains(id))
             .collect()
     }
+}
+pub fn pointer_display(mtm: MainThreadMarker) -> Option<u32> {
+    pointer_display_among(
+        NSScreen::screens(mtm)
+            .iter()
+            .map(|screen| display_id(&screen)),
+    )
+}
+
+fn pointer_display_among(mut displays: impl Iterator<Item = u32>) -> Option<u32> {
+    // Quartz coordinates include the full display, including menu bar and Dock.
+    let event = unsafe { Owned::new(CGEventCreate(std::ptr::null())) }?;
+    let point = unsafe { CGEventGetLocation(event.0) };
+    displays.find(|display| {
+        let frame = unsafe { CGDisplayBounds(*display) };
+        point.x >= frame.origin.x
+            && point.x < frame.origin.x + frame.size.width
+            && point.y >= frame.origin.y
+            && point.y < frame.origin.y + frame.size.height
+    })
 }
 pub struct Discovery {
     pub handles: BTreeMap<WindowId, NativeWindow>,
@@ -563,14 +575,24 @@ mod tests {
             visible: vec![1, 2],
             focused: Some(2),
             modal: false,
-            bounds: BTreeMap::new(),
+            bounds: BTreeMap::from([
+                (1, Rect::new(0., 30., 1440., 850.)),
+                (2, Rect::new(-1920., -200., 1920., 1080.)),
+                (3, Rect::new(1440., 30., 1440., 850.)),
+            ]),
         };
-        assert_eq!(snapshot.active_display(), 2);
+        assert_eq!(snapshot.active_display(None), 2);
         assert_eq!(snapshot.visible_on_display(2), [2]);
         assert_eq!(snapshot.visible_on_display(1), [1]);
         assert!(snapshot.visible_on_display(3).is_empty());
         snapshot.focused = Some(1);
-        assert_eq!(snapshot.active_display(), 1);
+        assert_eq!(snapshot.active_display(None), 1);
+        // The requested monitor wins even while native focus stays elsewhere.
+        assert_eq!(snapshot.active_display(Some(2)), 2);
+        assert_eq!(snapshot.active_display(Some(3)), 3);
+        // A disconnected requested monitor falls back to the focused display.
+        snapshot.bounds.remove(&3);
+        assert_eq!(snapshot.active_display(Some(3)), 1);
     }
 
     #[test]

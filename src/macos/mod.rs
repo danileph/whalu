@@ -176,6 +176,8 @@ struct Runtime {
     recovery: SavedState,
     restored: BTreeSet<u64>,
     context_tracker: DisplayContexts,
+    // Keep the invocation's monitor through AX activation and image refreshes.
+    navigation_display: Option<u32>,
     _lock: std::fs::File,
 }
 impl Runtime {
@@ -236,6 +238,10 @@ impl Runtime {
                     self.discovery.invalidate_navigation();
                     self.pending_focus = None;
                     self.ui.reset_overview();
+                    self.navigation_display = None;
+                    if self.held {
+                        self.use_pointer_display();
+                    }
                     self.deadline = Some(Instant::now() + Duration::from_millis(70));
                 }
                 Event::SpaceChanged => self.yield_to_system(true),
@@ -252,6 +258,9 @@ impl Runtime {
                         self.overlay_deadline = None;
                     }
                     self.held = held;
+                    if opening {
+                        self.use_pointer_display();
+                    }
                     if opening && self.space_until.is_none() && !self.mouse {
                         self.reconcile(false);
                     }
@@ -283,6 +292,7 @@ impl Runtime {
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
+                        self.navigation_display = None;
                         self.pending_focus = None;
                         self.clear_scroll();
                         self.render();
@@ -393,6 +403,9 @@ impl Runtime {
         if self.space_until.is_some_and(|d| d <= now) {
             self.space_until = None;
             self.deadline = None;
+            if self.held {
+                self.use_pointer_display();
+            }
             self.reconcile(false);
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
@@ -408,6 +421,13 @@ impl Runtime {
         self.advance_scroll(now);
         self.advance_click(now);
         self.confirm_focus(now);
+        if !self.held
+            && self.gesture.is_none()
+            && self.click_travel.is_none()
+            && self.linger_until.is_none()
+        {
+            self.navigation_display = None;
+        }
         self.schedule();
     }
     fn confirm_focus(&mut self, now: Instant) {
@@ -442,6 +462,7 @@ impl Runtime {
         }
     }
     fn yield_to_system(&mut self, space_changed: bool) {
+        self.navigation_display = None;
         // Four-finger contact precedes the workspace notification. Abandon the
         // session before its cancellation event can restore an old-Space window.
         self.clear_scroll();
@@ -463,11 +484,30 @@ impl Runtime {
         self.motion_due = None;
         self.linger_until = None;
     }
+    fn use_pointer_display(&mut self) {
+        self.navigation_display = discovery::pointer_display(self.mtm);
+    }
     fn prepare_command(&mut self, command: Command) {
         let navigation = matches!(
             command,
             Command::FocusNext | Command::FocusPrevious | Command::AppNext | Command::AppPrevious
         );
+        if navigation {
+            if self.navigation_display.is_none() || !self.held {
+                self.use_pointer_display();
+            }
+            if self
+                .navigation_display
+                .is_some_and(|display| self.engine.display() != Some(display))
+            {
+                self.reconcile(false);
+                self.deadline = None;
+                return;
+            }
+        } else {
+            // Snapping and mode changes still act on the actual focused window.
+            self.navigation_display = None;
+        }
         if navigation && !self.modal {
             if let Some(observed) = self.discovery.navigation_focus() {
                 if !self
@@ -613,6 +653,15 @@ impl Runtime {
         self.render();
     }
     fn begin_scroll(&mut self, source: ScrollSource, axis: Axis) {
+        let display = if self.held {
+            self.navigation_display
+                .or_else(|| discovery::pointer_display(self.mtm))
+        } else {
+            discovery::pointer_display(self.mtm)
+        };
+        self.begin_scroll_on_display(source, axis, display);
+    }
+    fn begin_scroll_on_display(&mut self, source: ScrollSource, axis: Axis, display: Option<u32>) {
         // A new touch/wheel movement immediately catches an existing coast.
         if self.gesture.as_ref().is_some_and(|active| !active.released) {
             return;
@@ -620,12 +669,15 @@ impl Runtime {
         if self.space_until.is_some() || self.mouse {
             return;
         }
+        let display_changed = self.navigation_display != display;
+        self.navigation_display = display;
         if self.click_travel.take().is_some() {
             self.linger_until = Some(Instant::now() + Duration::from_millis(650));
         }
-        let reuse = self
-            .linger_until
-            .is_some_and(|until| until > Instant::now())
+        let reuse = !display_changed
+            && self
+                .linger_until
+                .is_some_and(|until| until > Instant::now())
             && self.deadline.is_none()
             && !self.switched_space
             && self.discovery.navigation_focus().is_some_and(|id| {
@@ -861,7 +913,10 @@ impl Runtime {
         let previous = self.engine.focused();
         self.modal = snap.modal;
         self.engine.frozen = self.mouse || self.modal || self.space_until.is_some();
-        let display = snap.active_display();
+        self.navigation_display = self
+            .navigation_display
+            .filter(|display| snap.bounds.contains_key(display));
+        let display = snap.active_display(self.navigation_display);
         let visible = snap.visible_on_display(display);
         self.engine.bounds = snap.bounds;
         // A missing AX entry on another Space is not a destroyed window.
@@ -1480,6 +1535,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             recovery: SavedState::load(&config_dir().join("state.json")),
             restored: BTreeSet::new(),
             context_tracker: DisplayContexts::default(),
+            navigation_display: None,
             _lock: lock,
         });
         queue.runtime = &mut *runtime;

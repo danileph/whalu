@@ -70,6 +70,7 @@ pub(super) fn run(
         recovery: SavedState::default(),
         restored: BTreeSet::new(),
         context_tracker: DisplayContexts::default(),
+        navigation_display: None,
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
@@ -629,9 +630,11 @@ fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
             return Err("External focus did not reach the monitor fixture".into());
         }
         // Exercise the fast navigation path after focus changes displays while
-        // the global Quartz cohort stays unchanged.
-        runtime.prepare_command(Command::FocusNext);
+        // the global Quartz cohort stays unchanged. Supply the monitor where
+        // this overview was invoked; leave the real desktop pointer untouched.
+        runtime.navigation_display = Some(displays[side]);
         runtime.held = true;
+        runtime.prepare_command(Command::FocusNext);
         runtime.overlay_deadline = None;
         runtime.render();
         let expected = BTreeSet::from([selected, neighbor]);
@@ -686,9 +689,102 @@ fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
         }
         previous = Some((runtime.engine.current, selected));
     }
+    pointer_overview(runtime, ids, &displays)?;
     runtime.ui.hide();
     println!(
         "PASS: real fixtures on two monitors retain separate overview/navigation stacks, refresh cached external focus, and reject foreign/stale thumbnail targets"
+    );
+    Ok(())
+}
+
+fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Result<(), String> {
+    let focused = ids[0];
+    let handle = &runtime.discovery.handles[&focused];
+    // Discovery replaces AX proxies during the refreshes below. Retain the
+    // independent reference used to verify that native focus stays unchanged.
+    let element = handle.element.clone();
+    let app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+        .ok_or("Missing pointer overview fixture app")?;
+    let is_focused = || {
+        attr(app.0, "AXFocusedWindow").is_some_and(|window| unsafe { CFEqual(window.0, element.0) })
+    };
+    if !is_focused() {
+        return Err("Pointer overview probe requires focus on the first monitor".into());
+    }
+    runtime.pending_focus = None;
+    runtime.clear_scroll();
+    // Emulate the display sampled from the pointer when opening: monitor 2,
+    // while the actual AX focus remains on monitor 1. Do not post mouse input.
+    runtime.navigation_display = Some(displays[1]);
+    runtime.held = true;
+    runtime.overlay_deadline = None;
+    runtime.reconcile(false);
+    for _ in 0..2 {
+        runtime.reconcile(false);
+        if runtime.engine.display() != Some(displays[1])
+            || runtime.engine.focused().is_some()
+            || runtime
+                .engine
+                .context()
+                .unwrap()
+                .order
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>()
+                != BTreeSet::from([ids[2], ids[3]])
+            || !runtime.ui.is_visible()
+            || runtime.ui.is_key()
+            || !is_focused()
+        {
+            return Err(
+                "Pointer overview returned to the focused monitor or stole native focus".into(),
+            );
+        }
+    }
+    runtime.prepare_command(Command::ToggleMode);
+    if runtime.engine.display() != Some(displays[0]) || runtime.engine.focused() != Some(focused) {
+        return Err("A focused-window command followed the pointer overview's monitor".into());
+    }
+    runtime.navigation_display = Some(displays[1]);
+    runtime.reconcile(false);
+    // Cached keyboard preparation must stay on the requested monitor even
+    // though navigation_focus() still reports a window on the other monitor.
+    runtime.prepare_command(Command::FocusNext);
+    let effects = runtime.engine.command(Command::FocusNext);
+    if !matches!(effects.as_slice(), [Effect::Focus(id)] if ids[2..].contains(id)) {
+        return Err("Pointer overview keyboard navigation returned to the focused monitor".into());
+    }
+    runtime.held = false;
+    runtime.render();
+    runtime.drain();
+    if runtime.navigation_display.is_some() || runtime.ui.is_visible() {
+        return Err("Closing the overview retained its old monitor selection".into());
+    }
+    for source in [ScrollSource::Trackpad(1), ScrollSource::Wheel] {
+        runtime.begin_scroll_on_display(source, Axis::Vertical, Some(displays[1]));
+        let target = runtime
+            .gesture
+            .as_mut()
+            .and_then(|active| active.session.update(1));
+        if runtime.engine.display() != Some(displays[1])
+            || !target.is_some_and(|id| ids[2..].contains(&id))
+            || !runtime.ui.is_visible()
+            || !is_focused()
+        {
+            return Err("Pointer gesture/wheel overview required focus on its monitor".into());
+        }
+        runtime.clear_scroll();
+        runtime.render();
+        runtime.drain();
+    }
+    runtime.navigation_display = Some(displays[0]);
+    runtime.held = true;
+    runtime.reconcile(false);
+    if runtime.engine.display() != Some(displays[0]) || !is_focused() {
+        return Err("Reopening the overview did not choose the new monitor".into());
+    }
+    println!(
+        "PASS: pointer monitor overview opens without prior focus, survives refreshes and keyboard/gesture/wheel preparation, preserves native focus, and retargets after closing"
     );
     Ok(())
 }
