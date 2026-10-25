@@ -597,7 +597,8 @@ fn command_switching(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> 
             router.overview_held(command, runtime.config.overlay_modifiers),
         ))
         .map_err(|e| e.to_string())?;
-        tx.send(Event::Command(action)).map_err(|e| e.to_string())?;
+        tx.send(Event::WindowSwitch(action))
+            .map_err(|e| e.to_string())?;
         runtime.drain();
         let epoch = runtime.ui.visibility_epoch();
         runtime.advance_scroll(Instant::now() + Duration::from_secs(2));
@@ -638,12 +639,54 @@ fn command_switching(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> 
         )))
         .map_err(|e| e.to_string())?;
         runtime.drain();
-        if runtime.ui.is_visible() {
-            return Err("Command overview did not dismiss after full release".into());
+        if !runtime.ui.is_visible() || runtime.ui.visibility_epoch() != epoch {
+            return Err("Quick Command release hid its overview feedback".into());
+        }
+        let mut deadline = runtime.linger_until.ok_or("No Command release feedback")?;
+        if deadline.duration_since(Instant::now()) < Duration::from_millis(550) {
+            return Err("Command release feedback was shorter than swipe feedback".into());
+        }
+        // Release both keys between each quick tap. Alternating directions must
+        // navigate immediately, retain the same cards, and restart dismissal.
+        for next_key in [50, 48, 50, 48, 50, 48] {
+            let mut router = ShortcutRouter::default();
+            let KeyRoute::Consume(Some(action)) =
+                router.key(&runtime.config.bindings, next_key, 1 << 20, true)
+            else {
+                return Err("Missing rapid Command switch binding".into());
+            };
+            let before = runtime.engine.focused();
+            tx.send(Event::OverviewHeld(true))
+                .map_err(|e| e.to_string())?;
+            tx.send(Event::WindowSwitch(action))
+                .map_err(|e| e.to_string())?;
+            tx.send(Event::OverviewHeld(false))
+                .map_err(|e| e.to_string())?;
+            runtime.drain();
+            let next_deadline = runtime.linger_until.ok_or("Rapid tap lost feedback")?;
+            if runtime.engine.focused() == before
+                || !runtime.ui.is_visible()
+                || runtime.ui.visibility_epoch() != epoch
+                || next_deadline <= deadline
+            {
+                return Err(
+                    "Rapid Command taps lost focus, overview continuity, or dismissal renewal"
+                        .into(),
+                );
+            }
+            deadline = next_deadline;
+        }
+        runtime.advance_scroll(deadline - Duration::from_millis(1));
+        if !runtime.ui.is_visible() {
+            return Err("Command overview hid before its final feedback expired".into());
+        }
+        runtime.advance_scroll(deadline + Duration::from_millis(1));
+        if runtime.ui.is_visible() || runtime.linger_until.is_some() {
+            return Err("Command overview did not dismiss after the final tap's delay".into());
         }
     }
     println!(
-        "PASS: Command-Tab/grave keep a non-key overview through holds and wheel navigation, then dismiss after either release order"
+        "PASS: Command-Tab/grave retain non-key overview through holds, wheel navigation, either release order and rapid separate taps, then dismiss after 650ms"
     );
     Ok(())
 }
@@ -924,6 +967,7 @@ fn fixture_runtime(
         deadline: None,
         overlay_deadline: None,
         held: false,
+        switch_feedback: false,
         mouse: false,
         dragging: false,
         manual_until: None,

@@ -12,7 +12,7 @@ fn main_result() -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("--help" | "-h") => {
             println!(
-                "Whalu {} · native macOS window manager\n\n  whalu                    Run menu-bar app\n  --doctor                 Check permissions and platform support\n  --list                   List manageable windows in current Space\n  --performance-probe      Measure discovery and cached navigation checks\n  --native-smoke-test      Test temporary native fixture windows\n  --space-smoke-test       Test cursor-free Space transfers\n  --gesture-probe [secs]    Check three-finger recognition without navigation\n  --preview <output.png> [--hold]  Render sample HUD; keep overview visible\n  --permissions            Open Accessibility settings\n  --print-config           Print default configuration\n  --check-config [path]    Validate configuration\n  --config <path>          Run using configuration file\n\nDefault config: {}",
+                "Whalu {} · native macOS window manager\n\n  whalu                    Run menu-bar app\n  --doctor                 Check permissions and platform support\n  --list                   List manageable windows in current Space\n  --performance-probe      Measure discovery and cached navigation checks\n  --native-smoke-test      Test temporary native fixture windows\n  --input-smoke-test       Test keyboard, wheel, and gesture fixtures\n  --space-smoke-test       Test cursor-free Space transfers\n  --gesture-probe [secs]    Check three-finger recognition without navigation\n  --preview <output.png> [--hold]  Render sample HUD; keep overview visible\n  --permissions            Open Accessibility settings\n  --print-config           Print default configuration\n  --check-config [path]    Validate configuration\n  --config <path>          Run using configuration file\n\nDefault config: {}",
                 env!("CARGO_PKG_VERSION"),
                 config_dir().join("config.toml").display()
             );
@@ -58,6 +58,7 @@ fn main_result() -> Result<(), String> {
                 macos::gesture_probe(seconds)
             }
             Some("--native-smoke-test") => macos::probe::smoke(),
+            Some("--input-smoke-test") => macos::probe::input_smoke(),
             Some("--space-smoke-test") => macos::probe::space_smoke(),
             Some("--performance-probe") => macos::probe::performance(),
             Some("--fixture") => macos::probe::fixture(),

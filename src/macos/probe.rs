@@ -651,6 +651,32 @@ pub fn smoke() -> Result<(), String> {
         Ok(())
     }
 }
+/// Run input regressions with fresh windows, independently of native tiling and
+/// Space transitions that can leave the earlier smoke cohort without AX focus.
+pub fn input_smoke() -> Result<(), String> {
+    unsafe {
+        if !AXIsProcessTrusted() {
+            return Err(super::permission_help());
+        }
+        let mtm = MainThreadMarker::new().ok_or("Requires main thread")?;
+        let app = NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+        app.finishLaunching();
+        let _restore_focus = RestoreFocus(NSWorkspace::sharedWorkspace().frontmostApplication());
+        let tap = Owned::new(CGEventTapCreate(
+            1,
+            0,
+            0,
+            (1 << 12) | (1 << 22),
+            super::event_callback,
+            std::ptr::null_mut(),
+        ))
+        .ok_or("Global keyboard and scroll event tap denied")?;
+        CGEventTapEnable(tap.0, false);
+        cross_app_click_smoke(mtm, tap)
+    }
+}
+
 fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String> {
     let mut fixtures = vec![];
     for _ in 0..4 {

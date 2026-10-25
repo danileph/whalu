@@ -31,7 +31,7 @@ Every window has its own entry in a Space-local stack. Reordering changes that l
 | Native arrange top and bottom | Control + Command + Shift + Up | Control + Command + Shift + K |
 | Native arrange bottom and top | Control + Command + Shift + Down | Control + Command + Shift + J |
 
-Hold Control + Option to show the overview; release either modifier to dismiss. Click a thumbnail or app badge, use Control + Option + mouse wheel, or swipe with three fingers to navigate. Vertical swipes select individual windows; horizontal swipes select windows of the active app. Control + Option + arrows and H/J/K/L navigate windows; adding Command keeps the separate stack-edit and Space-transfer actions. Command + Tab moves down the window stack; Command + grave accent (`) moves up, replacing the native actions for those exact combinations. The overview opens immediately and stays visible while Command or either navigation key remains held. Mouse-wheel navigation works throughout this session. The old mode-toggle shortcut is no longer captured. Control + arrows, two-finger scrolling outside overview navigation, and native four-finger gestures remain available.
+Hold Control + Option to show the overview; release either modifier to dismiss. Click a thumbnail or app badge, use Control + Option + mouse wheel, or swipe with three fingers to navigate. Vertical swipes select individual windows; horizontal swipes select windows of the active app. Control + Option + arrows and H/J/K/L navigate windows; adding Command keeps the separate stack-edit and Space-transfer actions. Command + Tab moves down the window stack; Command + grave accent (`) moves up, replacing the native actions for those exact combinations. The overview opens immediately and stays visible while Command or either navigation key remains held. After a quick press and release, it stays visible for 650 ms, matching short three-finger swipes. Rapid separate presses navigate immediately, keep the same overview open, and restart that delay after the final release. Mouse-wheel navigation works while the shortcut session is held. The old mode-toggle shortcut is no longer captured. Control + arrows, two-finger scrolling outside overview navigation, and native four-finger gestures remain available.
 
 Center first restores macOS’s pre-tiling size, then centers the window, so a filled window does not stay desktop-sized.
 
@@ -117,6 +117,7 @@ The [brand assets](assets/README.md) include the glass app icon, silver wordmark
 ~/.cargo/bin/cargo clippy --all-targets -- -D warnings
 ~/.cargo/bin/cargo fmt --check
 ~/.cargo/bin/cargo run -- --native-smoke-test
+~/.cargo/bin/cargo run -- --input-smoke-test
 ~/.cargo/bin/cargo run --release -- --performance-probe
 ~/.cargo/bin/cargo run -- --gesture-probe 10
 ~/.cargo/bin/cargo run -- --preview "$PWD/tmp/hud-preview.png"
@@ -126,7 +127,7 @@ Append `--hold` to `--preview` to watch a 25-second native wheel demonstration, 
 
 Tests cover independent window/app navigation, continuous swipe reversal and isolation, unfocused Spaces, legacy-state migration, stack reordering without focus/geometry changes, all screenshot shortcut aliases, modifier-first key release, native-shortcut passthrough, Command + Tab/grave session ownership and wheel routing, and configuration validation. The optional native smoke check manipulates only temporary child-process fixture windows and requires Accessibility. It verifies enumeration, real focus, continuous selection, unchanged selection geometry, fixture-only Space transfer and return when two regular desktops exist, keyboard-tap creation, and a non-key HUD.
 
-Scroll tests also cover natural direction, early three-contact ownership, partial release, native momentum isolation, modifier-wheel routing, bounded deceleration, reversal, and fresh-input interruption. Native fixture checks exercise short-swipe selection, kinetic focus, wheel bursts, and the 650 ms feedback/dismissal lifecycle without writing recovery state. Quit the running manager before the native smoke check to isolate fixture focus and input.
+Scroll tests also cover natural direction, early three-contact ownership, partial release, native momentum isolation, modifier-wheel routing, bounded deceleration, reversal, and fresh-input interruption. Native fixture checks exercise short-swipe selection, kinetic focus, wheel bursts, and the 650 ms feedback/dismissal lifecycle without writing recovery state. The focused `--input-smoke-test` runs the keyboard, wheel, gesture, and click regressions on a fresh fixture cohort, independently of native tiling and Space transfers. Quit the running manager before native smoke checks to isolate fixture focus and input.
 
 The runtime coalesces AX/workspace/display notifications on the main run loop and uses one-shot timers for bursts and transitions. No periodic window enumeration runs at idle. Input callbacks enqueue work without performing Accessibility calls.
 

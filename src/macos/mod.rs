@@ -40,6 +40,7 @@ use whalu::{
 };
 
 static QUEUE: AtomicPtr<Queue> = AtomicPtr::new(null_mut());
+const OVERVIEW_FEEDBACK: Duration = Duration::from_millis(650);
 // Protect dispatch lifetime for trackpad callbacks arriving on a framework thread.
 static DISPATCH: Mutex<Option<(Sender<Event>, usize)>> = Mutex::new(None);
 #[derive(Debug)]
@@ -52,6 +53,7 @@ pub(super) enum Event {
     SpaceTransferPreparing(u64),
     NativeGesture,
     Command(Command),
+    WindowSwitch(Command),
     OverviewHeld(bool),
     Mouse(bool),
     SelectThumbnail {
@@ -183,6 +185,7 @@ struct Runtime {
     deadline: Option<Instant>,
     overlay_deadline: Option<Instant>,
     held: bool,
+    switch_feedback: bool,
     mouse: bool,
     dragging: bool,
     manual_until: Option<Instant>,
@@ -253,6 +256,7 @@ impl Runtime {
     }
     fn drain(&mut self) {
         while let Ok(event) = self.rx.try_recv() {
+            let window_switch = matches!(event, Event::WindowSwitch(_));
             match event {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
                 Event::DisplaysChanged => {
@@ -311,6 +315,10 @@ impl Runtime {
                     }
                     if !held {
                         self.overlay_deadline = None;
+                        if self.held && self.switch_feedback {
+                            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+                            self.switch_feedback = false;
+                        }
                     }
                     self.held = held;
                     if opening {
@@ -366,7 +374,8 @@ impl Runtime {
                         self.deadline = Some(Instant::now() + Duration::from_millis(90));
                     }
                 }
-                Event::Command(cmd) => {
+                Event::Command(cmd) | Event::WindowSwitch(cmd) => {
+                    self.switch_feedback |= window_switch;
                     if self.space_until.is_some() {
                         if self.pending_commands.len() < 32 {
                             self.pending_commands.push(cmd);
@@ -483,6 +492,7 @@ impl Runtime {
                         }
                     }
                     self.held = false;
+                    self.switch_feedback = false;
                     self.overlay_deadline = None;
                     self.render();
                     unsafe {
@@ -560,6 +570,7 @@ impl Runtime {
         }
     }
     fn yield_to_system(&mut self, space_changed: bool) {
+        self.switch_feedback = false;
         self.space_overview = space_changed;
         if !space_changed || !self.held {
             self.navigation_display = self.space_transfer_display;
@@ -706,7 +717,7 @@ impl Runtime {
             self.advance_click(Instant::now());
             self.deadline = Some(Instant::now() + Duration::from_millis(100));
         } else {
-            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         }
         self.render();
         self.save();
@@ -741,7 +752,7 @@ impl Runtime {
             return;
         }
         self.click_travel = None;
-        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         self.render();
         self.save();
     }
@@ -787,7 +798,7 @@ impl Runtime {
         let display_changed = self.navigation_display != display;
         self.navigation_display = display;
         if self.click_travel.take().is_some() {
-            self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         }
         let reuse = !display_changed
             && self
@@ -944,7 +955,7 @@ impl Runtime {
     fn finish_scroll(&mut self) {
         self.gesture = None;
         self.motion_due = None;
-        self.linger_until = Some(Instant::now() + Duration::from_millis(650));
+        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         self.render();
         self.save();
     }
@@ -1016,6 +1027,7 @@ impl Runtime {
                 }
                 self.clear_scroll();
                 self.held = false;
+                self.switch_feedback = false;
                 self.overlay_deadline = None;
                 self.render();
             }
@@ -1538,7 +1550,14 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
                 KeyRoute::Pass => {}
                 KeyRoute::Consume(command) => {
                     if let Some(command) = command {
-                        enqueue(Event::Command(command));
+                        if [48, 50].contains(&key)
+                            && modifiers.command
+                            && matches!(command, Command::FocusNext | Command::FocusPrevious)
+                        {
+                            enqueue(Event::WindowSwitch(command));
+                        } else {
+                            enqueue(Event::Command(command));
+                        }
                     }
                     return null_mut();
                 }
@@ -1721,6 +1740,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             deadline: None,
             overlay_deadline: None,
             held: false,
+            switch_feedback: false,
             mouse: false,
             dragging: false,
             manual_until: None,
