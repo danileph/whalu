@@ -220,6 +220,7 @@ pub(super) fn run(
         // Click a real fixture thumbnail while a coast owns the overview. Routing
         // is exercised without posting synthetic input to other applications.
     }
+    thumbnail_reordering(&mut runtime, &tx, &ids)?;
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     runtime.render();
     unsafe {
@@ -232,7 +233,7 @@ pub(super) fn run(
         context,
         window,
         epoch,
-    } = runtime.ui.clicks.route(1, point)
+    } = thumbnail_click(&mut runtime, &tx, point)?
     else {
         return Err("Fixture thumbnail click missed".into());
     };
@@ -256,7 +257,7 @@ pub(super) fn run(
         || runtime.ui.is_key()
         || runtime.ui.visibility_epoch() != epoch
         || runtime.linger_until.is_none()
-        || runtime.ui.clicks.route(2, point) != ui::ClickRoute::Consume
+        || runtime.ui.clicks.route(2, point) != ui::ClickRoute::Pass
     {
         return Err("Thumbnail click failed native focus, selection, coast interruption or continuous non-key feedback".into());
     }
@@ -299,7 +300,7 @@ pub(super) fn run(
             context,
             window,
             epoch,
-        } = runtime.ui.clicks.route(1, point)
+        } = thumbnail_click(&mut runtime, &tx, point)?
         else {
             return Err("Distant fixture thumbnail click missed".into());
         };
@@ -577,6 +578,152 @@ pub(super) fn run(
         "PASS: real fixture short-swipe focus, kinetic selection, wheel burst, 650ms non-key feedback, dismissal, rapid-swipe visibility continuity and Space interruption; no recovery writes"
     );
     Ok(())
+}
+
+fn thumbnail_reordering(
+    runtime: &mut Runtime,
+    tx: &Sender<Event>,
+    ids: &[u64],
+) -> Result<(), String> {
+    use objc2_foundation::NSPoint;
+    let original = runtime.engine.context().unwrap().order.clone();
+    let frames: Vec<_> = ids
+        .iter()
+        .map(|id| frame(runtime.discovery.handles[id].element.0))
+        .collect();
+    for held in [true, false] {
+        for (source, target) in [(1, 2), (3, 0)] {
+            runtime.clear_scroll();
+            runtime.apply(vec![Effect::Focus(ids[1])]);
+            runtime.held = held;
+            runtime.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+            runtime.render();
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.4, false);
+            }
+            let focus = runtime.engine.focused();
+            let from = runtime
+                .ui
+                .thumbnail_point(ids[source], NSPoint::new(64., 41.))?;
+            let to = runtime
+                .ui
+                .thumbnail_point(ids[target], NSPoint::new(64., 41.))?;
+            if route_pointer(runtime, tx, 1, from)? != ui::ClickRoute::Consume
+                || route_pointer(runtime, tx, 6, to)? != ui::ClickRoute::Consume
+            {
+                return Err("Drag did not capture a fixture thumbnail".into());
+            }
+            runtime.held = false;
+            runtime.advance_scroll(Instant::now() + Duration::from_secs(2));
+            runtime.render();
+            if !runtime.ui.is_visible()
+                || runtime.ui.is_key()
+                || runtime.engine.context().unwrap().order != original
+                || runtime.engine.focused() != focus
+            {
+                return Err(
+                    "Provisional drag changed focus/order or lost the overview after release"
+                        .into(),
+                );
+            }
+            route_pointer(runtime, tx, 2, to)?;
+            let mut expected = original.clone();
+            let moved = expected.remove(source);
+            expected.insert(target, moved);
+            if runtime.engine.context().unwrap().order != expected
+                || runtime.engine.focused() != focus
+                || runtime.ui.pointer_active()
+                || runtime.linger_until.is_none()
+            {
+                return Err(
+                    "Thumbnail drop did not commit its insertion while preserving focus".into(),
+                );
+            }
+            // The regular census must retain the new order.
+            runtime.reconcile(false);
+            if runtime.engine.context().unwrap().order != expected {
+                return Err("Discovery discarded the dropped order".into());
+            }
+            runtime.engine.reorder(ids[source], source);
+        }
+    }
+    for reset in [false, true] {
+        runtime.clear_scroll();
+        runtime.held = true;
+        runtime.render();
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.4, false);
+        }
+        let from = runtime.ui.thumbnail_point(ids[1], NSPoint::new(64., 41.))?;
+        route_pointer(runtime, tx, 1, from)?;
+        let outside = NSPoint::new(-10000., -10000.);
+        route_pointer(runtime, tx, 6, outside)?;
+        if reset {
+            runtime.ui.reset_overview();
+        }
+        if route_pointer(runtime, tx, 2, outside)? != ui::ClickRoute::Consume
+            || runtime.engine.context().unwrap().order != original
+            || runtime.ui.pointer_active()
+        {
+            return Err("Cancelled drag changed order or leaked mouse-up".into());
+        }
+        runtime.render();
+    }
+    if ids
+        .iter()
+        .map(|id| frame(runtime.discovery.handles[id].element.0))
+        .collect::<Vec<_>>()
+        != frames
+    {
+        return Err("Thumbnail reorder moved a native window".into());
+    }
+    println!(
+        "PASS: mouse drag inserts in both directions during held and transient overviews, keeps focus/geometry, survives modifier release and census, and cancels outside/stale drops"
+    );
+    runtime.held = false;
+    runtime.clear_scroll();
+    runtime.render();
+    Ok(())
+}
+
+fn route_pointer(
+    runtime: &mut Runtime,
+    tx: &Sender<Event>,
+    kind: u32,
+    point: objc2_foundation::NSPoint,
+) -> Result<ui::ClickRoute, String> {
+    let route = runtime.ui.clicks.route(kind, point);
+    if let ui::ClickRoute::Pointer {
+        context,
+        window,
+        epoch,
+        kind,
+        point,
+    } = route
+    {
+        tx.send(Event::ThumbnailPointer {
+            context,
+            window,
+            epoch,
+            kind,
+            point,
+        })
+        .map_err(|e| e.to_string())?;
+        runtime.drain();
+        Ok(ui::ClickRoute::Consume)
+    } else {
+        Ok(route)
+    }
+}
+fn thumbnail_click(
+    runtime: &mut Runtime,
+    tx: &Sender<Event>,
+    point: objc2_foundation::NSPoint,
+) -> Result<ui::ClickRoute, String> {
+    if route_pointer(runtime, tx, 1, point)? != ui::ClickRoute::Consume {
+        return Err("Thumbnail press missed".into());
+    }
+    route_pointer(runtime, tx, 2, point)
 }
 
 fn command_switching(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> Result<(), String> {

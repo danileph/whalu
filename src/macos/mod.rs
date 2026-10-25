@@ -61,6 +61,13 @@ pub(super) enum Event {
         window: u64,
         epoch: u64,
     },
+    ThumbnailPointer {
+        context: u64,
+        window: u64,
+        epoch: u64,
+        kind: u32,
+        point: objc2_foundation::NSPoint,
+    },
     Drag,
     Gesture(usize, GestureEvent, f64),
     GestureMotion(usize, f64, f64, bool),
@@ -225,6 +232,7 @@ impl Runtime {
                 self.motion_due,
                 self.linger_until,
                 self.click_travel.as_ref().map(|travel| travel.due),
+                self.ui.drag_due(),
                 self.pending_focus.as_ref().map(|focus| focus.due),
             ]
             .into_iter()
@@ -352,8 +360,49 @@ impl Runtime {
                     epoch,
                 } => {
                     if epoch == self.ui.visibility_epoch() {
+                        self.ui.cancel_drag();
                         self.select_thumbnail(context, window);
                     }
+                }
+                Event::ThumbnailPointer {
+                    context,
+                    window,
+                    epoch,
+                    kind,
+                    point,
+                } => {
+                    if epoch != self.ui.visibility_epoch()
+                        || context != self.engine.current
+                        || !self.ui.is_visible()
+                        || self.engine.frozen
+                        || self.space_until.is_some()
+                    {
+                        continue;
+                    }
+                    if kind == 1 {
+                        if !self.discovery.is_onscreen_on_display(
+                            window,
+                            self.engine
+                                .display()
+                                .map(|display| (display, &self.engine.bounds)),
+                        ) {
+                            self.ui.reset_overview();
+                            self.deadline = Some(Instant::now());
+                            continue;
+                        }
+                        self.clear_scroll();
+                        self.pending_focus = None;
+                        self.overlay_deadline = None;
+                    }
+                    let destination = self.ui.thumbnail_pointer(&self.engine, window, kind, point);
+                    if kind == 2 {
+                        if let Some(destination) = destination {
+                            self.engine.reorder(window, destination);
+                            self.save();
+                        }
+                        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+                    }
+                    self.render();
                 }
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
@@ -382,7 +431,7 @@ impl Runtime {
                         }
                         continue;
                     }
-                    if self.mouse {
+                    if self.mouse || self.ui.pointer_active() {
                         continue;
                     }
                     // Explicit keyboard input takes over from a scroll or its coast.
@@ -528,11 +577,15 @@ impl Runtime {
         }
         self.advance_scroll(now);
         self.advance_click(now);
+        if self.ui.advance_drag(now) {
+            self.render();
+        }
         self.confirm_focus(now);
         if !self.held
             && self.gesture.is_none()
             && self.click_travel.is_none()
             && self.linger_until.is_none()
+            && !self.ui.pointer_active()
         {
             self.navigation_display = None;
         }
@@ -606,6 +659,7 @@ impl Runtime {
         }
     }
     fn clear_scroll(&mut self) {
+        self.ui.cancel_drag();
         self.click_travel = None;
         self.gesture = None;
         self.motion_due = None;
@@ -864,6 +918,9 @@ impl Runtime {
         target.is_some()
     }
     fn gesture_event(&mut self, device: usize, event: GestureEvent, time: f64) {
+        if self.ui.pointer_active() {
+            return;
+        }
         match event {
             GestureEvent::Begin(axis) => self.begin_scroll(ScrollSource::Trackpad(device), axis),
             GestureEvent::Update(offset) => {
@@ -913,6 +970,9 @@ impl Runtime {
         }
     }
     fn wheel_event(&mut self, delta: f64, time: f64) {
+        if self.ui.pointer_active() {
+            return;
+        }
         if self
             .gesture
             .as_ref()
@@ -1375,12 +1435,14 @@ impl Runtime {
         }
     }
     fn render(&self) {
+        self.ui.validate_drag(&self.engine);
         let keyboard = self.held && self.overlay_deadline.is_none();
         if self.config.overlay
             && (keyboard
                 || self.gesture.is_some()
                 || self.click_travel.is_some()
                 || self.linger_until.is_some()
+                || self.ui.pointer_active()
                 || self.ui.is_visible())
             && self.space_transfer_target.is_none()
         {
@@ -1409,7 +1471,8 @@ impl Runtime {
         if (keyboard
             || self.gesture.is_some()
             || self.click_travel.is_some()
-            || self.linger_until.is_some())
+            || self.linger_until.is_some()
+            || self.ui.pointer_active())
             && self.space_until.is_none()
             && self.config.overlay
         {
@@ -1476,6 +1539,22 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
             {
                 ui::ClickRoute::Pass => {}
                 ui::ClickRoute::Consume => return null_mut(),
+                ui::ClickRoute::Pointer {
+                    context,
+                    window,
+                    epoch,
+                    kind,
+                    point,
+                } => {
+                    enqueue(Event::ThumbnailPointer {
+                        context,
+                        window,
+                        epoch,
+                        kind,
+                        point,
+                    });
+                    return null_mut();
+                }
                 ui::ClickRoute::Select {
                     context,
                     window,

@@ -24,6 +24,65 @@ pub struct Wheel {
     exit_extent: f64,
 }
 
+/// Provisional drag order. Commit only on a valid drop; cancellation is free.
+pub struct ReorderDrag {
+    pub original: Vec<u64>,
+    pub window: u64,
+    pub center: usize,
+    pub destination: usize,
+    height: f64,
+    y: f64,
+}
+impl ReorderDrag {
+    pub fn new(order: &[u64], window: u64, selected: Option<u64>, height: f64) -> Option<Self> {
+        let destination = order.iter().position(|id| *id == window)?;
+        Some(Self {
+            original: order.to_vec(),
+            window,
+            center: selected
+                .and_then(|id| order.iter().position(|entry| *entry == id))
+                .unwrap_or(0),
+            destination,
+            height,
+            y: height / 2.,
+        })
+    }
+    /// Pointer y increases downward, in logical points within the overview.
+    pub fn update(&mut self, y: f64) {
+        self.y = y;
+        let wheel = Wheel::new(self.height);
+        let start = self.center.saturating_sub(wheel.radius);
+        let end = (self.center + wheel.radius + 1).min(self.original.len());
+        self.destination = (start..end)
+            .min_by(|a, b| {
+                let distance = |i: usize| {
+                    (self.height / 2. - wheel.pose(i as f64 - self.center as f64).y - y).abs()
+                };
+                distance(*a).total_cmp(&distance(*b))
+            })
+            .unwrap_or(self.center);
+    }
+    pub fn edge_direction(&self) -> i32 {
+        if self.y < 48. && self.center > 0 {
+            -1
+        } else if self.y > self.height - 48. && self.center + 1 < self.original.len() {
+            1
+        } else {
+            0
+        }
+    }
+    pub fn scroll(&mut self) {
+        self.center = (self.center as i64 + self.edge_direction() as i64) as usize;
+        self.update(self.y);
+    }
+    pub fn order(&self) -> Vec<u64> {
+        let mut order = self.original.clone();
+        order.retain(|id| *id != self.window);
+        order.insert(self.destination, self.window);
+        order
+    }
+}
+
 impl Wheel {
     pub fn new(height: f64) -> Self {
         // AppKit supplies logical points: Retina pixel density must not change
@@ -67,6 +126,43 @@ impl Wheel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drag_inserts_in_both_directions_without_mutating_original() {
+        let order = [1, 2, 3, 4];
+        let mut drag = ReorderDrag::new(&order, 2, Some(2), 800.).unwrap();
+        let wheel = Wheel::new(800.);
+        drag.update(400. - wheel.pose(2.).y);
+        assert_eq!(drag.order(), [1, 3, 4, 2]);
+        drag.update(400. - wheel.pose(-1.).y);
+        assert_eq!(drag.order(), [2, 1, 3, 4]);
+        assert_eq!(drag.original, order);
+        assert!(ReorderDrag::new(&order, 99, None, 800.).is_none());
+    }
+
+    #[test]
+    fn edge_scrolling_reaches_every_slot_and_reverses_at_all_display_heights() {
+        for height in [132., 240., 800., 1400., 2500.] {
+            let order: Vec<_> = (1..=40).collect();
+            let mut drag = ReorderDrag::new(&order, 20, Some(20), height).unwrap();
+            drag.update(height - 1.);
+            for _ in 0..50 {
+                drag.scroll();
+            }
+            assert_eq!(drag.destination, 39);
+            assert_eq!(drag.edge_direction(), 0);
+            assert_eq!(drag.order().last(), Some(&20));
+            drag.update(1.);
+            for _ in 0..50 {
+                drag.scroll();
+            }
+            assert_eq!(drag.destination, 0);
+            assert_eq!(drag.edge_direction(), 0);
+            assert_eq!(drag.order().first(), Some(&20));
+            drag.update(height / 2.);
+            assert_eq!(drag.edge_direction(), 0);
+        }
+    }
 
     #[test]
     fn selection_pose_is_centered_on_every_display_size() {

@@ -41,6 +41,46 @@ fn stack_visits_each_individual_window() {
     assert_eq!(e.command(Command::FocusNext), vec![Effect::Focus(1)]);
 }
 #[test]
+fn drag_reorders_without_focus_or_geometry_changes_and_survives_discovery() {
+    let mut e = engine();
+    let frames: Vec<_> = e.windows.values().map(|w| w.frame).collect();
+    assert!(e.reorder(1, 3));
+    assert_eq!(e.context().unwrap().order, [2, 3, 4, 1]);
+    assert_eq!(e.focused(), Some(3));
+    e.set_visible(1, &[1, 2, 3, 4], Some(3));
+    assert_eq!(e.context().unwrap().order, [2, 3, 4, 1]);
+    assert!(e.reorder(1, 0));
+    assert_eq!(e.context().unwrap().order, [1, 2, 3, 4]);
+    assert_eq!(
+        e.windows.values().map(|w| w.frame).collect::<Vec<_>>(),
+        frames
+    );
+}
+#[test]
+fn drag_preserves_hidden_history_and_other_contexts() {
+    let mut e = engine();
+    e.set_visible(2, &[1, 2, 3, 4], Some(4));
+    e.set_visible(1, &[1, 3, 4], Some(3));
+    assert!(e.reorder(4, 0));
+    assert_eq!(e.context().unwrap().order, [4, 1, 3]);
+    assert_eq!(e.context().unwrap().history, [4, 2, 1, 3]);
+    assert_eq!(e.contexts[&2].order, [1, 2, 3, 4]);
+    e.set_visible(1, &[1, 2, 3, 4], Some(3));
+    assert_eq!(e.context().unwrap().order, [4, 2, 1, 3]);
+}
+#[test]
+fn stale_invalid_and_frozen_drops_do_nothing() {
+    let mut e = engine();
+    assert!(!e.reorder(99, 0));
+    assert!(!e.reorder(1, 4));
+    assert!(!e.reorder(1, 0));
+    e.frozen = true;
+    assert!(!e.reorder(1, 3));
+    assert_eq!(e.context().unwrap().order, [1, 2, 3, 4]);
+    let mut empty = Engine::new(8.);
+    assert!(!empty.reorder(1, 0));
+}
+#[test]
 fn thumbnail_click_visits_intermediate_windows_in_both_directions_without_wrapping() {
     for (start, target, expected) in [
         (1, 4, vec![1, 2, 3, 4]),

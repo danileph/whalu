@@ -19,7 +19,7 @@ use std::{
 use whalu::{
     core::Engine,
     gestures::Axis,
-    overview::{Pose, Wheel},
+    overview::{Pose, ReorderDrag, Wheel},
 };
 
 define_class!(
@@ -73,6 +73,7 @@ pub struct Ui {
     visibility_epoch: Cell<u64>,
     reset_layout: Cell<bool>,
     pub clicks: ThumbnailClicks,
+    drag: RefCell<Option<ThumbnailDrag>>,
     _status: Retained<NSStatusItem>,
     gesture_label: Retained<NSMenuItem>,
 }
@@ -141,6 +142,7 @@ impl Ui {
                 visibility_epoch: Cell::new(0),
                 reset_layout: Cell::new(true),
                 clicks: ThumbnailClicks::default(),
+                drag: RefCell::new(None),
                 _status: status,
                 gesture_label,
             }
@@ -188,6 +190,7 @@ impl Ui {
         Ok(())
     }
     pub fn hide(&self) {
+        self.cancel_drag();
         self.clicks.targets.borrow_mut().take();
         if self.panel.isVisible() {
             self.visibility_epoch.set(self.visibility_epoch.get() + 1);
@@ -207,6 +210,7 @@ impl Ui {
         });
     }
     pub fn suspend_overview(&self) {
+        self.cancel_drag();
         self.panel.setIgnoresMouseEvents(true);
         self.clicks.reset();
         self.visibility_epoch.set(self.visibility_epoch.get() + 1);
@@ -499,21 +503,39 @@ impl Ui {
                 }
                 let actual = self.clicks.route(1, point);
                 if actual
-                    != (ClickRoute::Select {
+                    != (ClickRoute::Pointer {
                         context,
                         window: id,
                         epoch: self.visibility_epoch(),
+                        kind: 1,
+                        point,
                     })
                 {
                     return Err(format!(
                         "Animated thumbnail/badge {id} click missed: {actual:?}"
                     ));
                 }
+                let jitter = NSPoint::new(point.x + 1., point.y + 1.);
+                if self.clicks.route(6, jitter) != ClickRoute::Consume
+                    || self.clicks.route(2, jitter)
+                        != (ClickRoute::Select {
+                            context,
+                            window: id,
+                            epoch: self.visibility_epoch(),
+                        })
+                {
+                    return Err("Small mouse jitter stopped being a click".into());
+                }
+                self.clicks.route(1, point);
                 // Even after moving outside the strip, drag/up belong to this click.
                 let outside = NSPoint::new(-10000., -10000.);
-                if self.clicks.route(6, outside) != ClickRoute::Consume
-                    || self.clicks.route(2, outside) != ClickRoute::Consume
-                    || self.clicks.route(1, outside) != ClickRoute::Pass
+                if !matches!(
+                    self.clicks.route(6, outside),
+                    ClickRoute::Pointer { kind: 6, .. }
+                ) || !matches!(
+                    self.clicks.route(2, outside),
+                    ClickRoute::Pointer { kind: 2, .. }
+                ) || self.clicks.route(1, outside) != ClickRoute::Pass
                     || self.clicks.route(2, outside) != ClickRoute::Pass
                 {
                     return Err("Thumbnail click leaked drag/up or captured outside input".into());
@@ -612,6 +634,103 @@ impl Ui {
             .get(&id)
             .is_some_and(|s| s.image.is_some())
     }
+    pub fn validate_drag(&self, engine: &Engine) {
+        let invalid = self.drag.borrow().as_ref().is_some_and(|drag| {
+            drag.context != engine.current
+                || engine
+                    .context()
+                    .is_none_or(|ctx| drag.model.original != ctx.order)
+        });
+        if invalid {
+            self.cancel_drag();
+            self.clicks.reset();
+        }
+    }
+    pub fn pointer_active(&self) -> bool {
+        self.drag.borrow().is_some()
+    }
+    pub fn cancel_drag(&self) {
+        self.drag.borrow_mut().take();
+    }
+    pub fn drag_due(&self) -> Option<Instant> {
+        self.drag.borrow().as_ref().and_then(|drag| drag.due)
+    }
+    pub fn advance_drag(&self, now: Instant) -> bool {
+        let mut state = self.drag.borrow_mut();
+        let Some(drag) = state
+            .as_mut()
+            .filter(|drag| drag.due.is_some_and(|due| due <= now))
+        else {
+            return false;
+        };
+        drag.model.scroll();
+        drag.due = (drag.model.edge_direction() != 0).then_some(now + Duration::from_millis(160));
+        true
+    }
+    /// Return a commit only for an active drag released inside its original strip.
+    pub fn thumbnail_pointer(
+        &self,
+        engine: &Engine,
+        window: u64,
+        kind: u32,
+        point: NSPoint,
+    ) -> Option<usize> {
+        if kind == 1 {
+            let targets = self.clicks.targets.borrow();
+            let map = targets.as_ref()?;
+            let (_, layer) = map.cards.iter().find(|(id, _)| *id == window)?;
+            let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
+            let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+            let center = visible.convertPoint_toLayer(NSPoint::new(64., 41.), Some(&root));
+            let local = map.local(point);
+            *self.drag.borrow_mut() = Some(ThumbnailDrag {
+                context: engine.current,
+                model: ReorderDrag::new(
+                    &engine.context()?.order,
+                    window,
+                    self.selected_thumbnail(),
+                    map.frame.size.height,
+                )?,
+                point: local,
+                grab: NSPoint::new(local.x - center.x, local.y - center.y),
+                active: false,
+                due: None,
+            });
+            return None;
+        }
+        let mut state = self.drag.borrow_mut();
+        let drag = state.as_mut()?;
+        if drag.context != engine.current
+            || drag.model.window != window
+            || engine
+                .context()
+                .is_none_or(|ctx| ctx.order != drag.model.original)
+        {
+            state.take();
+            return None;
+        }
+        let targets = self.clicks.targets.borrow();
+        let map = targets.as_ref()?;
+        drag.point = map.local(point);
+        drag.active = true;
+        drag.model.update(map.frame.size.height - drag.point.y);
+        if kind == 2 {
+            let valid = contains(
+                rect(0., 0., map.frame.size.width, map.frame.size.height),
+                drag.point,
+            );
+            let destination = drag.model.destination;
+            state.take();
+            return valid.then_some(destination);
+        }
+        if drag.model.edge_direction() == 0 || !(0. ..map.frame.size.width).contains(&drag.point.x)
+        {
+            drag.due = None;
+        } else if drag.due.is_none() {
+            drag.due = Some(Instant::now() + Duration::from_millis(160));
+        }
+        None
+    }
     pub fn show_navigation(&self, engine: &Engine, _gesture: Option<Axis>) {
         self.show_selection(engine, _gesture, None);
     }
@@ -624,6 +743,10 @@ impl Ui {
             self.hide();
             return;
         }
+        self.validate_drag(engine);
+        let drag = self.drag.borrow();
+        let dragging = drag.as_ref().filter(|drag| drag.active);
+        let order = dragging.map_or_else(|| ctx.order.clone(), |drag| drag.model.order());
         let mtm = self.panel.mtm();
         // Display IDs remain stable when resolution or monitor origins change.
         let display = engine.display();
@@ -643,11 +766,16 @@ impl Ui {
         let focused = selection
             .filter(|id| ctx.order.contains(id))
             .or(ctx.focused);
-        let selected = focused
-            .and_then(|id| ctx.order.iter().position(|i| i == &id))
-            .unwrap_or(0);
+        let selected = dragging.map_or_else(
+            || {
+                focused
+                    .and_then(|id| order.iter().position(|i| i == &id))
+                    .unwrap_or(0)
+            },
+            |drag| drag.model.center,
+        );
         let start = selected.saturating_sub(wheel.radius + 1);
-        let end = (selected + wheel.radius + 2).min(ctx.order.len());
+        let end = (selected + wheel.radius + 2).min(order.len());
         let frame = rect(
             b.origin.x,
             b.origin.y + (b.size.height - height) / 2.,
@@ -673,7 +801,9 @@ impl Ui {
             .map_or(1., |old| (selected as f64 - old as f64).signum());
         let now = Instant::now();
         cards.retain(|id, card| {
-            if ctx.order[start..end].contains(id) {
+            if order[start..end].contains(id)
+                || dragging.is_some_and(|drag| drag.model.window == *id)
+            {
                 card.retiring = None;
                 return true;
             }
@@ -707,13 +837,26 @@ impl Ui {
         let capture_allowed = previews::available();
         let mut targets = vec![];
         let mut sources = self.sources.borrow_mut();
-        for (index, id) in ctx.order.iter().enumerate().take(end).skip(start) {
+        for (index, id) in order.iter().enumerate().filter(|(index, id)| {
+            (start..end).contains(index) || dragging.is_some_and(|drag| drag.model.window == **id)
+        }) {
             let Some(w) = engine.windows.get(id) else {
                 continue;
             };
             let active = focused == Some(*id);
             let offset = index as f64 - selected as f64;
-            let pose = wheel.pose(offset);
+            let lifted = dragging.filter(|drag| drag.model.window == *id);
+            let pose = lifted.map_or_else(
+                || wheel.pose(offset),
+                |drag| Pose {
+                    x: drag.point.x - drag.grab.x,
+                    y: drag.point.y - drag.grab.y - height / 2.,
+                    scale: 1.,
+                    pitch: 0.,
+                    yaw: 0.,
+                    depth: 0.,
+                },
+            );
             let fresh = !cards.contains_key(id);
             let card = cards.entry(*id).or_insert_with(|| {
                 let mut card = Card::new(mtm);
@@ -756,11 +899,24 @@ impl Ui {
                 card.place(
                     pose,
                     height,
-                    animate && !reduce_motion,
+                    animate && !reduce_motion && lifted.is_none(),
                     active,
                     reduce_motion,
                 );
             }
+            CATransaction::begin();
+            CATransaction::setDisableActions(true);
+            card.view
+                .layer()
+                .unwrap()
+                .setZPosition(if lifted.is_some() {
+                    100.
+                } else if active {
+                    1.
+                } else {
+                    pose.depth
+                });
+            CATransaction::commit();
             if let Some(source) = source {
                 let now = Instant::now();
                 source.used = now;
@@ -791,7 +947,7 @@ impl Ui {
         let excess = cached.len().saturating_sub(48);
         for (id, _) in cached
             .into_iter()
-            .filter(|(id, _)| !ctx.order[start..end].contains(id))
+            .filter(|(id, _)| !order[start..end].contains(id))
             .take(excess)
         {
             let source = sources.get_mut(&id).unwrap();
@@ -837,7 +993,24 @@ impl Ui {
 #[derive(Clone, Default)]
 pub(super) struct ThumbnailClicks {
     targets: Rc<RefCell<Option<ClickMap>>>,
-    pressed: Rc<Cell<bool>>,
+    pressed: Rc<Cell<Option<ThumbnailPress>>>,
+}
+#[derive(Clone, Copy)]
+struct ThumbnailPress {
+    context: u64,
+    window: u64,
+    epoch: u64,
+    origin: NSPoint,
+    dragging: bool,
+    cancelled: bool,
+}
+struct ThumbnailDrag {
+    context: u64,
+    model: ReorderDrag,
+    point: NSPoint,
+    grab: NSPoint,
+    active: bool,
+    due: Option<Instant>,
 }
 struct ClickMap {
     context: u64,
@@ -847,10 +1020,25 @@ struct ClickMap {
     root: Retained<CALayer>,
     cards: Vec<(u64, Retained<CALayer>)>,
 }
+impl ClickMap {
+    fn local(&self, point: NSPoint) -> NSPoint {
+        NSPoint::new(
+            point.x - self.frame.origin.x,
+            self.desktop_top - point.y - self.frame.origin.y,
+        )
+    }
+}
 #[derive(Debug, PartialEq)]
 pub(super) enum ClickRoute {
     Pass,
     Consume,
+    Pointer {
+        context: u64,
+        window: u64,
+        epoch: u64,
+        kind: u32,
+        point: NSPoint,
+    },
     Select {
         context: u64,
         window: u64,
@@ -859,23 +1047,67 @@ pub(super) enum ClickRoute {
 }
 impl ThumbnailClicks {
     pub fn reset(&self) {
-        self.pressed.set(false);
+        if let Some(mut press) = self.pressed.get() {
+            press.cancelled = true;
+            self.pressed.set(Some(press));
+        }
     }
     pub fn route(&self, kind: u32, point: NSPoint) -> ClickRoute {
         match kind {
             1 => {
                 let target = self.hit(point);
-                self.pressed.set(target.is_some());
-                target.map_or(ClickRoute::Pass, |(context, window, epoch)| {
-                    ClickRoute::Select {
+                self.pressed
+                    .set(target.map(|(context, window, epoch)| ThumbnailPress {
                         context,
                         window,
                         epoch,
+                        origin: point,
+                        dragging: false,
+                        cancelled: false,
+                    }));
+                target.map_or(ClickRoute::Pass, |(context, window, epoch)| {
+                    ClickRoute::Pointer {
+                        context,
+                        window,
+                        epoch,
+                        kind,
+                        point,
                     }
                 })
             }
-            2 if self.pressed.replace(false) => ClickRoute::Consume,
-            6 if self.pressed.get() => ClickRoute::Consume,
+            2 | 6 => {
+                let Some(mut press) = self.pressed.get() else {
+                    return ClickRoute::Pass;
+                };
+                if kind == 2 {
+                    self.pressed.set(None);
+                }
+                if press.cancelled {
+                    return ClickRoute::Consume;
+                }
+                press.dragging |= (point.x - press.origin.x).hypot(point.y - press.origin.y) >= 5.;
+                if kind == 6 {
+                    self.pressed.set(Some(press));
+                    if !press.dragging {
+                        return ClickRoute::Consume;
+                    }
+                }
+                if kind == 2 && !press.dragging {
+                    ClickRoute::Select {
+                        context: press.context,
+                        window: press.window,
+                        epoch: press.epoch,
+                    }
+                } else {
+                    ClickRoute::Pointer {
+                        context: press.context,
+                        window: press.window,
+                        epoch: press.epoch,
+                        kind,
+                        point,
+                    }
+                }
+            }
             _ => ClickRoute::Pass,
         }
     }
@@ -883,10 +1115,7 @@ impl ThumbnailClicks {
         let targets = self.targets.try_borrow().ok()?;
         let map = targets.as_ref()?;
         // Quartz uses top-left screen coordinates; AppKit uses bottom-left.
-        let point = NSPoint::new(
-            point.x - map.frame.origin.x,
-            map.desktop_top - point.y - map.frame.origin.y,
-        );
+        let point = map.local(point);
         if !contains(
             rect(0., 0., map.frame.size.width, map.frame.size.height),
             point,

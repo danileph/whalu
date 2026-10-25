@@ -121,6 +121,33 @@ impl Engine {
         ctx.focused = Some(id);
         ctx.last_focused = Some(id);
     }
+    /// Move one visible window, preserving hidden history entries and native focus.
+    pub fn reorder(&mut self, id: WindowId, destination: usize) -> bool {
+        if self.frozen {
+            return false;
+        }
+        let Some(ctx) = self.contexts.get_mut(&self.current) else {
+            return false;
+        };
+        let Some(source) = ctx.order.iter().position(|entry| *entry == id) else {
+            return false;
+        };
+        if destination >= ctx.order.len() || source == destination {
+            return false;
+        }
+        ctx.order.remove(source);
+        ctx.order.insert(destination, id);
+        // Only replace visible slots: minimized/temporarily absent windows keep
+        // their history positions, as they do for keyboard stack edits.
+        let visible: BTreeSet<_> = ctx.order.iter().copied().collect();
+        let mut reordered = ctx.order.iter();
+        for entry in &mut ctx.history {
+            if visible.contains(entry) {
+                *entry = *reordered.next().unwrap();
+            }
+        }
+        true
+    }
     fn enter_unfocused(&self, cmd: Command) -> Vec<Effect> {
         let Some(ctx) = self.context() else {
             return vec![];
