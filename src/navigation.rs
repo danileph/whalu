@@ -5,8 +5,8 @@ use crate::{
 };
 use std::collections::VecDeque;
 
-/// Visual selection follows stack order while native focus stays on the clicked
-/// destination. Intermediate cards must never activate intermediate apps.
+/// Clicks traverse adjacent windows with the same native focus/raise steps as
+/// keyboard and swipe navigation. Stop if focus no longer matches the last step.
 pub struct ClickSequence {
     context: u64,
     target: WindowId,
@@ -41,7 +41,7 @@ impl ClickSequence {
     pub fn advance(&mut self, engine: &Engine) -> Option<WindowId> {
         let valid = self.context == engine.current
             && engine.context().is_some_and(|ctx| {
-                ctx.focused == Some(self.target)
+                ctx.focused == self.selected
                     && self
                         .remaining
                         .iter()

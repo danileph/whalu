@@ -286,7 +286,18 @@ pub(super) fn run(
         } else {
             ids.clone()
         };
-        runtime.apply(vec![Effect::Focus(path[0])]);
+        // Seed the opposite native order, so raising only the destination
+        // cannot accidentally satisfy the compositor-order assertion below.
+        for window in path.iter().rev() {
+            runtime.apply(vec![Effect::Focus(*window)]);
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false);
+            }
+        }
+        let original_frames: Vec<_> = path
+            .iter()
+            .map(|id| frame(runtime.discovery.handles[id].element.0))
+            .collect();
         runtime.linger_until = Some(Instant::now() + Duration::from_millis(650));
         runtime.render();
         unsafe {
@@ -329,8 +340,7 @@ pub(super) fn run(
             unsafe {
                 CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false);
             }
-            let target = *path.last().unwrap();
-            let handle = &runtime.discovery.handles[&target];
+            let handle = &runtime.discovery.handles[expected];
             let target_app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
                 .ok_or("Missing target app")?;
             let actual = attr(target_app.0, "AXFocusedWindow")
@@ -338,7 +348,7 @@ pub(super) fn run(
                 && NSWorkspace::sharedWorkspace()
                     .frontmostApplication()
                     .is_some_and(|app| app.processIdentifier() == handle.pid);
-            if runtime.engine.focused() != Some(target)
+            if runtime.engine.focused() != Some(*expected)
                 || runtime.ui.selected_thumbnail() != Some(*expected)
                 || !actual
                 || !runtime.ui.is_visible()
@@ -354,14 +364,51 @@ pub(super) fn run(
         {
             return Err("Click travel failed to stop with feedback and stable stack order".into());
         }
+        let expected_order: Vec<_> = path
+            .iter()
+            .rev()
+            .map(|id| {
+                runtime.discovery.handles[id]
+                    .quartz_id
+                    .ok_or("Missing fixture Quartz ID")
+            })
+            .collect::<Result<_, _>>()?;
+        let deadline = Instant::now() + Duration::from_millis(800);
+        loop {
+            let list = unsafe { Owned::new(CGWindowListCopyWindowInfo(17, 0)) }
+                .ok_or("Missing compositor window list")?;
+            let actual_order: Vec<_> = unsafe { array(list.0) }
+                .into_iter()
+                .map(|window| unsafe { number(dict(window, "kCGWindowNumber")) as u32 })
+                .filter(|window| expected_order.contains(window))
+                .collect();
+            if actual_order == expected_order {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "Click did not restore native stack order: {actual_order:?}, expected {expected_order:?}"
+                ));
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+            }
+        }
+        let final_frames: Vec<_> = path
+            .iter()
+            .map(|id| frame(runtime.discovery.handles[id].element.0))
+            .collect();
+        if final_frames != original_frames {
+            return Err("Click traversal changed native window geometry".into());
+        }
     }
     let context = runtime.engine.current;
     runtime.select_thumbnail(context, ids[3]);
-    if runtime.engine.focused() != Some(ids[3])
+    if runtime.engine.focused() != Some(ids[1])
         || runtime.ui.selected_thumbnail() != Some(ids[1])
         || runtime.click_travel.is_none()
     {
-        return Err("Distant click did not focus immediately with visual stack travel".into());
+        return Err("Distant click did not raise its first adjacent window".into());
     }
     runtime.select_thumbnail(context, ids[0]);
     runtime.advance_click(Instant::now() + Duration::from_secs(1));
@@ -370,7 +417,7 @@ pub(super) fn run(
     }
     runtime.select_thumbnail(context, ids[3]);
     runtime.contact_began();
-    if runtime.engine.focused() != Some(ids[3]) || runtime.click_travel.is_none() {
+    if runtime.engine.focused() != Some(ids[1]) || runtime.click_travel.is_none() {
         return Err("Ordinary finger contact interrupted click travel".into());
     }
     if fixture_pids.len() > 1 {
@@ -395,18 +442,18 @@ pub(super) fn run(
     tx.send(Event::Command(Command::FocusPrevious))
         .map_err(|e| e.to_string())?;
     runtime.drain();
-    if runtime.click_travel.is_some() || runtime.engine.focused() != Some(ids[2]) {
+    if runtime.click_travel.is_some() || runtime.engine.focused() != Some(ids[0]) {
         return Err(format!(
             "Keyboard input did not catch click travel: focused {:?}, expected {}, order {:?}, frozen {}, context {}",
             runtime.engine.focused(),
-            ids[2],
+            ids[0],
             runtime.engine.context().map(|ctx| &ctx.order),
             runtime.engine.frozen,
             runtime.engine.current
         ));
     }
     println!(
-        "PASS: immediate native focus with visual stack travel in both directions, stable feedback, ordinary pointer contact, retargeting, recognized-swipe and keyboard interruption"
+        "PASS: native click traversal and compositor order in both directions, unchanged geometry, stable feedback, pointer contact, retargeting, swipe and keyboard interruption"
     );
     // A queued click from before a Space transition must remain invalid even
     // when the same cohort/context identifier is reused for another overview.

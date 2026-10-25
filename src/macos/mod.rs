@@ -754,25 +754,20 @@ impl Runtime {
             self.deadline = Some(Instant::now());
             return;
         }
-        let visual = self
-            .click_travel
-            .as_ref()
-            .and_then(|travel| travel.sequence.selected())
-            .or(self.engine.focused());
-        let sequence = ClickSequence::from_selection(&self.engine, window, visual);
+        let sequence = ClickSequence::new(&self.engine, window);
         self.clear_scroll();
         self.overlay_deadline = None;
-        self.apply(vec![Effect::Focus(window)]);
-        if self.engine.focused() == Some(window) {
+        if sequence.as_ref().is_some_and(|sequence| sequence.pending()) {
             self.click_travel = sequence.map(|sequence| ClickTravel {
                 sequence,
                 due: Instant::now(),
             });
             self.advance_click(Instant::now());
-            self.deadline = Some(Instant::now() + Duration::from_millis(100));
         } else {
+            self.apply(vec![Effect::Focus(window)]);
             self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         }
+        self.deadline = Some(Instant::now() + Duration::from_millis(100));
         self.render();
         self.save();
     }
@@ -784,14 +779,25 @@ impl Runtime {
         {
             return;
         }
-        let next = self
-            .click_travel
-            .as_mut()
-            .and_then(|travel| travel.sequence.advance(&self.engine));
         if self.engine.frozen || self.space_until.is_some() {
             self.clear_scroll();
             self.render();
             return;
+        }
+        let next = self
+            .click_travel
+            .as_mut()
+            .and_then(|travel| travel.sequence.advance(&self.engine));
+        if let Some(window) = next {
+            // Visit every intervening native window, just as repeated keyboard
+            // or swipe steps do, so the compositor retains the same layer order.
+            self.apply(vec![Effect::Focus(window)]);
+            if self.engine.focused() != Some(window) {
+                self.clear_scroll();
+                self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+                self.render();
+                return;
+            }
         }
         if next.is_some()
             && self
@@ -812,7 +818,7 @@ impl Runtime {
     }
     fn contact_began(&mut self) {
         // Resting or repositioning a finger after a click is not navigation.
-        // Only a recognized gesture (begin_scroll) interrupts visual click travel.
+        // Only a recognized gesture (begin_scroll) interrupts click navigation.
         let catch = self
             .gesture
             .as_ref()

@@ -722,7 +722,7 @@ fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String
         engine.set_visible(1, &ids, Some(ids[0]));
         super::input_probe::run(engine, discovery, Ui::new(mtm), tap, mtm)?;
         println!(
-            "PASS: immediate click focus, ordered visual travel and stale-Space isolation across four independent application processes"
+            "PASS: ordered native click traversal and stale-Space isolation across four independent application processes"
         );
         return Ok(());
     }
