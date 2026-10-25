@@ -29,7 +29,20 @@ impl ClickSequence {
             Some(start) if start < end => ctx.order[start + 1..=end].iter().copied().collect(),
             Some(start) if start > end => ctx.order[end..start].iter().rev().copied().collect(),
             Some(_) => VecDeque::new(),
-            None => VecDeque::from([target]),
+            None => {
+                // A newly entered Space can have no local AX focus. Enter its
+                // remembered window (or first entry) before traversing, just as
+                // keyboard/swipe navigation does, rather than jumping to target.
+                let anchor = ctx
+                    .last_focused
+                    .and_then(|id| ctx.order.iter().position(|entry| *entry == id))
+                    .unwrap_or(0);
+                if anchor <= end {
+                    ctx.order[anchor..=end].iter().copied().collect()
+                } else {
+                    ctx.order[end..=anchor].iter().rev().copied().collect()
+                }
+            }
         };
         Some(Self {
             context: engine.current,

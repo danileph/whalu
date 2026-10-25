@@ -303,6 +303,18 @@ pub(super) fn run(
         unsafe {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.4, false);
         }
+        // A post-Space census may be unfocused or stale even though native AX
+        // focus has now settled. The first click must use the fresh local focus.
+        runtime
+            .discovery
+            .scan(runtime.mtm, &runtime.config.ignored_apps);
+        runtime.pending_focus = None;
+        if reverse {
+            runtime.engine.focus(*path.last().unwrap());
+        } else {
+            let context = runtime.engine.current;
+            runtime.engine.contexts.get_mut(&context).unwrap().focused = None;
+        }
         let point = runtime.ui.thumbnail_point(
             *path.last().unwrap(),
             objc2_foundation::NSPoint::new(64., 41.),
@@ -453,7 +465,7 @@ pub(super) fn run(
         ));
     }
     println!(
-        "PASS: native click traversal and compositor order in both directions, unchanged geometry, stable feedback, pointer contact, retargeting, swipe and keyboard interruption"
+        "PASS: first click refreshes missing/stale recorded focus, native traversal and compositor order in both directions, unchanged geometry, feedback, retargeting and interruption"
     );
     // A queued click from before a Space transition must remain invalid even
     // when the same cohort/context identifier is reused for another overview.
@@ -1013,6 +1025,7 @@ fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
 fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Result<(), String> {
     let focused = ids[0];
     let handle = &runtime.discovery.handles[&focused];
+    let focused_pid = handle.pid;
     // Discovery replaces AX proxies during the refreshes below. Retain the
     // independent reference used to verify that native focus stays unchanged.
     let element = handle.element.clone();
@@ -1090,6 +1103,63 @@ fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Res
         runtime.render();
         runtime.drain();
     }
+    // Exercise a real absence of local native focus: another monitor owns AX
+    // focus, as can happen when entering a Space before a window is activated.
+    let local_order = runtime.engine.context().unwrap().order.clone();
+    let anchor = local_order[0];
+    let destination = local_order[1];
+    for remembered in [None, Some(anchor)] {
+        runtime.navigation_display = Some(displays[1]);
+        runtime.held = true;
+        runtime.pending_focus = None;
+        runtime.reconcile(false);
+        let context = runtime.engine.current;
+        let local = runtime.engine.contexts.get_mut(&context).unwrap();
+        local.focused = None;
+        local.last_focused = remembered;
+        runtime.render();
+        runtime.select_thumbnail(context, destination);
+        if runtime.engine.focused() != Some(anchor) || runtime.click_travel.is_none() {
+            return Err(format!(
+                "First unfocused click skipped anchor {anchor} for {destination}: focused {:?}, native {:?}, travel {}, order {:?}, visible {}, frozen {}, space {}, remembered {remembered:?}",
+                runtime.engine.focused(),
+                runtime.discovery.navigation_focus(),
+                runtime.click_travel.is_some(),
+                runtime.engine.context().map(|ctx| &ctx.order),
+                runtime.ui.is_visible(),
+                runtime.engine.frozen,
+                runtime.space_until.is_some(),
+            ));
+        }
+        let due = runtime.click_travel.as_ref().unwrap().due;
+        runtime.advance_click(due);
+        if runtime.engine.focused() != Some(destination) || runtime.click_travel.is_some() {
+            return Err("First unfocused click did not traverse to its destination".into());
+        }
+        runtime.clear_scroll();
+        runtime.navigation_display = Some(displays[0]);
+        runtime.reconcile(false);
+        runtime.apply(vec![Effect::Focus(focused)]);
+        unsafe {
+            AXUIElementSetAttributeValue(app.0, string("AXFrontmost").0, kCFBooleanTrue);
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !is_focused()
+            || NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .is_none_or(|app| app.processIdentifier() != focused_pid)
+        {
+            if Instant::now() >= deadline {
+                return Err("Could not restore the foreign-monitor fixture focus".into());
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+            }
+        }
+    }
+    println!(
+        "PASS: first click with absent local native focus enters the remembered/first anchor and traverses to its destination without borrowing another monitor's focus"
+    );
     runtime.navigation_display = Some(displays[0]);
     runtime.held = true;
     runtime.reconcile(false);

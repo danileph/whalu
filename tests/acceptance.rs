@@ -144,9 +144,40 @@ fn thumbnail_retarget_starts_at_current_selection_and_handles_unfocused_contexts
     assert!(ClickSequence::new(&e, 99).is_none());
     e.set_visible(1, &[1, 2, 3, 4], None);
     let mut unfocused = ClickSequence::new(&e, 4).unwrap();
+    assert_eq!(unfocused.advance(&e), Some(1));
+    e.focus(1);
+    assert_eq!(unfocused.advance(&e), Some(2));
+    e.focus(2);
+    assert_eq!(unfocused.advance(&e), Some(3));
+    e.focus(3);
     assert_eq!(unfocused.advance(&e), Some(4));
     e.focus(4);
     assert!(!unfocused.pending());
+}
+#[test]
+fn first_thumbnail_click_after_space_reentry_traverses_from_its_local_anchor() {
+    for (remembered, target, expected) in [
+        (None, 4, vec![1, 2, 3, 4]),
+        (Some(1), 4, vec![1, 2, 3, 4]),
+        (Some(3), 4, vec![3, 4]),
+        (Some(4), 1, vec![4, 3, 2, 1]),
+        (Some(2), 2, vec![2]),
+        (Some(99), 4, vec![1, 2, 3, 4]),
+    ] {
+        let mut e = engine();
+        e.contexts.get_mut(&1).unwrap().last_focused = remembered;
+        e.set_visible(2, &[], None);
+        e.set_visible(1, &[1, 2, 3, 4], None);
+        let mut click = ClickSequence::new(&e, target).unwrap();
+        let mut visited = vec![];
+        while let Some(window) = click.advance(&e) {
+            visited.push(window);
+            e.focus(window);
+        }
+        assert_eq!(visited, expected);
+        assert_eq!(e.focused(), Some(target));
+        assert_eq!(e.context().unwrap().order, [1, 2, 3, 4]);
+    }
 }
 #[test]
 fn app_navigation_is_window_based() {

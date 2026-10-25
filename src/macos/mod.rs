@@ -754,6 +754,18 @@ impl Runtime {
             self.deadline = Some(Instant::now());
             return;
         }
+        // AX focus may settle after the overview's post-Space census. Refresh
+        // the starting window without borrowing another monitor's focus or
+        // overriding an accepted step whose AX observation is still pending.
+        if self.pending_focus.is_none() {
+            if let Some(observed) = self.discovery.navigation_focus().filter(|id| {
+                self.engine
+                    .context()
+                    .is_some_and(|ctx| ctx.order.contains(id))
+            }) {
+                self.engine.focus(observed);
+            }
+        }
         let sequence = ClickSequence::new(&self.engine, window);
         self.clear_scroll();
         self.overlay_deadline = None;
