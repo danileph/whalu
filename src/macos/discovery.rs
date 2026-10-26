@@ -112,6 +112,35 @@ impl Discovery {
         Some(handle.id)
     }
 
+    /// Read front-to-back order while validating every requested native identity
+    /// and its current monitor. Missing or moved windows invalidate the repair.
+    pub fn stacking_order(
+        &self,
+        ids: &[WindowId],
+        display: u32,
+        bounds: &BTreeMap<u32, Rect>,
+    ) -> Option<Vec<WindowId>> {
+        let current = quartz_windows(17)?;
+        let mut native = BTreeMap::new();
+        for id in ids {
+            let handle = self.handles.get(id)?;
+            let quartz = handle.quartz_id?;
+            current.iter().find(|window| {
+                handle.visible
+                    && window.id == quartz
+                    && window.pid == handle.pid
+                    && window.onscreen
+                    && frame_display(window.frame, bounds) == Some(display)
+            })?;
+            native.insert(quartz, *id);
+        }
+        Some(
+            current
+                .iter()
+                .filter_map(|window| native.get(&window.id).copied())
+                .collect(),
+        )
+    }
     pub fn invalidate_navigation(&mut self) {
         self.navigation_state = None;
     }

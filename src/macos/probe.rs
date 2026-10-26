@@ -275,6 +275,72 @@ impl Drop for Fixture {
     }
 }
 
+/// Distinct app bundles keep LaunchServices/AppKit activation independent when
+/// diagnostics are launched from the installed GUI bundle. These children only
+/// own fixture windows and never need Accessibility or capture permission.
+struct FixtureApplications(std::path::PathBuf);
+impl FixtureApplications {
+    fn new() -> Result<Self, String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("whalu-fixtures-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        Ok(Self(root))
+    }
+    fn spawn(&self, index: usize, count: usize) -> Result<Fixture, String> {
+        let bundle = self.0.join(format!("Fixture{index}.app"));
+        let contents = bundle.join("Contents");
+        let binary = contents.join("MacOS/whalu");
+        std::fs::create_dir_all(binary.parent().unwrap()).map_err(|error| error.to_string())?;
+        std::fs::copy(
+            std::env::current_exe().map_err(|error| error.to_string())?,
+            &binary,
+        )
+        .map_err(|error| error.to_string())?;
+        let identifier = format!(
+            "dev.danileph.whalu.fixture.p{}.n{index}",
+            std::process::id()
+        );
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Whalu Fixture {index}</string>
+<key>CFBundleIdentifier</key><string>{identifier}</string>
+<key>CFBundleExecutable</key><string>whalu</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>"#
+        );
+        std::fs::write(contents.join("Info.plist"), plist).map_err(|error| error.to_string())?;
+        let signed = ProcessCommand::new("/usr/bin/codesign")
+            .args(["--force", "--sign", "-", "--identifier", &identifier])
+            .arg(&bundle)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !signed.status.success() {
+            return Err(format!(
+                "Could not sign fixture bundle: {}",
+                String::from_utf8_lossy(&signed.stderr)
+            ));
+        }
+        ProcessCommand::new(binary)
+            .arg("--fixture")
+            .env("WHALU_FIXTURE_COUNT", count.to_string())
+            .spawn()
+            .map(Fixture)
+            .map_err(|error| error.to_string())
+    }
+}
+impl Drop for FixtureApplications {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 pub fn smoke() -> Result<(), String> {
     unsafe {
         if !AXIsProcessTrusted() {
@@ -673,20 +739,25 @@ pub fn input_smoke() -> Result<(), String> {
         ))
         .ok_or("Global keyboard and scroll event tap denied")?;
         CGEventTapEnable(tap.0, false);
-        cross_app_click_smoke(mtm, tap)
+        for counts in [&[4][..], &[1, 1, 1, 1][..], &[1, 2, 1][..]] {
+            application_click_smoke(mtm, tap.clone(), counts)?;
+        }
+        Ok(())
     }
 }
 
 fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String> {
+    application_click_smoke(mtm, tap, &[1, 1, 1, 1])
+}
+fn application_click_smoke(
+    mtm: MainThreadMarker,
+    tap: Owned,
+    counts: &[usize],
+) -> Result<(), String> {
+    let applications = FixtureApplications::new()?;
     let mut fixtures = vec![];
-    for _ in 0..4 {
-        fixtures.push(Fixture(
-            ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
-                .arg("--fixture")
-                .env("WHALU_FIXTURE_COUNT", "1")
-                .spawn()
-                .map_err(|e| e.to_string())?,
-        ));
+    for (index, count) in counts.iter().enumerate() {
+        fixtures.push(applications.spawn(index, *count)?);
     }
     let pids: Vec<_> = fixtures
         .iter()
@@ -701,15 +772,15 @@ fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String
         let snapshot = discovery.scan(mtm, &[]);
         let ids: Vec<_> = pids
             .iter()
-            .filter_map(|pid| {
+            .flat_map(|pid| {
                 discovery
                     .handles
                     .values()
-                    .find(|handle| handle.pid == *pid && handle.visible)
+                    .filter(move |handle| handle.pid == *pid && handle.visible)
                     .map(|handle| handle.id)
             })
             .collect();
-        if ids.len() != pids.len() {
+        if ids.len() != counts.iter().sum::<usize>() {
             continue;
         }
         let mut engine = Engine::new(8.);
@@ -722,7 +793,7 @@ fn cross_app_click_smoke(mtm: MainThreadMarker, tap: Owned) -> Result<(), String
         engine.set_visible(1, &ids, Some(ids[0]));
         super::input_probe::run(engine, discovery, Ui::new(mtm), tap, mtm)?;
         println!(
-            "PASS: ordered native click traversal and stale-Space isolation across four independent application processes"
+            "PASS: immediate/ordinary click ordering and stale-Space isolation for fixture process counts {counts:?}"
         );
         return Ok(());
     }

@@ -180,6 +180,103 @@ fn first_thumbnail_click_after_space_reentry_traverses_from_its_local_anchor() {
     }
 }
 #[test]
+fn background_click_eligibility_uses_processes_and_keeps_both_traversal_directions() {
+    let mut e = engine();
+    for (start, target, expected) in [(1, 4, vec![2, 3]), (4, 1, vec![3, 2])] {
+        e.focus(start);
+        let click = ClickSequence::new(&e, target).unwrap();
+        assert_eq!(
+            click.background_windows(|id| Some((id as i32, None))),
+            Some(expected.clone())
+        );
+        // Repeated background applications must retain ordinary traversal.
+        assert_eq!(
+            click.background_windows(|id| Some((
+                if id == 2 || id == 3 { 9 } else { id as i32 },
+                None
+            ))),
+            None
+        );
+        assert!(click.background_windows(|_| Some((1, None))).is_none());
+        assert!(
+            click
+                .background_windows(|id| Some((
+                    if id == start || id == target {
+                        99
+                    } else {
+                        id as i32
+                    },
+                    None
+                )))
+                .is_none()
+        );
+        assert!(
+            click
+                .background_windows(|id| Some((
+                    id as i32,
+                    Some(if id == 2 || id == 3 {
+                        "background.app".into()
+                    } else {
+                        format!("app.{id}")
+                    })
+                )))
+                .is_none()
+        );
+        // Separate processes of the same application are not background apps.
+        assert!(
+            click
+                .background_windows(|id| Some((id as i32, Some("same.app".into()))))
+                .is_none()
+        );
+        assert!(
+            click
+                .background_windows(|_| Some((1, Some("unique.app".into()))))
+                .is_none()
+        );
+        assert!(
+            click
+                .background_windows(|id| (id != 2).then_some((id as i32, None)))
+                .is_none()
+        );
+    }
+    e.focus(1);
+    assert!(
+        ClickSequence::new(&e, 2)
+            .unwrap()
+            .background_windows(|id| Some((id as i32, None)))
+            .is_none()
+    );
+    assert!(
+        ClickSequence::new(&e, 1)
+            .unwrap()
+            .background_windows(|id| Some((id as i32, None)))
+            .is_none()
+    );
+    e.set_visible(1, &[1, 2, 3, 4], None);
+    assert_eq!(
+        ClickSequence::new(&e, 4)
+            .unwrap()
+            .background_windows(|id| Some((id as i32, None))),
+        Some(vec![1, 2, 3])
+    );
+}
+#[test]
+fn immediate_click_retains_the_original_path_for_failed_background_repairs() {
+    let mut e = engine();
+    e.focus(1);
+    let mut click = ClickSequence::new(&e, 4).unwrap();
+    e.focus(4);
+    click.accept_destination();
+    assert_eq!(click.selected(), Some(4));
+    let mut restored = vec![];
+    while let Some(id) = click.advance(&e) {
+        restored.push(id);
+        e.focus(id);
+    }
+    assert_eq!(restored, [2, 3, 4]);
+    assert_eq!(e.focused(), Some(4));
+}
+#[test]
 fn app_navigation_is_window_based() {
     let mut e = engine();
     e.windows.get_mut(&1).unwrap().app_id = "Terminal".into();

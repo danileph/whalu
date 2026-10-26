@@ -61,3 +61,10 @@ A future prototype could:
 The conditional path needs real-app compatibility tests and cancellation/failure handling before adoption. Accessibility response timing and application-specific window grouping remain unverified outside these fixtures. Repeatedly re-raising the destination after same-app raises would restore the final state, but the observed intermediate focus and coverage changes mean it would not establish the proposed uninterrupted experience.
 
 No application behavior was changed as part of this investigation.
+
+
+## Implementation (2026-10-26)
+
+Build 40 enables the conditional path. It selects the destination immediately, then performs quiet AX raises in traversal order underneath it. The current monitor, native Space, overview epoch, window/process/Quartz identities, actual native focus, and observed compositor order are checked between steps. Each raise must become visible in the ordering before another is issued; an unresponsive ordering change has a 250 ms deadline. New navigation cancels pending work. Failed repairs replay the original traversal only while the destination still owns native focus; external focus is respected. Repeated application ownership anywhere along the path (including separate processes with the same known bundle identity) and missing native identities retain ordinary traversal. Installed-GUI checks showed that shared background applications can fail the relative-order check, so the production eligibility rule is stricter than the initial feasibility fixtures.
+
+The native input suite now covers single-app, separate-app, and mixed-app fixtures, including immediate target selection, stable destination focus, final order, unchanged geometry, missing/stale starting focus, retargeting, keyboard/swipe interruption, stale identities/overviews/Spaces, and fallback after an ordering timeout.

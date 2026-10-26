@@ -147,6 +147,19 @@ struct ActiveScroll {
 struct ClickTravel {
     sequence: ClickSequence,
     due: Instant,
+    background: Option<BackgroundOrder>,
+}
+struct BackgroundOrder {
+    windows: Vec<u64>,
+    identities: Vec<(u64, i32, u32)>,
+    display: u32,
+    space: u64,
+    epoch: u64,
+    raised: usize,
+    waiting: bool,
+    confirmed: bool,
+    failed: bool,
+    until: Instant,
 }
 struct PendingFocus {
     context: u64,
@@ -591,6 +604,19 @@ impl Runtime {
         }
         self.schedule();
     }
+    fn native_focus_is(&self, window: u64) -> bool {
+        self.discovery.handles.get(&window).is_some_and(|handle| {
+            NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .is_some_and(|app| app.processIdentifier() == handle.pid)
+                && unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+                    .and_then(|app| {
+                        unsafe { AXUIElementSetMessagingTimeout(app.0, 0.05) };
+                        attr(app.0, "AXFocusedWindow")
+                    })
+                    .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
+        })
+    }
     fn confirm_focus(&mut self, now: Instant) {
         let Some(pending) = self
             .pending_focus
@@ -599,20 +625,7 @@ impl Runtime {
         else {
             return;
         };
-        let target = self.discovery.handles.get(&pending.window);
-        let confirmed = target.is_some_and(|handle| {
-            NSWorkspace::sharedWorkspace()
-                .frontmostApplication()
-                .is_some_and(|app| app.processIdentifier() == handle.pid)
-                && unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
-                    .and_then(|app| {
-                        unsafe {
-                            AXUIElementSetMessagingTimeout(app.0, 0.05);
-                        }
-                        attr(app.0, "AXFocusedWindow")
-                    })
-                    .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
-        });
+        let confirmed = self.native_focus_is(pending.window);
         if confirmed || pending.context != self.engine.current || self.space_until.is_some() {
             self.pending_focus = None;
         } else if now >= pending.until {
@@ -770,11 +783,32 @@ impl Runtime {
         self.clear_scroll();
         self.overlay_deadline = None;
         if sequence.as_ref().is_some_and(|sequence| sequence.pending()) {
-            self.click_travel = sequence.map(|sequence| ClickTravel {
+            let mut sequence = sequence.unwrap();
+            let background = self.plan_background_order(&sequence);
+            if background.is_some() {
+                self.apply(vec![Effect::Focus(window)]);
+                if self.engine.focused() != Some(window) {
+                    self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+                    self.render();
+                    return;
+                }
+                sequence.accept_destination();
+            }
+            let immediate = background.is_some();
+            self.click_travel = Some(ClickTravel {
                 sequence,
-                due: Instant::now(),
+                due: Instant::now()
+                    + if immediate {
+                        Duration::from_millis(8)
+                    } else {
+                        Duration::ZERO
+                    },
+                background,
             });
-            self.advance_click(Instant::now());
+            // Paint the destination before starting any background AX work.
+            if !immediate {
+                self.advance_click(Instant::now());
+            }
         } else {
             self.apply(vec![Effect::Focus(window)]);
             self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
@@ -782,6 +816,151 @@ impl Runtime {
         self.deadline = Some(Instant::now() + Duration::from_millis(100));
         self.render();
         self.save();
+    }
+    fn plan_background_order(&self, sequence: &ClickSequence) -> Option<BackgroundOrder> {
+        let windows = sequence.background_windows(|id| {
+            self.discovery
+                .handles
+                .get(&id)
+                .filter(|handle| handle.visible && handle.quartz_id.is_some())
+                .map(|handle| {
+                    (
+                        handle.pid,
+                        handle.app.bundleIdentifier().map(|id| id.to_string()),
+                    )
+                })
+        })?;
+        let display = self.engine.display()?;
+        let space = spaces::active_space(display)?;
+        if self.overview_space != Some((display, space)) {
+            return None;
+        }
+        let mut ids = vec![sequence.target()];
+        ids.extend(&windows);
+        if let Some(source) = sequence.selected().filter(|id| !ids.contains(id)) {
+            ids.push(source);
+        }
+        let identities = ids
+            .iter()
+            .map(|id| {
+                let handle = self.discovery.handles.get(id)?;
+                Some((*id, handle.pid, handle.quartz_id?))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        self.discovery
+            .stacking_order(&ids, display, &self.engine.bounds)?;
+        Some(BackgroundOrder {
+            windows,
+            identities,
+            display,
+            space,
+            epoch: self.ui.visibility_epoch(),
+            raised: 0,
+            waiting: false,
+            confirmed: false,
+            failed: false,
+            until: Instant::now() + Duration::from_millis(600),
+        })
+    }
+    fn advance_background(&mut self, now: Instant) {
+        // Take ownership for this timer turn so cancellation never leaves a
+        // detached worker issuing raises after new navigation takes over.
+        let mut travel = self.click_travel.take().unwrap();
+        let repair = travel.background.as_mut().unwrap();
+        let target = travel.sequence.target();
+        let ids: Vec<_> = repair.identities.iter().map(|(id, _, _)| *id).collect();
+        let valid = self.engine.current == travel.sequence.context()
+            && self.engine.focused() == Some(target)
+            && self.engine.display() == Some(repair.display)
+            && self.ui.visibility_epoch() == repair.epoch
+            && spaces::active_space(repair.display) == Some(repair.space)
+            && repair.identities.iter().all(|(id, pid, quartz)| {
+                self.engine
+                    .context()
+                    .is_some_and(|ctx| ctx.order.contains(id))
+                    && self.discovery.handles.get(id).is_some_and(|handle| {
+                        handle.pid == *pid && handle.quartz_id == Some(*quartz)
+                    })
+            });
+        let order = valid
+            .then(|| {
+                self.discovery
+                    .stacking_order(&ids, repair.display, &self.engine.bounds)
+            })
+            .flatten();
+        if order.is_none() {
+            self.pending_focus = None;
+            self.deadline = Some(Instant::now());
+            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+            self.render();
+            return;
+        }
+        let native = self.native_focus_is(target);
+        if !native {
+            if !repair.confirmed && now < repair.until {
+                travel.due = Instant::now() + Duration::from_millis(8);
+                self.click_travel = Some(travel);
+            } else {
+                // Respect external focus; never reclaim it to finish a repair.
+                self.pending_focus = None;
+                self.deadline = Some(Instant::now());
+                self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+            }
+            self.render();
+            return;
+        }
+        repair.confirmed = true;
+        if repair.failed {
+            travel.background = None;
+            travel.due = Instant::now();
+            self.click_travel = Some(travel);
+            self.advance_click(Instant::now());
+            return;
+        }
+        let prefix_len = repair.raised + usize::from(repair.waiting);
+        let expected: Vec<_> = std::iter::once(target)
+            .chain(repair.windows[..prefix_len].iter().rev().copied())
+            .collect();
+        let ordered = order.as_ref().unwrap().starts_with(&expected);
+        if !ordered && repair.waiting && now < repair.until {
+            travel.due = Instant::now() + Duration::from_millis(8);
+            self.click_travel = Some(travel);
+            return;
+        }
+        if !ordered {
+            // A responsive target still owns focus, but a background app did
+            // not honor the raise/order. Replay the original native traversal.
+            repair.failed = true;
+            travel.due = Instant::now() + Duration::from_millis(8);
+            self.click_travel = Some(travel);
+            return;
+        }
+        if repair.waiting {
+            repair.raised += 1;
+            repair.waiting = false;
+        }
+        if repair.raised == repair.windows.len() {
+            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+            self.render();
+            self.save();
+            return;
+        }
+        let id = repair.windows[repair.raised];
+        let handle = &self.discovery.handles[&id];
+        let code = unsafe {
+            AXUIElementSetMessagingTimeout(handle.element.0, 0.05);
+            AXUIElementPerformAction(handle.element.0, string("AXRaise").0)
+        };
+        if code != 0 {
+            repair.failed = true;
+            travel.due = Instant::now() + Duration::from_millis(8);
+            self.click_travel = Some(travel);
+            return;
+        }
+        repair.waiting = true;
+        repair.until = Instant::now() + Duration::from_millis(250);
+        travel.due = Instant::now() + Duration::from_millis(8);
+        self.click_travel = Some(travel);
     }
     fn advance_click(&mut self, now: Instant) {
         if !self
@@ -794,6 +973,14 @@ impl Runtime {
         if self.engine.frozen || self.space_until.is_some() {
             self.clear_scroll();
             self.render();
+            return;
+        }
+        if self
+            .click_travel
+            .as_ref()
+            .is_some_and(|travel| travel.background.is_some())
+        {
+            self.advance_background(now);
             return;
         }
         let next = self

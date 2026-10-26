@@ -3,7 +3,7 @@ use crate::{
     core::{Engine, WindowId},
     gestures::Axis,
 };
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 /// Clicks traverse adjacent windows with the same native focus/raise steps as
 /// keyboard and swipe navigation. Stop if focus no longer matches the last step.
@@ -50,6 +50,43 @@ impl ClickSequence {
             selected,
             remaining,
         })
+    }
+    /// Quiet raises are reliable only for independent applications along the
+    /// whole path. Repeated process or known app identities retain traversal.
+    pub fn background_windows(
+        &self,
+        owner: impl Fn(WindowId) -> Option<(i32, Option<String>)>,
+    ) -> Option<Vec<WindowId>> {
+        let (target_pid, target_bundle) = owner(self.target)?;
+        let windows: Vec<_> = self
+            .remaining
+            .iter()
+            .copied()
+            .filter(|id| *id != self.target)
+            .collect();
+        if windows.is_empty() {
+            return None;
+        }
+        let mut processes = BTreeSet::from([target_pid]);
+        let mut bundles: BTreeSet<_> = target_bundle.into_iter().collect();
+        let mut independent = |id| {
+            owner(id).is_some_and(|(pid, bundle)| {
+                processes.insert(pid) && bundle.is_none_or(|bundle| bundles.insert(bundle))
+            })
+        };
+        if self
+            .selected
+            .filter(|id| *id != self.target)
+            .is_some_and(|id| !independent(id))
+        {
+            return None;
+        }
+        windows.iter().all(|id| independent(*id)).then_some(windows)
+    }
+    /// The destination was accepted immediately; retain the original path so a
+    /// failed background repair can still fall back to ordinary traversal.
+    pub fn accept_destination(&mut self) {
+        self.selected = Some(self.target);
     }
     pub fn advance(&mut self, engine: &Engine) -> Option<WindowId> {
         let valid = self.context == engine.current

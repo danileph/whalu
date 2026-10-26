@@ -335,39 +335,62 @@ pub(super) fn run(
         .map_err(|e| e.to_string())?;
         runtime.drain();
         runtime.ui.clicks.route(2, point);
-        for (index, expected) in path.iter().enumerate().skip(1) {
-            if index > 1 {
-                let due = runtime
+        let target = *path.last().unwrap();
+        let immediate = independent_applications(&runtime, &path);
+        if immediate {
+            if runtime.engine.focused() != Some(target)
+                || runtime.ui.selected_thumbnail() != Some(target)
+                || runtime
                     .click_travel
                     .as_ref()
-                    .ok_or("Click travel stopped early")?
-                    .due;
-                let previous = runtime.engine.focused();
-                runtime.advance_click(due - Duration::from_millis(1));
-                if runtime.engine.focused() != previous {
-                    return Err("Click skipped its visible step interval".into());
-                }
-                runtime.advance_click(due + Duration::from_secs(1));
-            }
-            unsafe {
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false);
-            }
-            let handle = &runtime.discovery.handles[expected];
-            let target_app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
-                .ok_or("Missing target app")?;
-            let actual = attr(target_app.0, "AXFocusedWindow")
-                .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
-                && NSWorkspace::sharedWorkspace()
-                    .frontmostApplication()
-                    .is_some_and(|app| app.processIdentifier() == handle.pid);
-            if runtime.engine.focused() != Some(*expected)
-                || runtime.ui.selected_thumbnail() != Some(*expected)
-                || !actual
-                || !runtime.ui.is_visible()
-                || runtime.ui.is_key()
-                || runtime.ui.visibility_epoch() != epoch
+                    .is_none_or(|travel| travel.background.is_none())
             {
-                return Err(format!("Click travel skipped fixture {index} in {path:?}"));
+                return Err("Eligible click did not select its destination immediately".into());
+            }
+            finish_click(&mut runtime, Some(target))?;
+        } else {
+            for (index, expected) in path.iter().enumerate().skip(1) {
+                if index > 1 {
+                    let due = runtime
+                        .click_travel
+                        .as_ref()
+                        .ok_or("Click travel stopped early")?
+                        .due;
+                    let previous = runtime.engine.focused();
+                    runtime.advance_click(due - Duration::from_millis(1));
+                    if runtime.engine.focused() != previous {
+                        return Err("Click skipped its visible step interval".into());
+                    }
+                    runtime.advance_click(due + Duration::from_secs(1));
+                }
+                unsafe {
+                    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false);
+                }
+                wait_native_focus(&runtime, *expected)?;
+                let handle = &runtime.discovery.handles[expected];
+                let target_app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
+                    .ok_or("Missing target app")?;
+                let actual = attr(target_app.0, "AXFocusedWindow")
+                    .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
+                    && NSWorkspace::sharedWorkspace()
+                        .frontmostApplication()
+                        .is_some_and(|app| app.processIdentifier() == handle.pid);
+                if runtime.engine.focused() != Some(*expected)
+                    || runtime.ui.selected_thumbnail() != Some(*expected)
+                    || !actual
+                    || !runtime.ui.is_visible()
+                    || runtime.ui.is_key()
+                    || runtime.ui.visibility_epoch() != epoch
+                {
+                    return Err(format!(
+                        "Click travel skipped fixture {index} in {path:?}: engine {:?}, card {:?}, native {actual}, visible {}, key {}, epoch {} expected {epoch}",
+                        runtime.engine.focused(),
+                        runtime.ui.selected_thumbnail(),
+                        runtime.ui.is_visible(),
+                        runtime.ui.is_key(),
+                        runtime.ui.visibility_epoch()
+                    ));
+                }
             }
         }
         if runtime.click_travel.is_some()
@@ -414,22 +437,29 @@ pub(super) fn run(
             return Err("Click traversal changed native window geometry".into());
         }
     }
+    background_interruptions(&mut runtime, &ids)?;
+    runtime.clear_scroll();
+    runtime.apply(vec![Effect::Focus(ids[0])]);
+    runtime.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+    runtime.render();
     let context = runtime.engine.current;
+    let immediate = independent_applications(&runtime, &ids);
+    let first = if immediate { ids[3] } else { ids[1] };
     runtime.select_thumbnail(context, ids[3]);
-    if runtime.engine.focused() != Some(ids[1])
-        || runtime.ui.selected_thumbnail() != Some(ids[1])
+    if runtime.engine.focused() != Some(first)
+        || runtime.ui.selected_thumbnail() != Some(first)
         || runtime.click_travel.is_none()
     {
         return Err("Distant click did not raise its first adjacent window".into());
     }
     runtime.select_thumbnail(context, ids[0]);
-    runtime.advance_click(Instant::now() + Duration::from_secs(1));
+    finish_click(&mut runtime, None)?;
     if runtime.engine.focused() != Some(ids[0]) || runtime.click_travel.is_some() {
         return Err("Second click did not replace the old destination".into());
     }
     runtime.select_thumbnail(context, ids[3]);
     runtime.contact_began();
-    if runtime.engine.focused() != Some(ids[1]) || runtime.click_travel.is_none() {
+    if runtime.engine.focused() != Some(first) || runtime.click_travel.is_none() {
         return Err("Ordinary finger contact interrupted click travel".into());
     }
     if fixture_pids.len() > 1 {
@@ -454,11 +484,12 @@ pub(super) fn run(
     tx.send(Event::Command(Command::FocusPrevious))
         .map_err(|e| e.to_string())?;
     runtime.drain();
-    if runtime.click_travel.is_some() || runtime.engine.focused() != Some(ids[0]) {
+    let expected = if immediate { ids[2] } else { ids[0] };
+    if runtime.click_travel.is_some() || runtime.engine.focused() != Some(expected) {
         return Err(format!(
             "Keyboard input did not catch click travel: focused {:?}, expected {}, order {:?}, frozen {}, context {}",
             runtime.engine.focused(),
-            ids[0],
+            expected,
             runtime.engine.context().map(|ctx| &ctx.order),
             runtime.engine.frozen,
             runtime.engine.current
@@ -931,15 +962,39 @@ fn display_isolation(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
         let app = unsafe { Owned::new(AXUIElementCreateApplication(handle.pid)) }
             .ok_or("Missing monitor fixture app")?;
         unsafe {
+            AXUIElementSetAttributeValue(app.0, string("AXFocusedWindow").0, handle.element.0);
+            AXUIElementSetAttributeValue(handle.element.0, string("AXFocused").0, kCFBooleanTrue);
             AXUIElementSetAttributeValue(handle.element.0, string("AXMain").0, kCFBooleanTrue);
             AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
             #[allow(deprecated)]
             handle
                 .app
                 .activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+            AXUIElementSetAttributeValue(app.0, string("AXFrontmost").0, kCFBooleanTrue);
         }
         let mut confirmed = false;
         for _ in 0..20 {
+            // Activation can restore this app's previous key window, especially
+            // when its documents span monitors. Once the correct process is
+            // active, establish the exact external fixture window again.
+            if NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .is_some_and(|app| app.processIdentifier() == handle.pid)
+            {
+                unsafe {
+                    AXUIElementSetAttributeValue(
+                        app.0,
+                        string("AXFocusedWindow").0,
+                        handle.element.0,
+                    );
+                    AXUIElementSetAttributeValue(
+                        handle.element.0,
+                        string("AXMain").0,
+                        kCFBooleanTrue,
+                    );
+                    AXUIElementPerformAction(handle.element.0, string("AXRaise").0);
+                }
+            }
             unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false) };
             if attr(app.0, "AXFocusedWindow")
                 .is_some_and(|focused| unsafe { CFEqual(focused.0, handle.element.0) })
@@ -1119,7 +1174,9 @@ fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Res
         local.last_focused = remembered;
         runtime.render();
         runtime.select_thumbnail(context, destination);
-        if runtime.engine.focused() != Some(anchor) || runtime.click_travel.is_none() {
+        let immediate = independent_applications(runtime, &[anchor, destination]);
+        let first = if immediate { destination } else { anchor };
+        if runtime.engine.focused() != Some(first) || runtime.click_travel.is_none() {
             return Err(format!(
                 "First unfocused click skipped anchor {anchor} for {destination}: focused {:?}, native {:?}, travel {}, order {:?}, visible {}, frozen {}, space {}, remembered {remembered:?}",
                 runtime.engine.focused(),
@@ -1131,8 +1188,7 @@ fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Res
                 runtime.space_until.is_some(),
             ));
         }
-        let due = runtime.click_travel.as_ref().unwrap().due;
-        runtime.advance_click(due);
+        finish_click(runtime, None)?;
         if runtime.engine.focused() != Some(destination) || runtime.click_travel.is_some() {
             return Err("First unfocused click did not traverse to its destination".into());
         }
@@ -1168,6 +1224,179 @@ fn pointer_overview(runtime: &mut Runtime, ids: &[u64], displays: &[u32]) -> Res
     }
     println!(
         "PASS: pointer monitor overview opens without prior focus, survives refreshes and keyboard/gesture/wheel preparation, preserves native focus, and retargets after closing"
+    );
+    Ok(())
+}
+
+fn independent_applications(runtime: &Runtime, ids: &[u64]) -> bool {
+    let mut processes = BTreeSet::new();
+    let mut bundles = BTreeSet::new();
+    ids.iter().all(|id| {
+        let handle = &runtime.discovery.handles[id];
+        processes.insert(handle.pid)
+            && handle
+                .app
+                .bundleIdentifier()
+                .is_none_or(|bundle| bundles.insert(bundle.to_string()))
+    })
+}
+fn wait_native_focus(runtime: &Runtime, target: u64) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(800);
+    while !runtime.native_focus_is(target) {
+        if Instant::now() >= deadline {
+            return Err(format!("Native focus did not settle on fixture {target}"));
+        }
+        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
+    }
+    Ok(())
+}
+fn finish_click(runtime: &mut Runtime, immediate: Option<u64>) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut confirmed = false;
+    while runtime.click_travel.is_some() {
+        if Instant::now() >= deadline {
+            return Err("Click/background ordering did not finish".into());
+        }
+        unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.008, false) };
+        runtime.advance_click(Instant::now());
+        if let Some(target) = immediate {
+            let native = runtime.native_focus_is(target);
+            if runtime.engine.focused() != Some(target)
+                || runtime.ui.selected_thumbnail() != Some(target)
+                || (confirmed && !native)
+                || runtime
+                    .click_travel
+                    .as_ref()
+                    .is_some_and(|travel| travel.background.is_none())
+            {
+                return Err(format!(
+                    "Background repair lost target {target}: engine {:?}, card {:?}, native {native}, confirmed {confirmed}, background {:?}",
+                    runtime.engine.focused(),
+                    runtime.ui.selected_thumbnail(),
+                    runtime.click_travel.as_ref().map(|travel| travel
+                        .background
+                        .as_ref()
+                        .map(|repair| (repair.raised, repair.waiting, repair.failed)))
+                ));
+            }
+            confirmed |= native;
+        }
+    }
+    Ok(())
+}
+fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), String> {
+    if !independent_applications(runtime, ids) {
+        return Ok(());
+    }
+    for scenario in 0..5 {
+        runtime.clear_scroll();
+        for id in ids.iter().rev() {
+            runtime.apply(vec![Effect::Focus(*id)]);
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.04, false) };
+        }
+        runtime.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+        runtime.render();
+        runtime.select_thumbnail(runtime.engine.current, ids[3]);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !runtime.native_focus_is(ids[3]) {
+            if Instant::now() >= deadline {
+                return Err("No immediate fixture destination focus".into());
+            }
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
+        }
+        runtime
+            .click_travel
+            .as_mut()
+            .ok_or("No background repair")?
+            .background
+            .as_mut()
+            .ok_or("No fast path")?
+            .confirmed = true;
+        match scenario {
+            0 => {
+                // Native external focus changes before a delayed model census.
+                runtime.apply(vec![Effect::Focus(ids[0])]);
+                let deadline = Instant::now() + Duration::from_secs(1);
+                while !runtime.native_focus_is(ids[0]) {
+                    if Instant::now() >= deadline {
+                        return Err("No external fixture focus".into());
+                    }
+                    unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
+                }
+                runtime.engine.focus(ids[3]);
+                runtime.advance_click(Instant::now() + Duration::from_millis(10));
+                if runtime.click_travel.is_some() || !runtime.native_focus_is(ids[0]) {
+                    return Err("Background repair reclaimed external focus".into());
+                }
+            }
+            1 => {
+                let original = runtime.discovery.handles[&ids[1]].quartz_id;
+                runtime
+                    .discovery
+                    .handles
+                    .get_mut(&ids[1])
+                    .unwrap()
+                    .quartz_id = Some(u32::MAX);
+                runtime.advance_click(Instant::now() + Duration::from_millis(10));
+                runtime
+                    .discovery
+                    .handles
+                    .get_mut(&ids[1])
+                    .unwrap()
+                    .quartz_id = original;
+                if runtime.click_travel.is_some() || !runtime.native_focus_is(ids[3]) {
+                    return Err("Background repair used a stale native identity".into());
+                }
+            }
+            2 => {
+                // Simulate an accepted AX call that never changed compositor
+                // order. The next event-loop turn must choose normal traversal.
+                let repair = runtime
+                    .click_travel
+                    .as_mut()
+                    .unwrap()
+                    .background
+                    .as_mut()
+                    .unwrap();
+                repair.waiting = true;
+                repair.until = Instant::now() - Duration::from_millis(1);
+                runtime.advance_click(Instant::now() + Duration::from_millis(10));
+                unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
+                runtime.advance_click(Instant::now());
+                if runtime.engine.focused() != Some(ids[1])
+                    || runtime
+                        .click_travel
+                        .as_ref()
+                        .is_none_or(|travel| travel.background.is_some())
+                {
+                    return Err(
+                        "Failed background ordering did not fall back to native traversal".into(),
+                    );
+                }
+                finish_click(runtime, None)?;
+            }
+            _ => {
+                if scenario == 3 {
+                    runtime.ui.reset_overview();
+                } else {
+                    runtime
+                        .click_travel
+                        .as_mut()
+                        .unwrap()
+                        .background
+                        .as_mut()
+                        .unwrap()
+                        .space = u64::MAX;
+                }
+                runtime.advance_click(Instant::now() + Duration::from_millis(10));
+                if runtime.click_travel.is_some() || !runtime.native_focus_is(ids[3]) {
+                    return Err("Background repair survived a stale overview/Space".into());
+                }
+            }
+        }
+    }
+    println!(
+        "PASS: background repair cancels on external focus, stale identities/overviews/Spaces and falls back after compositor-order timeout"
     );
     Ok(())
 }
