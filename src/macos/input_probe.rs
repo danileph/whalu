@@ -1276,7 +1276,7 @@ fn finish_click(runtime: &mut Runtime, immediate: Option<u64>) -> Result<(), Str
                     runtime.click_travel.as_ref().map(|travel| travel
                         .background
                         .as_ref()
-                        .map(|repair| (repair.raised, repair.waiting, repair.failed)))
+                        .map(|repair| (repair.raised, repair.waiting)))
                 ));
             }
             confirmed |= native;
@@ -1349,8 +1349,9 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
                 }
             }
             2 => {
-                // Simulate an accepted AX call that never changed compositor
-                // order. The next event-loop turn must choose normal traversal.
+                // Simulate a delayed accepted raise. Keep waiting while its
+                // compositor deadline is live, then stop without replaying any
+                // foreground windows if that order never arrives.
                 let repair = runtime
                     .click_travel
                     .as_mut()
@@ -1359,21 +1360,38 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
                     .as_mut()
                     .unwrap();
                 repair.waiting = true;
-                repair.until = Instant::now() - Duration::from_millis(1);
+                repair.until = Instant::now() + Duration::from_millis(250);
                 runtime.advance_click(Instant::now() + Duration::from_millis(10));
-                unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
-                runtime.advance_click(Instant::now());
-                if runtime.engine.focused() != Some(ids[1])
-                    || runtime
-                        .click_travel
-                        .as_ref()
-                        .is_none_or(|travel| travel.background.is_some())
+                if runtime.click_travel.is_none()
+                    || runtime.engine.focused() != Some(ids[3])
+                    || !runtime.native_focus_is(ids[3])
                 {
                     return Err(
-                        "Failed background ordering did not fall back to native traversal".into(),
+                        "Delayed background ordering did not retain destination focus".into(),
                     );
                 }
-                finish_click(runtime, None)?;
+                runtime
+                    .click_travel
+                    .as_mut()
+                    .unwrap()
+                    .background
+                    .as_mut()
+                    .unwrap()
+                    .until = Instant::now() - Duration::from_millis(1);
+                runtime.advance_click(Instant::now() + Duration::from_millis(10));
+                if runtime.click_travel.is_some()
+                    || runtime.engine.focused() != Some(ids[3])
+                    || runtime.ui.selected_thumbnail() != Some(ids[3])
+                    || !runtime.native_focus_is(ids[3])
+                    || runtime.deadline.is_none()
+                {
+                    return Err("Failed background ordering replayed intermediate focus".into());
+                }
+                // A later timer turn must not resume the consumed focus path.
+                runtime.advance_click(Instant::now() + Duration::from_secs(1));
+                if runtime.engine.focused() != Some(ids[3]) || !runtime.native_focus_is(ids[3]) {
+                    return Err("Finished background repair resumed foreground traversal".into());
+                }
             }
             _ => {
                 if scenario == 3 {
@@ -1396,7 +1414,7 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
         }
     }
     println!(
-        "PASS: background repair cancels on external focus, stale identities/overviews/Spaces and falls back after compositor-order timeout"
+        "PASS: background repair cancels on external focus, stale identities/overviews/Spaces and retains destination focus after delayed compositor-order timeout"
     );
     Ok(())
 }

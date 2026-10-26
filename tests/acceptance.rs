@@ -261,19 +261,15 @@ fn background_click_eligibility_uses_processes_and_keeps_both_traversal_directio
     );
 }
 #[test]
-fn immediate_click_retains_the_original_path_for_failed_background_repairs() {
+fn immediate_click_consumes_the_focus_path_without_replaying_intermediate_windows() {
     let mut e = engine();
     e.focus(1);
     let mut click = ClickSequence::new(&e, 4).unwrap();
     e.focus(4);
     click.accept_destination();
     assert_eq!(click.selected(), Some(4));
-    let mut restored = vec![];
-    while let Some(id) = click.advance(&e) {
-        restored.push(id);
-        e.focus(id);
-    }
-    assert_eq!(restored, [2, 3, 4]);
+    assert!(!click.pending());
+    assert_eq!(click.advance(&e), None);
     assert_eq!(e.focused(), Some(4));
 }
 #[test]

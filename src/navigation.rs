@@ -83,10 +83,11 @@ impl ClickSequence {
         }
         windows.iter().all(|id| independent(*id)).then_some(windows)
     }
-    /// The destination was accepted immediately; retain the original path so a
-    /// failed background repair can still fall back to ordinary traversal.
+    /// The destination was accepted immediately. Consume the focus path so a
+    /// failed background repair cannot replay intermediate foreground windows.
     pub fn accept_destination(&mut self) {
         self.selected = Some(self.target);
+        self.remaining.clear();
     }
     pub fn advance(&mut self, engine: &Engine) -> Option<WindowId> {
         let valid = self.context == engine.current

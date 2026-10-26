@@ -158,7 +158,6 @@ struct BackgroundOrder {
     raised: usize,
     waiting: bool,
     confirmed: bool,
-    failed: bool,
     until: Instant,
 }
 struct PendingFocus {
@@ -858,7 +857,6 @@ impl Runtime {
             raised: 0,
             waiting: false,
             confirmed: false,
-            failed: false,
             until: Instant::now() + Duration::from_millis(600),
         })
     }
@@ -910,29 +908,20 @@ impl Runtime {
             return;
         }
         repair.confirmed = true;
-        if repair.failed {
-            travel.background = None;
-            travel.due = Instant::now();
-            self.click_travel = Some(travel);
-            self.advance_click(Instant::now());
-            return;
-        }
         let prefix_len = repair.raised + usize::from(repair.waiting);
         let expected: Vec<_> = std::iter::once(target)
             .chain(repair.windows[..prefix_len].iter().rev().copied())
             .collect();
         let ordered = order.as_ref().unwrap().starts_with(&expected);
-        if !ordered && repair.waiting && now < repair.until {
+        if !ordered && now < repair.until {
             travel.due = Instant::now() + Duration::from_millis(8);
             self.click_travel = Some(travel);
             return;
         }
         if !ordered {
-            // A responsive target still owns focus, but a background app did
-            // not honor the raise/order. Replay the original native traversal.
-            repair.failed = true;
-            travel.due = Instant::now() + Duration::from_millis(8);
-            self.click_travel = Some(travel);
+            // The destination is already visible. Replaying the original path
+            // here would flash intervening applications in front of it.
+            self.finish_background_order(true);
             return;
         }
         if repair.waiting {
@@ -940,9 +929,7 @@ impl Runtime {
             repair.waiting = false;
         }
         if repair.raised == repair.windows.len() {
-            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
-            self.render();
-            self.save();
+            self.finish_background_order(false);
             return;
         }
         let id = repair.windows[repair.raised];
@@ -952,15 +939,23 @@ impl Runtime {
             AXUIElementPerformAction(handle.element.0, string("AXRaise").0)
         };
         if code != 0 {
-            repair.failed = true;
-            travel.due = Instant::now() + Duration::from_millis(8);
-            self.click_travel = Some(travel);
+            self.finish_background_order(true);
             return;
         }
         repair.waiting = true;
         repair.until = Instant::now() + Duration::from_millis(250);
         travel.due = Instant::now() + Duration::from_millis(8);
         self.click_travel = Some(travel);
+    }
+    fn finish_background_order(&mut self, refresh: bool) {
+        if refresh {
+            // Observe the actual order/focus after a partial repair; do not
+            // change native focus merely to finish background bookkeeping.
+            self.deadline = Some(Instant::now());
+        }
+        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+        self.render();
+        self.save();
     }
     fn advance_click(&mut self, now: Instant) {
         if !self
