@@ -1,5 +1,15 @@
 //! Selection-relative wheel geometry, independent of the native renderer.
 
+/// The outermost logical point of a full display, including menu bar and Dock.
+/// Half-open bounds keep adjacent monitors from claiming the same pointer.
+pub fn at_right_edge(bounds: crate::geometry::Rect, point: (f64, f64)) -> bool {
+    bounds.valid()
+        && point.0 >= bounds.right() - 1.
+        && point.0 < bounds.right()
+        && point.1 >= bounds.y
+        && point.1 < bounds.bottom()
+}
+
 // The 82-point preview and its 12-point badge overhang, plus shadow clearance.
 const CARD_HEIGHT: f64 = 100.;
 const MIN_GAP: f64 = 16.;
@@ -125,6 +135,24 @@ impl Wheel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn right_edge_respects_full_display_bounds_and_adjacent_monitors() {
+        use crate::geometry::Rect;
+        let left = Rect::new(-1920., -200., 1920., 1080.);
+        let right = Rect::new(0., 0., 2560., 1440.);
+        for point in [(-1., -200.), (-0.5, 879.)] {
+            assert!(super::at_right_edge(left, point));
+            assert!(!super::at_right_edge(right, point));
+        }
+        for point in [(-1.01, 100.), (0., 100.), (-1., -201.), (-1., 880.)] {
+            assert!(!super::at_right_edge(left, point));
+        }
+        assert!(super::at_right_edge(right, (2559.5, 1439.5)));
+        assert!(!super::at_right_edge(right, (2560., 100.)));
+        assert!(!super::at_right_edge(right, (f64::NAN, 100.)));
+        assert!(!super::at_right_edge(Rect::default(), (0., 0.)));
+    }
+
     use super::*;
 
     #[test]

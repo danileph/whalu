@@ -55,6 +55,10 @@ pub(super) enum Event {
     Command(Command),
     WindowSwitch(Command),
     OverviewHeld(bool),
+    PointerMoved {
+        point: Point,
+        dragging: bool,
+    },
     Mouse(bool),
     SelectThumbnail {
         context: u64,
@@ -204,6 +208,7 @@ struct Runtime {
     deadline: Option<Instant>,
     overlay_deadline: Option<Instant>,
     held: bool,
+    edge_display: Option<u32>,
     switch_feedback: bool,
     mouse: bool,
     dragging: bool,
@@ -227,16 +232,45 @@ struct Runtime {
     _lock: std::fs::File,
 }
 impl Runtime {
+    fn overview_held(&self) -> bool {
+        self.held || self.edge_display.is_some()
+    }
+
+    fn pointer_moved(&mut self, point: Point, dragging: bool) {
+        let display = if self.config.overlay && !dragging && !self.mouse {
+            discovery::right_edge_display(self.mtm, point)
+        } else {
+            None
+        };
+        if display == self.edge_display {
+            return;
+        }
+        self.edge_display = display;
+        if let Some(display) = display {
+            self.clear_scroll();
+            self.pending_focus = None;
+            self.overlay_deadline = None;
+            self.navigation_display = Some(display);
+            // Opening is read-only: refresh this monitor without focusing it.
+            self.reconcile(false);
+            self.ui.preload_previews(&self.discovery);
+        } else {
+            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+        }
+        self.render();
+    }
+
     fn schedule(&mut self) {
         unsafe {
             if let Some(t) = self.timer.take() {
                 CFRunLoopTimerInvalidate(t.0);
             }
-            let scan_due = if self.space_until.is_none() || (self.space_overview && self.held) {
-                self.deadline
-            } else {
-                None
-            };
+            let scan_due =
+                if self.space_until.is_none() || (self.space_overview && self.overview_held()) {
+                    self.deadline
+                } else {
+                    None
+                };
             let due = [
                 scan_due,
                 self.overlay_deadline,
@@ -287,7 +321,10 @@ impl Runtime {
                     self.pending_focus = None;
                     self.ui.reset_overview();
                     self.navigation_display = None;
-                    if self.held {
+                    if let Some(event) = unsafe { Owned::new(CGEventCreate(null())) } {
+                        self.pointer_moved(unsafe { CGEventGetLocation(event.0) }, self.dragging);
+                    }
+                    if self.overview_held() {
                         self.use_pointer_display();
                     }
                     self.deadline = Some(Instant::now() + Duration::from_millis(70));
@@ -314,7 +351,7 @@ impl Runtime {
                 Event::SpaceTransferPreparing(target) => {
                     if self.space_transfer_display.is_some() {
                         self.space_transfer_target = Some(target);
-                        if self.held && self.config.overlay {
+                        if self.overview_held() && self.config.overlay {
                             self.ui.preload_previews(&self.discovery);
                         }
                         self.stage_space_destination();
@@ -326,6 +363,7 @@ impl Runtime {
                     }
                 }
                 Event::NativeGesture => self.yield_to_system(false),
+                Event::PointerMoved { point, dragging } => self.pointer_moved(point, dragging),
                 Event::OverviewHeld(held) => {
                     let opening = held && !self.held && self.config.overlay;
                     if opening {
@@ -419,7 +457,7 @@ impl Runtime {
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
-                        self.navigation_display = None;
+                        self.navigation_display = self.edge_display;
                         self.pending_focus = None;
                         self.clear_scroll();
                         self.render();
@@ -515,7 +553,7 @@ impl Runtime {
                 Event::PreviewReady(id, quartz, image) => {
                     let retry = self.ui.preview_ready(id, quartz, image);
                     self.render();
-                    if retry && self.held {
+                    if retry && self.overview_held() {
                         self.deadline = Some(Instant::now() + Duration::from_millis(130));
                     }
                 }
@@ -566,7 +604,7 @@ impl Runtime {
         if self.space_until.is_some_and(|d| d <= now) {
             self.space_until = None;
             self.deadline = None;
-            if self.held && self.navigation_display.is_none() {
+            if self.overview_held() && self.navigation_display.is_none() {
                 self.use_pointer_display();
             }
             self.reconcile(false);
@@ -577,7 +615,7 @@ impl Runtime {
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
             }
-        } else if (self.space_until.is_none() || (self.space_overview && self.held))
+        } else if (self.space_until.is_none() || (self.space_overview && self.overview_held()))
             && self.deadline.is_some_and(|d| d <= now)
         {
             self.deadline = None;
@@ -593,7 +631,7 @@ impl Runtime {
             self.render();
         }
         self.confirm_focus(now);
-        if !self.held
+        if !self.overview_held()
             && self.gesture.is_none()
             && self.click_travel.is_none()
             && self.linger_until.is_none()
@@ -637,8 +675,8 @@ impl Runtime {
     fn yield_to_system(&mut self, space_changed: bool) {
         self.switch_feedback = false;
         self.space_overview = space_changed;
-        if !space_changed || !self.held {
-            self.navigation_display = self.space_transfer_display;
+        if !space_changed || !self.overview_held() {
+            self.navigation_display = self.space_transfer_display.or(self.edge_display);
         }
         // Four-finger contact precedes the workspace notification. Abandon the
         // session before its cancellation event can restore an old-Space window.
@@ -655,7 +693,7 @@ impl Runtime {
         self.engine.frozen = true;
         self.overlay_deadline = None;
         if self.space_transfer_display.is_some() {
-            if self.held && self.space_overview {
+            if self.overview_held() && self.space_overview {
                 self.ui.suspend_overview();
                 self.render();
             } else {
@@ -667,7 +705,7 @@ impl Runtime {
             // the native gesture; a held overview gets a fresh census now.
             self.overview_space = None;
             self.ui.reset_overview();
-            self.deadline = (self.held && self.space_overview).then(Instant::now);
+            self.deadline = (self.overview_held() && self.space_overview).then(Instant::now);
         }
     }
     fn clear_scroll(&mut self) {
@@ -686,7 +724,7 @@ impl Runtime {
             Command::FocusNext | Command::FocusPrevious | Command::AppNext | Command::AppPrevious
         );
         if navigation {
-            if self.navigation_display.is_none() || !self.held {
+            if self.navigation_display.is_none() || !self.overview_held() {
                 self.use_pointer_display();
             }
             if self
@@ -1033,7 +1071,7 @@ impl Runtime {
         self.render();
     }
     fn begin_scroll(&mut self, source: ScrollSource, axis: Axis) {
-        let display = if self.held {
+        let display = if self.overview_held() {
             self.navigation_display
                 .or_else(|| discovery::pointer_display(self.mtm))
         } else {
@@ -1468,7 +1506,7 @@ impl Runtime {
         }
         if context_changed {
             self.linger_until = None;
-            if self.held && self.space_overview {
+            if self.overview_held() && self.space_overview {
                 self.ui.refresh_overview();
             } else {
                 self.ui.reset_overview();
@@ -1636,9 +1674,9 @@ impl Runtime {
     }
     fn render(&self) {
         self.ui.validate_drag(&self.engine);
-        let keyboard = self.held && self.overlay_deadline.is_none();
+        let held = (self.held && self.overlay_deadline.is_none()) || self.edge_display.is_some();
         if self.config.overlay
-            && (keyboard
+            && (held
                 || self.gesture.is_some()
                 || self.click_travel.is_some()
                 || self.linger_until.is_some()
@@ -1660,7 +1698,7 @@ impl Runtime {
                 }
             }
         }
-        if self.space_until.is_some() && self.space_overview && keyboard && self.config.overlay {
+        if self.space_until.is_some() && self.space_overview && held && self.config.overlay {
             // Fresh overview data can render while focus remains paused;
             // discard click targets until the native transition settles.
             self.ui.sync_sources(&self.discovery);
@@ -1668,7 +1706,7 @@ impl Runtime {
             self.ui.suspend_overview();
             return;
         }
-        if (keyboard
+        if (held
             || self.gesture.is_some()
             || self.click_travel.is_some()
             || self.linger_until.is_some()
@@ -1729,6 +1767,12 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
         return event;
     }
     let modifiers = Modifiers::from_flags(CGEventGetFlags(event));
+    if matches!(ty, 5 | 6 | 7 | 27) {
+        enqueue(Event::PointerMoved {
+            point: CGEventGetLocation(event),
+            dragging: ty != 5,
+        });
+    }
     if matches!(ty, 1 | 2 | 6) {
         let q = QUEUE.load(Ordering::Acquire);
         if !q.is_null() {
@@ -1908,7 +1952,16 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         app.finishLaunching();
-        let mask = (1 << 22) | (1 << 1) | (1 << 2) | (1 << 6) | (1 << 10) | (1 << 11) | (1 << 12);
+        let mask = (1 << 22)
+            | (1 << 1)
+            | (1 << 2)
+            | (1 << 5)
+            | (1 << 6)
+            | (1 << 7)
+            | (1 << 27)
+            | (1 << 10)
+            | (1 << 11)
+            | (1 << 12);
         let Some(tap) = onboarding::wait(mtm, mask) else {
             return Ok(());
         };
@@ -2019,6 +2072,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             deadline: None,
             overlay_deadline: None,
             held: false,
+            edge_display: None,
             switch_feedback: false,
             mouse: false,
             dragging: false,

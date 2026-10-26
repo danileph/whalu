@@ -58,6 +58,24 @@ pub fn pointer_display(mtm: MainThreadMarker) -> Option<u32> {
     )
 }
 
+pub fn right_edge_display(mtm: MainThreadMarker, point: Point) -> Option<u32> {
+    NSScreen::screens(mtm)
+        .iter()
+        .map(|screen| display_id(&screen))
+        .find(|display| {
+            let frame = unsafe { CGDisplayBounds(*display) };
+            whalu::overview::at_right_edge(
+                Rect::new(
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                ),
+                (point.x, point.y),
+            )
+        })
+}
+
 fn pointer_display_among(mut displays: impl Iterator<Item = u32>) -> Option<u32> {
     // Quartz coordinates include the full display, including menu bar and Dock.
     let event = unsafe { Owned::new(CGEventCreate(std::ptr::null())) }?;

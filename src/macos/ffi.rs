@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 pub type Ref = *const c_void;
 pub type MutRef = *mut c_void;
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Point {
     pub x: f64,
     pub y: f64,

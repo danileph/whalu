@@ -95,6 +95,7 @@ pub(super) fn run(
     println!(
         "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
     );
+    right_edge_hover(&mut runtime, &tx)?;
     command_switching(&mut runtime, &tx, &ids)?;
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
         runtime.clear_scroll();
@@ -1419,6 +1420,92 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
     Ok(())
 }
 
+fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), String> {
+    runtime.clear_scroll();
+    runtime.held = false;
+    runtime.navigation_display = None;
+    runtime.reconcile(false);
+    let display = runtime.engine.display().ok_or("No hover fixture display")?;
+    let frame = unsafe { CGDisplayBounds(display) };
+    let edge = Point {
+        x: frame.origin.x + frame.size.width - 0.5,
+        y: frame.origin.y + frame.size.height / 2.,
+    };
+    let away = Point {
+        x: edge.x - 100.,
+        ..edge
+    };
+    let focused = runtime.engine.focused();
+    let native_focus = focused.filter(|id| runtime.native_focus_is(*id));
+    let send = |point, dragging| -> Result<(), String> {
+        tx.send(Event::PointerMoved { point, dragging })
+            .map_err(|error| error.to_string())
+    };
+    send(edge, true)?;
+    runtime.drain();
+    if runtime.ui.is_visible() || runtime.edge_display.is_some() {
+        return Err("Ordinary window drag opened edge overview".into());
+    }
+    send(edge, false)?;
+    runtime.drain();
+    if !runtime.ui.is_visible()
+        || runtime.ui.is_key()
+        || runtime.edge_display != Some(display)
+        || runtime.engine.display() != Some(display)
+        || native_focus.is_some_and(|id| !runtime.native_focus_is(id))
+    {
+        return Err(format!(
+            "Right-edge overview: visible={}, key={}, edge={:?}, display={:?} (expected {display}), native_focus_unchanged={}",
+            runtime.ui.is_visible(),
+            runtime.ui.is_key(),
+            runtime.edge_display,
+            runtime.engine.display(),
+            native_focus.is_none_or(|id| runtime.native_focus_is(id)),
+        ));
+    }
+    // Expire other ownership without moving the pointer: edge ownership must
+    // outlive navigation feedback, modifier release, and discovery callbacks.
+    runtime.linger_until = Some(Instant::now());
+    tx.send(Event::OverviewHeld(false))
+        .map_err(|error| error.to_string())?;
+    runtime.drain();
+    runtime.reconcile(false);
+    if !runtime.ui.is_visible() || runtime.linger_until.is_some() {
+        return Err("Stationary edge hover expired with feedback or a refresh".into());
+    }
+    send(away, false)?;
+    runtime.drain();
+    if !runtime.ui.is_visible() || runtime.linger_until.is_none() {
+        return Err("Leaving edge lost the dismissal grace period".into());
+    }
+    // Re-enter before expiry and ensure the obsolete deadline cannot hide it.
+    send(edge, false)?;
+    runtime.drain();
+    runtime.linger_until = Some(Instant::now());
+    runtime.drain();
+    if !runtime.ui.is_visible() {
+        return Err("Old dismissal deadline hid a re-entered edge overview".into());
+    }
+    runtime.held = true;
+    send(away, false)?;
+    runtime.drain();
+    runtime.linger_until = Some(Instant::now());
+    runtime.drain();
+    if !runtime.ui.is_visible() {
+        return Err("Leaving edge hid a keyboard-held overview".into());
+    }
+    tx.send(Event::OverviewHeld(false))
+        .map_err(|error| error.to_string())?;
+    runtime.drain();
+    if runtime.ui.is_visible() || runtime.edge_display.is_some() {
+        return Err("Overview remained open after all holds ended".into());
+    }
+    println!(
+        "PASS: right-edge hover opens its monitor without focus, survives stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
+    );
+    Ok(())
+}
+
 fn fixture_runtime(
     engine: Engine,
     discovery: Discovery,
@@ -1478,6 +1565,7 @@ fn fixture_runtime(
         deadline: None,
         overlay_deadline: None,
         held: false,
+        edge_display: None,
         switch_feedback: false,
         mouse: false,
         dragging: false,
