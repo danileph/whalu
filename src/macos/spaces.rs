@@ -58,6 +58,18 @@ pub(super) fn active_space(display: u32) -> Option<u64> {
     }
 }
 
+/// Read Dock's animation state without synthesizing a gesture or activating
+/// an application. Missing native support keeps the conservative timeout.
+pub(super) fn is_animating(display: u32) -> Option<bool> {
+    unsafe {
+        let connection: Connection = symbol(c"SLSMainConnectionID").ok()?;
+        let animating: Animating = symbol(c"SLSManagedDisplayIsAnimating").ok()?;
+        let uuid = Owned::new(CGDisplayCreateUUIDFromDisplayID(display))?;
+        let identifier = Owned::new(CFUUIDCreateString(null(), uuid.0))?;
+        Some(animating(connection(), identifier.0))
+    }
+}
+
 /// Rebind only Whalu's own overview after native fullscreen lifecycle drift.
 /// The panel remains non-key; this changes membership without activating an app
 /// or switching the user's desktop.

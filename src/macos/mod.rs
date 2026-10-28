@@ -136,6 +136,19 @@ enum ScrollSource {
     Trackpad(usize),
     Wheel,
 }
+// A destination-Space swipe can finish before the native transition guard.
+// Keep its latest intent, never a list of old-Space window IDs or focus effects.
+struct PendingSwipe {
+    device: usize,
+    axis: Axis,
+    display: u32,
+    space: u64,
+    offset: i32,
+    position: f64,
+    time: f64,
+    released: bool,
+    poll: Instant,
+}
 struct ActiveScroll {
     source: ScrollSource,
     session: ScrubSession,
@@ -198,6 +211,7 @@ struct Runtime {
     tap: Owned,
     gestures: Option<trackpad::Monitor>,
     gesture: Option<ActiveScroll>,
+    pending_swipe: Option<PendingSwipe>,
     click_travel: Option<ClickTravel>,
     pending_focus: Option<PendingFocus>,
     motion_due: Option<Instant>,
@@ -265,16 +279,18 @@ impl Runtime {
             if let Some(t) = self.timer.take() {
                 CFRunLoopTimerInvalidate(t.0);
             }
-            let scan_due =
-                if self.space_until.is_none() || (self.space_overview && self.overview_held()) {
-                    self.deadline
-                } else {
-                    None
-                };
+            let scan_due = if self.space_until.is_none()
+                || (self.space_overview && (self.overview_held() || self.pending_swipe.is_some()))
+            {
+                self.deadline
+            } else {
+                None
+            };
             let due = [
                 scan_due,
                 self.overlay_deadline,
                 self.space_until,
+                self.pending_swipe.as_ref().map(|p| p.poll),
                 self.motion_due,
                 self.linger_until,
                 self.click_travel.as_ref().map(|travel| travel.due),
@@ -392,6 +408,12 @@ impl Runtime {
                 }
                 Event::Gesture(device, event, time) => self.gesture_event(device, event, time),
                 Event::GestureMotion(device, position, time, sustained) => {
+                    if let Some(pending) =
+                        self.pending_swipe.as_mut().filter(|p| p.device == device)
+                    {
+                        pending.position = position;
+                        pending.time = time;
+                    }
                     if let Some(active) = self.gesture.as_mut().filter(|active| {
                         active.source == ScrollSource::Trackpad(device) && !active.released
                     }) {
@@ -601,6 +623,18 @@ impl Runtime {
             }
         }
         let now = Instant::now();
+        if let Some(pending) = self.pending_swipe.as_mut().filter(|p| p.poll <= now) {
+            if spaces::active_space(pending.display) != Some(pending.space) {
+                self.clear_scroll();
+                self.render();
+            } else if spaces::is_animating(pending.display) == Some(false) {
+                // A fresh destination gesture need not wait out the fallback
+                // timeout once Dock has actually finished its Space animation.
+                self.space_until = Some(now);
+            } else {
+                pending.poll = now + Duration::from_millis(16);
+            }
+        }
         if self.space_until.is_some_and(|d| d <= now) {
             self.space_until = None;
             self.deadline = None;
@@ -612,10 +646,12 @@ impl Runtime {
             self.space_transfer_target = None;
             self.space_transfer_window = None;
             self.space_overview = false;
+            self.resume_pending_swipe();
             for cmd in std::mem::take(&mut self.pending_commands) {
                 enqueue(Event::Command(cmd));
             }
-        } else if (self.space_until.is_none() || (self.space_overview && self.overview_held()))
+        } else if (self.space_until.is_none()
+            || (self.space_overview && (self.overview_held() || self.pending_swipe.is_some())))
             && self.deadline.is_some_and(|d| d <= now)
         {
             self.deadline = None;
@@ -633,6 +669,7 @@ impl Runtime {
         self.confirm_focus(now);
         if !self.overview_held()
             && self.gesture.is_none()
+            && self.pending_swipe.is_none()
             && self.click_travel.is_none()
             && self.linger_until.is_none()
             && !self.ui.pointer_active()
@@ -712,6 +749,7 @@ impl Runtime {
         self.ui.cancel_drag();
         self.click_travel = None;
         self.gesture = None;
+        self.pending_swipe = None;
         self.motion_due = None;
         self.linger_until = None;
     }
@@ -739,45 +777,46 @@ impl Runtime {
             // Stack edits and Space transfers act on the actual focused window.
             self.navigation_display = None;
         }
-        if (navigation || matches!(command, Command::Native(_))) && !self.modal {
-            if let Some(observed) = self.discovery.navigation_focus() {
-                if !self
-                    .engine
-                    .context()
-                    .is_some_and(|context| context.order.contains(&observed))
-                {
-                    // Fresh focus on another monitor cannot enter the old
-                    // monitor's cached stack. Rebuild its display/Space context.
-                    self.reconcile(false);
-                    self.deadline = None;
-                    return;
-                }
-                let visible: Vec<_> = self
-                    .discovery
-                    .handles
-                    .values()
-                    .filter(|handle| handle.visible)
-                    .map(|handle| handle.id)
-                    .collect();
-                let focused = self
-                    .pending_focus
-                    .as_ref()
-                    .map_or(Some(observed), |pending| {
-                        pending.observed(
-                            self.engine.current,
-                            &visible,
-                            Some(observed),
-                            Instant::now(),
-                        )
-                    });
-                if let Some(focused) = focused {
-                    self.engine.focus(focused);
-                }
-                return;
-            }
+        if (navigation || matches!(command, Command::Native(_)))
+            && !self.modal
+            && self.refresh_navigation_focus()
+        {
+            return;
         }
         self.reconcile(false);
         self.deadline = None;
+    }
+    /// Share keyboard's validated Quartz/AX fast path with swipe startup.
+    fn refresh_navigation_focus(&mut self) -> bool {
+        let Some(observed) = self.discovery.navigation_focus().filter(|id| {
+            self.engine
+                .context()
+                .is_some_and(|context| context.order.contains(id))
+        }) else {
+            return false;
+        };
+        let visible: Vec<_> = self
+            .discovery
+            .handles
+            .values()
+            .filter(|handle| handle.visible)
+            .map(|handle| handle.id)
+            .collect();
+        let focused = self
+            .pending_focus
+            .as_ref()
+            .map_or(Some(observed), |pending| {
+                pending.observed(
+                    self.engine.current,
+                    &visible,
+                    Some(observed),
+                    Instant::now(),
+                )
+            });
+        if let Some(focused) = focused {
+            self.engine.focus(focused);
+        }
+        true
     }
     fn select_thumbnail(&mut self, context: u64, window: u64) {
         if !self.ui.is_visible()
@@ -1107,7 +1146,12 @@ impl Runtime {
         self.motion_due = None;
         // Do not clear feedback before reconciliation: it can render, and a
         // momentary hidden panel would restart all animations between swipes.
-        if !reuse {
+        if !reuse
+            && (self.engine.display() != display
+                || self.switched_space
+                || self.modal
+                || !self.refresh_navigation_focus())
+        {
             self.reconcile(false);
             self.deadline = None;
         }
@@ -1155,11 +1199,91 @@ impl Runtime {
         self.render();
         target.is_some()
     }
+    fn resume_pending_swipe(&mut self) {
+        let Some(pending) = self.pending_swipe.take() else {
+            return;
+        };
+        if spaces::active_space(pending.display) != Some(pending.space)
+            || self.engine.display() != Some(pending.display)
+            || self.mouse
+            || self.modal
+        {
+            self.render();
+            return;
+        }
+        self.begin_scroll_on_display(
+            ScrollSource::Trackpad(pending.device),
+            pending.axis,
+            Some(pending.display),
+        );
+        let offset = if pending.released && pending.offset == 0 {
+            if pending.position > 0. {
+                1
+            } else if pending.position < 0. {
+                -1
+            } else {
+                0
+            }
+        } else {
+            pending.offset
+        };
+        self.select_scroll(offset);
+        if pending.released {
+            // Do not manufacture release velocity from time spent in a native slide.
+            self.release_scroll(pending.time);
+        }
+    }
     fn gesture_event(&mut self, device: usize, event: GestureEvent, time: f64) {
         if self.ui.pointer_active() {
             return;
         }
+        if let Some(pending) = self.pending_swipe.as_mut().filter(|p| p.device == device) {
+            match event {
+                GestureEvent::Update(offset) => {
+                    pending.offset = offset;
+                    pending.time = time;
+                }
+                GestureEvent::End { cancelled: false } => {
+                    pending.released = true;
+                    pending.time = time;
+                }
+                GestureEvent::End { cancelled: true } => {
+                    self.pending_swipe = None;
+                    self.render();
+                }
+                GestureEvent::Begin(_) => {}
+            }
+            return;
+        }
         match event {
+            GestureEvent::Begin(axis) if self.space_until.is_some() => {
+                // Only a new swipe after the workspace notification belongs to
+                // the destination. Four-finger handoff events remain discarded.
+                if !self.space_overview || self.space_transfer_display.is_some() || self.mouse {
+                    return;
+                }
+                let Some(display) = discovery::pointer_display(self.mtm) else {
+                    return;
+                };
+                let Some(space) = spaces::active_space(display) else {
+                    return;
+                };
+                self.navigation_display = Some(display);
+                self.reconcile(false);
+                self.pending_swipe = Some(PendingSwipe {
+                    device,
+                    axis,
+                    display,
+                    space,
+                    offset: 0,
+                    position: 0.,
+                    time,
+                    released: false,
+                    poll: Instant::now(),
+                });
+                self.render();
+                self.ui.preload_previews(&self.discovery);
+            }
             GestureEvent::Begin(axis) => self.begin_scroll(ScrollSource::Trackpad(device), axis),
             GestureEvent::Update(offset) => {
                 if self.gesture.as_ref().is_some_and(|active| {
@@ -1678,6 +1802,7 @@ impl Runtime {
         if self.config.overlay
             && (held
                 || self.gesture.is_some()
+                || self.pending_swipe.is_some()
                 || self.click_travel.is_some()
                 || self.linger_until.is_some()
                 || self.ui.pointer_active()
@@ -1698,7 +1823,11 @@ impl Runtime {
                 }
             }
         }
-        if self.space_until.is_some() && self.space_overview && held && self.config.overlay {
+        if self.space_until.is_some()
+            && self.space_overview
+            && (held || self.pending_swipe.is_some())
+            && self.config.overlay
+        {
             // Fresh overview data can render while focus remains paused;
             // discard click targets until the native transition settles.
             self.ui.sync_sources(&self.discovery);
@@ -1708,6 +1837,7 @@ impl Runtime {
         }
         if (held
             || self.gesture.is_some()
+            || self.pending_swipe.is_some()
             || self.click_travel.is_some()
             || self.linger_until.is_some()
             || self.ui.pointer_active())
@@ -2047,6 +2177,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             ui,
             observers: BTreeMap::new(),
             gesture: None,
+            pending_swipe: None,
             click_travel: None,
             pending_focus: None,
             motion_due: None,

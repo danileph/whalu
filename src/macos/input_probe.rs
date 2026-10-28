@@ -621,6 +621,7 @@ pub(super) fn run(
     println!(
         "PASS: four-finger handoff abandons active navigation and momentum before cancellation, blocks stale focus/moves, and settles without restoring the old window"
     );
+    post_space_swipe(&mut runtime, &tx)?;
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
     runtime.drain();
@@ -1555,6 +1556,7 @@ fn fixture_runtime(
         tap: tap.clone(),
         gestures: None,
         gesture: None,
+        pending_swipe: None,
         click_travel: None,
         pending_focus: None,
         motion_due: None,
@@ -1588,6 +1590,135 @@ fn fixture_runtime(
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     Ok((runtime, tx))
+}
+
+fn post_space_swipe(runtime: &mut Runtime, tx: &mpsc::Sender<Event>) -> Result<(), String> {
+    for release_before_settlement in [true, false] {
+        runtime.clear_scroll();
+        runtime.held = false;
+        runtime.edge_display = None;
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.gesture_event(91, GestureEvent::Begin(Axis::Vertical), 0.08);
+        let offset = if runtime
+            .engine
+            .context()
+            .is_some_and(|c| c.order.last().copied() == runtime.engine.focused())
+        {
+            -1
+        } else {
+            1
+        };
+        runtime.gesture_event(91, GestureEvent::Update(offset), 0.12);
+        // Hold the fallback guard to exercise a stroke that ends mid-animation;
+        // the separate native settlement check below uses Dock's real state.
+        runtime
+            .pending_swipe
+            .as_mut()
+            .ok_or("First post-Space swipe was discarded")?
+            .poll = Instant::now() + Duration::from_secs(2);
+        let pending = runtime
+            .pending_swipe
+            .as_ref()
+            .ok_or("First post-Space swipe was discarded")?;
+        let space = pending.space;
+        let display = pending.display;
+        let original = runtime.engine.focused();
+        let mut expected_session = ScrubSession::new(&runtime.engine, Axis::Vertical)
+            .ok_or("Missing post-Space fixture session")?;
+        expected_session.update(offset);
+        let expected = expected_session.selected();
+        if !runtime.engine.frozen || runtime.space_until.is_none() || runtime.gesture.is_some() {
+            return Err("Post-Space swipe bypassed the native focus guard".into());
+        }
+        runtime.ui.verify_onscreen()?;
+        if release_before_settlement {
+            tx.send(Event::Gesture(
+                91,
+                GestureEvent::End { cancelled: false },
+                0.16,
+            ))
+            .map_err(|e| e.to_string())?;
+            runtime.drain();
+        }
+        if runtime.engine.focused() != original {
+            return Err("Deferred swipe focused a window during the native transition".into());
+        }
+        runtime.space_until = Some(Instant::now());
+        runtime.drain();
+        if runtime.engine.focused() != expected
+            || runtime.pending_swipe.is_some()
+            || runtime.overview_space != Some((display, space))
+            || !runtime.ui.is_visible()
+        {
+            return Err("First post-Space swipe did not resume at settlement".into());
+        }
+        if let Some(expected) = expected {
+            let until = Instant::now() + Duration::from_millis(800);
+            while !runtime.native_focus_is(expected) {
+                if Instant::now() >= until {
+                    return Err("Resumed swipe did not change real native focus".into());
+                }
+                unsafe {
+                    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+                }
+            }
+        }
+        if !release_before_settlement {
+            tx.send(Event::Gesture(
+                91,
+                GestureEvent::End { cancelled: false },
+                0.9,
+            ))
+            .map_err(|e| e.to_string())?;
+            runtime.drain();
+        }
+        // A new native gesture/Space notification must cancel deferred input,
+        // including an already released stroke, without replaying its focus.
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.gesture_event(91, GestureEvent::Begin(Axis::Vertical), 1.);
+        runtime.gesture_event(91, GestureEvent::Update(-1), 1.1);
+        if runtime.pending_swipe.is_none() {
+            return Err("Missing deferred cancellation fixture".into());
+        }
+        tx.send(Event::NativeGesture).map_err(|e| e.to_string())?;
+        tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+        runtime.drain();
+        if runtime.pending_swipe.is_some() {
+            return Err("Rapid Space change retained a previous swipe".into());
+        }
+        runtime.space_until = Some(Instant::now());
+        runtime.drain();
+        if runtime.engine.focused() != expected {
+            return Err("Cancelled deferred swipe restored old focus".into());
+        }
+        runtime.clear_scroll();
+        runtime.render();
+    }
+    if let Some(display) = runtime.engine.display() {
+        if super::spaces::is_animating(display) == Some(false) {
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            tx.send(Event::Gesture(91, GestureEvent::Begin(Axis::Vertical), 2.))
+                .map_err(|e| e.to_string())?;
+            tx.send(Event::Gesture(91, GestureEvent::Update(-1), 2.1))
+                .map_err(|e| e.to_string())?;
+            runtime.drain();
+            if runtime.space_until.is_some()
+                || runtime.pending_swipe.is_some()
+                || runtime.gesture.is_none()
+            {
+                return Err("Settled native Space still waited for the fallback timeout".into());
+            }
+            runtime.gesture_event(91, GestureEvent::End { cancelled: false }, 2.2);
+            runtime.clear_scroll();
+            runtime.render();
+        }
+    }
+    println!(
+        "PASS: first post-Space swipe shows native onscreen thumbnails immediately, retains held/released intent through settlement, changes real focus, and cancels on rapid Space interruption"
+    );
+    Ok(())
 }
 
 pub(super) struct SpaceScenario {
@@ -1872,6 +2003,9 @@ pub(super) fn space_moves(
         if runtime.ui.is_visible() {
             return Err("Overview remained visible after modifier release".into());
         }
+        // Exercise the first three-finger stroke immediately after a real Space
+        // return, including a lift before the native guard has expired.
+        post_space_swipe(&mut runtime, &tx)?;
         // A long-lived hidden panel must survive fullscreen Space creation and
         // deletion, rather than merely following transfers while already open.
         runtime.space_until = Some(Instant::now());
