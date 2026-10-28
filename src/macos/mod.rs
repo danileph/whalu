@@ -77,6 +77,7 @@ pub(super) enum Event {
     Gesture(usize, GestureEvent, f64),
     GestureMotion(usize, f64, f64, bool),
     ContactBegan,
+    TouchOverview(usize, bool),
     Wheel(f64, f64),
     Settings,
     PreviewAccess,
@@ -224,6 +225,7 @@ struct Runtime {
     overlay_deadline: Option<Instant>,
     held: bool,
     edge_display: Option<u32>,
+    touch_overview: Option<usize>,
     switch_feedback: bool,
     mouse: bool,
     dragging: bool,
@@ -248,7 +250,7 @@ struct Runtime {
 }
 impl Runtime {
     fn overview_held(&self) -> bool {
-        self.held || self.edge_display.is_some()
+        self.held || self.edge_display.is_some() || self.touch_overview.is_some()
     }
 
     fn pointer_moved(&mut self, point: Point, dragging: bool) {
@@ -428,6 +430,7 @@ impl Runtime {
                     }
                 }
                 Event::ContactBegan => self.contact_began(),
+                Event::TouchOverview(device, held) => self.touch_overview(device, held),
                 Event::Wheel(delta, time) => self.wheel_event(delta, time),
                 Event::SelectThumbnail {
                     context,
@@ -482,6 +485,7 @@ impl Runtime {
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
                     if down {
+                        self.touch_overview = None;
                         self.navigation_display = self.edge_display;
                         self.pending_focus = None;
                         self.clear_scroll();
@@ -606,6 +610,7 @@ impl Runtime {
                     NSApplication::sharedApplication(self.mtm).terminate(None);
                 }
                 Event::TapDisabled => {
+                    self.touch_overview = None;
                     self.clear_scroll();
                     unsafe {
                         let q = QUEUE.load(Ordering::Acquire);
@@ -721,6 +726,9 @@ impl Runtime {
         }
     }
     fn yield_to_system(&mut self, space_changed: bool) {
+        if !space_changed {
+            self.touch_overview = None;
+        }
         self.switch_feedback = false;
         self.space_overview = space_changed;
         if !space_changed || !self.overview_held() {
@@ -1097,6 +1105,40 @@ impl Runtime {
         self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         self.render();
         self.save();
+    }
+    fn touch_overview(&mut self, device: usize, held: bool) {
+        if !held {
+            if self.touch_overview == Some(device) {
+                self.touch_overview = None;
+                self.render();
+            }
+            return;
+        }
+        if self.mouse
+            || self.ui.pointer_active()
+            || !self.config.overlay
+            || self.touch_overview.is_some_and(|owner| owner != device)
+        {
+            return;
+        }
+        if !self.overview_held() {
+            self.use_pointer_display();
+        }
+        self.touch_overview = Some(device);
+        // Contact opens a read-only preview. Directional recognition alone
+        // creates a navigation session and changes native window focus.
+        if self.space_until.is_none() || self.space_overview {
+            if self.engine.display() != self.navigation_display
+                || self.switched_space
+                || self.modal
+                || !self.refresh_navigation_focus()
+            {
+                self.reconcile(false);
+                self.deadline = None;
+            }
+            self.render();
+            self.ui.preload_previews(&self.discovery);
+        }
     }
     fn contact_began(&mut self) {
         // Resting or repositioning a finger after a click is not navigation.
@@ -1809,7 +1851,9 @@ impl Runtime {
     }
     fn render(&self) {
         self.ui.validate_drag(&self.engine);
-        let held = (self.held && self.overlay_deadline.is_none()) || self.edge_display.is_some();
+        let held = (self.held && self.overlay_deadline.is_none())
+            || self.edge_display.is_some()
+            || self.touch_overview.is_some();
         if self.config.overlay
             && (held
                 || self.gesture.is_some()
@@ -2223,6 +2267,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
             overlay_deadline: None,
             held: false,
             edge_display: None,
+            touch_overview: None,
             switch_feedback: false,
             mouse: false,
             dragging: false,

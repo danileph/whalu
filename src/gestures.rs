@@ -81,6 +81,14 @@ impl SwipeRecognizer {
     pub fn eligible(&self) -> bool {
         !self.blocked
     }
+    /// Stable, eligible three-contact sequence, even before directional motion.
+    pub fn overview_ready(&self) -> bool {
+        !self.blocked
+            && self.frames >= 3
+            && self
+                .triple_started
+                .is_some_and(|start| self.last_time - start >= 0.045)
+    }
     pub fn sustained(&self) -> bool {
         self.sustained
     }

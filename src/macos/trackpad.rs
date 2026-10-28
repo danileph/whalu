@@ -56,6 +56,7 @@ struct Tracked {
     recognizer: SwipeRecognizer,
     guard: ScrollGuard,
     contacts: usize,
+    overview: bool,
 }
 impl Tracked {
     fn feed(&mut self, device: usize, time: f64, contacts: &[Contact]) -> Vec<super::Event> {
@@ -78,6 +79,10 @@ impl Tracked {
         if native_gesture {
             events.push(super::Event::NativeGesture);
         }
+        let overview = contacts.len() == 3 && self.recognizer.overview_ready();
+        if overview && !self.overview {
+            events.push(super::Event::TouchOverview(device, true));
+        }
         events.extend(
             gestures
                 .into_iter()
@@ -94,6 +99,10 @@ impl Tracked {
                 self.recognizer.sustained(),
             ));
         }
+        if !overview && self.overview {
+            events.push(super::Event::TouchOverview(device, false));
+        }
+        self.overview = overview;
         events
     }
 }
@@ -171,6 +180,9 @@ fn cancel_device(device: Ref) {
     if let Ok(mut states) = RECOGNIZERS.lock() {
         if let Some(state) = states.get_mut(&(device as usize)) {
             state.guard = ScrollGuard::default();
+            if std::mem::take(&mut state.overview) {
+                super::enqueue(super::Event::TouchOverview(device as usize, false));
+            }
             for event in state.recognizer.cancel() {
                 super::enqueue(super::Event::Gesture(device as usize, event, 0.));
             }
@@ -308,6 +320,36 @@ mod tests {
                 y: 0.5,
             })
             .collect()
+    }
+
+    #[test]
+    fn stationary_contact_opens_once_and_release_closes_without_navigation() {
+        let mut tracked = Tracked::default();
+        tracked.feed(9, 0., &contacts(3, 0.3));
+        assert!(tracked.feed(9, 0.02, &contacts(3, 0.3)).is_empty());
+        let open = tracked.feed(9, 0.05, &contacts(3, 0.3));
+        assert!(matches!(
+            open.as_slice(),
+            [super::super::Event::TouchOverview(9, true)]
+        ));
+        assert!(tracked.feed(9, 1., &contacts(3, 0.3)).is_empty());
+        assert!(matches!(
+            tracked.feed(9, 1.1, &[]).as_slice(),
+            [super::super::Event::TouchOverview(9, false)]
+        ));
+    }
+
+    #[test]
+    fn four_finger_landing_never_opens_contact_overview() {
+        let mut tracked = Tracked::default();
+        tracked.feed(9, 0., &contacts(3, 0.3));
+        tracked.feed(9, 0.02, &contacts(3, 0.3));
+        let native = tracked.feed(9, 0.04, &contacts(4, 0.3));
+        assert!(matches!(
+            native.as_slice(),
+            [super::super::Event::NativeGesture]
+        ));
+        assert!(tracked.feed(9, 0.1, &contacts(3, 0.3)).is_empty());
     }
 
     #[test]

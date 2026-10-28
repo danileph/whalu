@@ -415,3 +415,38 @@ fn short_stroke_selects_both_directions_without_waiting_for_scrub_distance() {
         assert!(!recognizer.sustained());
     }
 }
+
+#[test]
+fn stationary_three_contacts_prepare_overview_before_directional_navigation() {
+    let mut recognizer = SwipeRecognizer::default();
+    for time in [0., 0.02] {
+        assert!(recognizer.feed(time, &contacts(3, 0., 0.)).is_empty());
+        assert!(!recognizer.overview_ready());
+    }
+    for time in [0.05, 0.3, 1., 3.] {
+        assert!(recognizer.feed(time, &contacts(3, 0., 0.)).is_empty());
+        assert!(recognizer.overview_ready());
+        assert!(!recognizer.active());
+    }
+    assert_eq!(
+        recognizer.feed(3.05, &contacts(3, 0., 0.04)),
+        vec![Event::Begin(Axis::Vertical), Event::Update(1)]
+    );
+    recognizer.feed(3.1, &[]);
+    assert!(!recognizer.overview_ready());
+}
+
+#[test]
+fn fourth_contact_and_late_third_contact_cannot_prepare_overview() {
+    let mut recognizer = SwipeRecognizer::default();
+    recognizer.feed(0., &contacts(3, 0., 0.));
+    recognizer.feed(0.02, &contacts(3, 0., 0.));
+    recognizer.feed(0.04, &contacts(4, 0., 0.));
+    assert!(!recognizer.overview_ready());
+    recognizer.feed(0.1, &contacts(3, 0., 0.));
+    assert!(!recognizer.overview_ready());
+    recognizer.feed(0.2, &[]);
+    recognizer.feed(1., &contacts(2, 0., 0.));
+    recognizer.feed(1.3, &contacts(3, 0., 0.));
+    assert!(!recognizer.overview_ready());
+}

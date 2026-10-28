@@ -621,6 +621,7 @@ pub(super) fn run(
     println!(
         "PASS: four-finger handoff abandons active navigation and momentum before cancellation, blocks stale focus/moves, and settles without restoring the old window"
     );
+    contact_overview(&mut runtime, &tx)?;
     rapid_swipes(&mut runtime, &tx, &ids)?;
     post_space_swipe(&mut runtime, &tx)?;
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
@@ -1569,6 +1570,7 @@ fn fixture_runtime(
         overlay_deadline: None,
         held: false,
         edge_display: None,
+        touch_overview: None,
         switch_feedback: false,
         mouse: false,
         dragging: false,
@@ -1591,6 +1593,109 @@ fn fixture_runtime(
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     Ok((runtime, tx))
+}
+
+fn contact_overview(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), String> {
+    runtime.clear_scroll();
+    runtime.held = false;
+    runtime.edge_display = None;
+    runtime.navigation_display = None;
+    runtime.render();
+    let original = runtime.engine.focused();
+    let frames: Vec<_> = runtime
+        .engine
+        .context()
+        .ok_or("No contact fixture")?
+        .order
+        .iter()
+        .map(|id| (*id, frame(runtime.discovery.handles[id].element.0)))
+        .collect();
+    tx.send(Event::TouchOverview(93, true))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    runtime.ui.verify_onscreen()?;
+    let epoch = runtime.ui.visibility_epoch();
+    runtime.advance_scroll(Instant::now() + Duration::from_secs(2));
+    if !runtime.ui.is_visible()
+        || runtime.gesture.is_some()
+        || runtime.engine.focused() != original
+        || original.is_some_and(|id| !runtime.native_focus_is(id))
+        || frames
+            .iter()
+            .any(|(id, before)| frame(runtime.discovery.handles[id].element.0) != *before)
+    {
+        return Err(
+            "Stationary contact changed focus/geometry or failed to hold the overview".into(),
+        );
+    }
+    tx.send(Event::TouchOverview(94, true))
+        .map_err(|e| e.to_string())?;
+    tx.send(Event::TouchOverview(94, false))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if !runtime.ui.is_visible() {
+        return Err("Another device closed the held overview".into());
+    }
+    tx.send(Event::TouchOverview(93, false))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.ui.is_visible() || runtime.engine.focused() != original {
+        return Err("Contact-only release did not dismiss without navigation".into());
+    }
+    tx.send(Event::TouchOverview(93, true))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    let epoch = runtime.ui.visibility_epoch().max(epoch);
+    let mut expected =
+        ScrubSession::new(&runtime.engine, Axis::Vertical).ok_or("No contact swipe fixture")?;
+    let direction = if runtime
+        .engine
+        .context()
+        .is_some_and(|c| c.order.last().copied() == original)
+    {
+        -1
+    } else {
+        1
+    };
+    expected.update(direction);
+    tx.send(Event::Gesture(93, GestureEvent::Begin(Axis::Vertical), 1.))
+        .map_err(|e| e.to_string())?;
+    tx.send(Event::Gesture(93, GestureEvent::Update(direction), 1.05))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.engine.focused() != expected.selected() || runtime.ui.visibility_epoch() != epoch {
+        return Err(
+            "Contact-to-swipe transition changed overview identity or missed selection".into(),
+        );
+    }
+    tx.send(Event::Gesture(
+        93,
+        GestureEvent::End { cancelled: false },
+        1.1,
+    ))
+    .map_err(|e| e.to_string())?;
+    tx.send(Event::TouchOverview(93, false))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if !runtime.ui.is_visible() || runtime.linger_until.is_none() {
+        return Err("Swipe release lost normal overview feedback".into());
+    }
+    runtime.clear_scroll();
+    tx.send(Event::TouchOverview(93, true))
+        .map_err(|e| e.to_string())?;
+    tx.send(Event::NativeGesture).map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.touch_overview.is_some() || runtime.ui.is_visible() {
+        return Err("Fourth-finger handoff retained contact preview".into());
+    }
+    runtime.space_until = Some(Instant::now());
+    runtime.drain();
+    runtime.clear_scroll();
+    runtime.render();
+    println!(
+        "PASS: stationary three-contact overview preserves native focus/geometry, stays visible while held, dismisses on lift, transitions to swiping without flicker, and yields to native gestures"
+    );
+    Ok(())
 }
 
 fn rapid_swipes(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> Result<(), String> {
@@ -2090,6 +2195,7 @@ pub(super) fn space_moves(
         if runtime.ui.is_visible() {
             return Err("Overview remained visible after modifier release".into());
         }
+        contact_overview(&mut runtime, &tx)?;
         // Exercise the first three-finger stroke immediately after a real Space
         // return, including a lift before the native guard has expired.
         post_space_swipe(&mut runtime, &tx)?;
