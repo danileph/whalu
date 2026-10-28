@@ -95,6 +95,7 @@ unsafe extern "C" {
     pub fn CFRunLoopTimerInvalidate(timer: Ref);
     pub static kCFRunLoopCommonModes: Ref;
     pub static kCFBooleanTrue: Ref;
+    pub static kCFBooleanFalse: Ref;
 }
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {

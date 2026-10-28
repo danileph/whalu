@@ -824,12 +824,10 @@ pub fn space_smoke() -> Result<(), String> {
             return Err(super::permission_help());
         }
         let _restore = RestoreFocus(NSWorkspace::sharedWorkspace().frontmostApplication());
-        let fixture = Fixture(
-            ProcessCommand::new(std::env::current_exe().map_err(|e| e.to_string())?)
-                .arg("--fixture")
-                .spawn()
-                .map_err(|e| e.to_string())?,
-        );
+        // The installed controller and its child must not share an app identity:
+        // activation would otherwise restore a sibling Space before Dock swipes.
+        let applications = FixtureApplications::new()?;
+        let fixture = applications.spawn(0, 4)?;
         let pid = fixture.0.id() as i32;
         let mut discovery = Discovery::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

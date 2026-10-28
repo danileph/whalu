@@ -1669,6 +1669,7 @@ pub(super) fn space_moves(
         runtime.drain();
         runtime.overlay_deadline = None;
         runtime.render();
+        runtime.ui.verify_onscreen()?;
         let check_previews = super::previews::available();
         runtime.ui.preload_previews(&runtime.discovery);
         if check_previews {
@@ -1680,6 +1681,15 @@ pub(super) fn space_moves(
                     return Err("Visible transfer preview did not warm".into());
                 }
             }
+        }
+        let fixture_window = runtime.discovery.handles[&id]
+            .quartz_id
+            .ok_or("No fixture identity")?;
+        let original_membership = super::spaces::window_space(fixture_window)?;
+        if super::spaces::bind_overview(fixture_window, source_space).is_ok()
+            || super::spaces::window_space(fixture_window)? != original_membership
+        {
+            return Err("Overview rebind accepted or moved a foreign fixture window".into());
         }
         let animations_before = super::spaces::animated_transfers();
         let mut cursor_changed = None;
@@ -1862,6 +1872,97 @@ pub(super) fn space_moves(
         if runtime.ui.is_visible() {
             return Err("Overview remained visible after modifier release".into());
         }
+        // A long-lived hidden panel must survive fullscreen Space creation and
+        // deletion, rather than merely following transfers while already open.
+        runtime.space_until = Some(Instant::now());
+        runtime.drain();
+        let element = runtime.discovery.handles[&id].element.clone();
+        for cycle in 0..4 {
+            refocus(&runtime)?;
+            let code =
+                AXUIElementSetAttributeValue(element.0, string("AXFullScreen").0, kCFBooleanTrue);
+            if code != 0 {
+                return Err(format!("Could not enter fixture fullscreen: AX {code}"));
+            }
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.03, false);
+                if bool_attr(element.0, "AXFullScreen")
+                    && super::spaces::active_space(
+                        runtime.engine.display().ok_or("No fullscreen display")?,
+                    ) != Some(source_space)
+                {
+                    break;
+                }
+                if Instant::now() >= until {
+                    return Err("Fixture fullscreen entry timed out".into());
+                }
+            }
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            runtime.drain();
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.8, false);
+            let code =
+                AXUIElementSetAttributeValue(element.0, string("AXFullScreen").0, kCFBooleanFalse);
+            if code != 0 {
+                return Err(format!("Could not exit fixture fullscreen: AX {code}"));
+            }
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.03, false);
+                if !bool_attr(element.0, "AXFullScreen")
+                    && super::spaces::active_space(
+                        runtime.engine.display().ok_or("No restored display")?,
+                    ) == Some(source_space)
+                {
+                    break;
+                }
+                if Instant::now() >= until {
+                    return Err("Fixture fullscreen exit timed out".into());
+                }
+            }
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.8, false);
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            runtime.space_until = Some(Instant::now());
+            runtime.drain();
+            refocus(&runtime)?;
+            if !super::spaces::move_adjacent(element.0, quartz, direction)? {
+                return Err("No destination after fullscreen".into());
+            }
+            refocus(&runtime)?;
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            runtime.space_until = Some(Instant::now());
+            runtime.drain();
+            let before_open = frame(element.0);
+            tx.send(Event::OverviewHeld(true))
+                .map_err(|e| e.to_string())?;
+            runtime.drain();
+            runtime.overlay_deadline = None;
+            runtime.render();
+            runtime
+                .ui
+                .verify_onscreen()
+                .map_err(|e| format!("After fullscreen cycle {cycle}: {e}"))?;
+            if runtime.ui.is_key()
+                || !runtime.native_focus_is(id)
+                || frame(element.0) != before_open
+            {
+                return Err("Overview rebinding changed native focus or fixture geometry".into());
+            }
+            tx.send(Event::OverviewHeld(false))
+                .map_err(|e| e.to_string())?;
+            runtime.drain();
+            refocus(&runtime)?;
+            if !super::spaces::move_adjacent(element.0, quartz, !direction)? {
+                return Err("No return after fullscreen".into());
+            }
+            refocus(&runtime)?;
+            tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
+            runtime.space_until = Some(Instant::now());
+            runtime.drain();
+        }
+        println!(
+            "PASS: hidden overview remains on-screen after four fullscreen Space creation/deletion cycles and desktop returns"
+        );
         println!(
             "PASS: five Runtime Space moves with modifiers continuously held, unchanged cursor, visible non-key overview, refreshed destination lists, preserved focus/geometry, and source-window isolation"
         );

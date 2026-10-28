@@ -164,6 +164,36 @@ impl Ui {
     pub fn is_key(&self) -> bool {
         self.panel.isKeyWindow()
     }
+    /// AppKit can report an ordered window as visible on an inactive Space.
+    /// Diagnostics must check actual compositor visibility as well.
+    pub fn verify_onscreen(&self) -> Result<(), String> {
+        use super::ffi::*;
+        let until = Instant::now() + Duration::from_millis(500);
+        loop {
+            let onscreen = unsafe { Owned::new(CGWindowListCopyWindowInfo(17, 0)) }.is_some_and(
+                |list| unsafe {
+                    array(list.0).into_iter().any(|entry| {
+                        number(dict(entry, "kCGWindowNumber")) as u32
+                            == self.panel.windowNumber() as u32
+                    })
+                },
+            );
+            if self.panel.isVisible() && self.panel.isOnActiveSpace() && onscreen {
+                return Ok(());
+            }
+            if Instant::now() >= until {
+                return Err(format!(
+                    "Overview missing from active Space: visible {}, active {}, onscreen {}, behavior {}, membership {:?}",
+                    self.panel.isVisible(),
+                    self.panel.isOnActiveSpace(),
+                    onscreen,
+                    self.panel.collectionBehavior().0,
+                    super::spaces::window_space(self.panel.windowNumber() as u32)
+                ));
+            }
+            unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false) };
+        }
+    }
     pub fn selected_thumbnail(&self) -> Option<u64> {
         self.cards
             .borrow()
@@ -431,6 +461,7 @@ impl Ui {
             sample.set_display_visible(display, 1, &ids, Some(ids[count / 2]));
             self.hide();
             self.show(&sample);
+            self.verify_onscreen()?;
             let expected = rect(
                 bounds.origin.x,
                 bounds.origin.y + (bounds.size.height - height) / 2.,
@@ -968,6 +999,21 @@ impl Ui {
                 .collect(),
         });
         drop(cards);
+        // A fullscreen Space round trip can strand this long-lived panel on
+        // its former desktop despite CanJoinAllSpaces and isVisible remaining
+        // set. Validate native membership instead of trusting those cached flags.
+        if !self.panel.isOnActiveSpace() {
+            if let Some(space) = display.and_then(super::spaces::active_space) {
+                let window = self.panel.windowNumber() as u32;
+                eprintln!(
+                    "Overview Space rebind: window {window}, display {display:?}, target {space}, previous {:?}",
+                    super::spaces::window_space(window)
+                );
+                if let Err(error) = super::spaces::bind_overview(window, space) {
+                    eprintln!("Overview Space rebind failed: {error}");
+                }
+            }
+        }
         self.panel.orderFrontRegardless();
         if !animate {
             // Ordering a hidden panel lets AppKit initialize backing-layer

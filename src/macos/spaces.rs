@@ -58,6 +58,36 @@ pub(super) fn active_space(display: u32) -> Option<u64> {
     }
 }
 
+/// Rebind only Whalu's own overview after native fullscreen lifecycle drift.
+/// The panel remains non-key; this changes membership without activating an app
+/// or switching the user's desktop.
+pub(super) fn bind_overview(window: u32, space: u64) -> Result<(), String> {
+    unsafe {
+        let list =
+            Owned::new(CGWindowListCopyWindowInfo(0, 0)).ok_or("Cannot inspect overview owner")?;
+        let owned = array(list.0).into_iter().any(|entry| {
+            number(dict(entry, "kCGWindowNumber")) as u32 == window
+                && number(dict(entry, "kCGWindowOwnerPID")) as u32 == std::process::id()
+        });
+        if !owned {
+            return Err("Refusing to rebind a foreign overview window".into());
+        }
+        let value = i64::from(window);
+        let number = Owned::new(CFNumberCreate(null(), 4, (&value as *const i64).cast()))
+            .ok_or("Cannot create overview identity")?;
+        let windows = Owned::new(CFArrayCreate(null(), &number.0, 1, null()))
+            .ok_or("Cannot create overview list")?;
+        let class = AnyClass::get(c"SLSBridgedMoveWindowsToManagedSpaceOperation")
+            .ok_or("Native overview rebinding unavailable")?;
+        validate_bridge(class)?;
+        let allocated: *mut AnyObject = msg_send![class, alloc];
+        let operation: *mut AnyObject = msg_send![allocated, initWithWindows: &*(windows.0 as *const AnyObject), spaceID: space];
+        let operation = Retained::from_raw(operation).ok_or("Cannot create overview rebind")?;
+        perform_bridge(class, &operation);
+        Ok(())
+    }
+}
+
 pub fn move_adjacent(element: Ref, window: u32, forward: bool) -> Result<bool, String> {
     unsafe {
         let connection: Connection = symbol(c"SLSMainConnectionID")?;
