@@ -91,6 +91,7 @@ fn pointer_display_among(mut displays: impl Iterator<Item = u32>) -> Option<u32>
 pub struct Discovery {
     pub handles: BTreeMap<WindowId, NativeWindow>,
     next: u64,
+    pub(super) scan_count: u64,
     navigation_state: Option<Vec<QuartzWindow>>,
 }
 impl Discovery {
@@ -98,6 +99,7 @@ impl Discovery {
         Self {
             handles: BTreeMap::new(),
             next: 0,
+            scan_count: 0,
             navigation_state: None,
         }
     }
@@ -225,6 +227,7 @@ impl Discovery {
         })
     }
     pub fn scan(&mut self, mtm: MainThreadMarker, ignored: &[String]) -> Snapshot {
+        self.scan_count += 1;
         let bounds = display_bounds(mtm);
         let quartz = quartz_windows(16);
         let workspace = NSWorkspace::sharedWorkspace();

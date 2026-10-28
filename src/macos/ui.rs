@@ -29,7 +29,11 @@ define_class!(
     unsafe impl NSObjectProtocol for Delegate {}
     impl Delegate {
         #[unsafe(method(changed:))]
-        fn changed(&self,_note:&NSNotification) {enqueue(Event::Dirty);}
+        fn changed(&self,note:&NSNotification) {
+            enqueue(if note.name().to_string() == "NSWorkspaceDidActivateApplicationNotification" {
+                Event::FocusChanged
+            } else { Event::Dirty });
+        }
         #[unsafe(method(spaceChanged:))]
         fn space_changed(&self,_note:&NSNotification) {enqueue(Event::SpaceChanged);}
         #[unsafe(method(displaysChanged:))]

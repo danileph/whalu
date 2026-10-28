@@ -157,7 +157,7 @@ impl SwipeRecognizer {
         let mut events = vec![];
         if self.axis.is_none() {
             // Give normal four-finger landings time to reveal the fourth contact.
-            if self.frames < 3 || time - self.triple_started.unwrap() < 0.075 {
+            if self.frames < 3 || time - self.triple_started.unwrap() < 0.045 {
                 return vec![];
             }
             let axis = if dx.abs() > dy.abs() * 1.45 {
@@ -228,7 +228,13 @@ impl SwipeRecognizer {
             let gain = 1. + 2.2 * (speed / 12.).clamp(0., 1.).powf(1.2);
             self.scroll_position += delta * gain;
         } else {
-            self.scroll_position = position.clamp(-self.step, self.step);
+            // Short strokes select on recognition, not on finger lift. Keep
+            // that one-slot selection stable until motion crosses the origin.
+            self.scroll_position = if position.abs() >= self.step * 0.3 {
+                position.signum() * self.step
+            } else {
+                self.offset.clamp(-1, 1) as f64 * self.step
+            };
         }
         let mut offset = self.offset;
         // Schmitt thresholds prevent selection oscillation around cell boundaries.

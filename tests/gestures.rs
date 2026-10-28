@@ -362,3 +362,56 @@ fn rapid_separate_swipes_each_move_one_slot_without_carrying_acceleration() {
         );
     }
 }
+
+#[test]
+fn four_rapid_short_strokes_select_at_recognition_before_each_lift() {
+    let mut recognizer = SwipeRecognizer::default();
+    for stroke in 0..4 {
+        let t = stroke as f64 * 0.12;
+        assert!(recognizer.feed(t, &contacts(3, 0., 0.)).is_empty());
+        assert!(recognizer.feed(t + 0.02, &contacts(3, 0., 0.02)).is_empty());
+        assert_eq!(
+            recognizer.feed(t + 0.05, &contacts(3, 0., 0.04)),
+            vec![Event::Begin(Axis::Vertical), Event::Update(1)]
+        );
+        // Slight recoil below recognition travel must not undo/repeat a slot.
+        assert!(
+            recognizer
+                .feed(t + 0.065, &contacts(3, 0., 0.033))
+                .is_empty()
+        );
+        assert!(recognizer.feed(t + 0.08, &contacts(3, 0., 0.07)).is_empty());
+        assert!(!recognizer.sustained());
+        assert_eq!(
+            recognizer.feed(t + 0.09, &[]),
+            vec![Event::End { cancelled: false }]
+        );
+    }
+}
+
+#[test]
+fn short_stroke_selects_both_directions_without_waiting_for_scrub_distance() {
+    for direction in [-1., 1.] {
+        let mut recognizer = SwipeRecognizer::default();
+        recognizer.feed(0., &contacts(3, 0., 0.));
+        recognizer.feed(0.02, &contacts(3, direction * 0.02, 0.));
+        assert_eq!(
+            recognizer.feed(0.05, &contacts(3, direction * 0.04, 0.)),
+            vec![
+                Event::Begin(Axis::Horizontal),
+                Event::Update(direction as i32)
+            ]
+        );
+        assert!(
+            recognizer
+                .feed(0.2, &contacts(3, direction * 0.04, 0.))
+                .is_empty()
+        );
+        assert!(
+            recognizer
+                .feed(1., &contacts(3, direction * 0.04, 0.))
+                .is_empty()
+        );
+        assert!(!recognizer.sustained());
+    }
+}

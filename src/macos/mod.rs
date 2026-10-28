@@ -46,6 +46,7 @@ static DISPATCH: Mutex<Option<(Sender<Event>, usize)>> = Mutex::new(None);
 #[derive(Debug)]
 pub(super) enum Event {
     Dirty,
+    FocusChanged,
     DisplaysChanged,
     SpaceChanged,
     OverviewRefresh,
@@ -325,10 +326,12 @@ impl Runtime {
         }
     }
     fn drain(&mut self) {
+        let mut focus_changed = false;
         while let Ok(event) = self.rx.try_recv() {
             let window_switch = matches!(event, Event::WindowSwitch(_));
             match event {
                 Event::Dirty => self.deadline = Some(Instant::now() + Duration::from_millis(70)),
+                Event::FocusChanged => focus_changed = true,
                 Event::DisplaysChanged => {
                     // Rebuild display geometry without treating a monitor change
                     // as a new Space or retaining clicks in the old coordinates.
@@ -620,6 +623,14 @@ impl Runtime {
                         CGEventTapEnable(self.tap.0, true);
                     }
                 }
+            }
+        }
+        if focus_changed && self.space_until.is_none() && !self.mouse {
+            let before = self.engine.focused();
+            if self.modal || !self.refresh_navigation_focus() {
+                self.deadline = Some(Instant::now() + Duration::from_millis(70));
+            } else if self.engine.focused() != before {
+                self.render();
             }
         }
         let now = Instant::now();
@@ -1862,8 +1873,16 @@ impl Runtime {
         }
     }
 }
-unsafe extern "C" fn ax_callback(_: Ref, _: Ref, _: Ref, _: MutRef) {
-    enqueue(Event::Dirty);
+unsafe extern "C" fn ax_callback(_: Ref, _: Ref, notification: Ref, _: MutRef) {
+    let focus_only = matches!(
+        text(notification).as_deref(),
+        Some("AXFocusedWindowChanged" | "AXMainWindowChanged" | "AXApplicationActivated")
+    );
+    enqueue(if focus_only {
+        Event::FocusChanged
+    } else {
+        Event::Dirty
+    });
 }
 unsafe extern "C" fn timer_callback(_: Ref, _: MutRef) {
     wake();

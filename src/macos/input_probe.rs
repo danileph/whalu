@@ -621,6 +621,7 @@ pub(super) fn run(
     println!(
         "PASS: four-finger handoff abandons active navigation and momentum before cancellation, blocks stale focus/moves, and settles without restoring the old window"
     );
+    rapid_swipes(&mut runtime, &tx, &ids)?;
     post_space_swipe(&mut runtime, &tx)?;
     prepare(&mut runtime, ScrollSource::Trackpad(1))?;
     tx.send(Event::SpaceChanged).map_err(|e| e.to_string())?;
@@ -1590,6 +1591,92 @@ fn fixture_runtime(
         _lock: std::fs::File::open("/dev/null").map_err(|e| e.to_string())?,
     };
     Ok((runtime, tx))
+}
+
+fn rapid_swipes(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> Result<(), String> {
+    use whalu::gestures::{Contact, SwipeRecognizer};
+    runtime.clear_scroll();
+    runtime.held = false;
+    runtime.edge_display = None;
+    runtime.navigation_display = runtime.engine.display();
+    runtime.apply(vec![Effect::Focus(ids[0])]);
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, false);
+    }
+    runtime.reconcile(false);
+    runtime.deadline = None;
+    let scans = runtime.discovery.scan_count;
+    let mut recognizer = SwipeRecognizer::default();
+    let mut slowest = Duration::ZERO;
+    for (stroke, direction) in [1., 1., 1., -1.].into_iter().enumerate() {
+        let t = stroke as f64 * 0.12;
+        let mut expected =
+            ScrubSession::new(&runtime.engine, Axis::Vertical).ok_or("No rapid swipe session")?;
+        expected.update(direction as i32);
+        for (dt, distance) in [(0., 0.), (0.02, 0.02), (0.05, 0.04)] {
+            let contacts: Vec<_> = (0..3)
+                .map(|id| Contact {
+                    id,
+                    x: 0.3 + id as f64 * 0.08,
+                    y: 0.4 + direction * distance,
+                })
+                .collect();
+            let started = Instant::now();
+            for event in recognizer.feed(t + dt, &contacts) {
+                tx.send(Event::Gesture(92, event, t + dt))
+                    .map_err(|e| e.to_string())?;
+            }
+            runtime.drain();
+            slowest = slowest.max(started.elapsed());
+        }
+        if runtime.engine.focused() != expected.selected() || runtime.gesture.is_none() {
+            return Err("Rapid short swipe waited for finger lift to select".into());
+        }
+        // Production AX main/focused-window and workspace activation callbacks
+        // all report focus-only changes. Their burst must not schedule a census.
+        for _ in 0..4 {
+            tx.send(Event::FocusChanged).map_err(|e| e.to_string())?;
+        }
+        runtime.drain();
+        for event in recognizer.feed(t + 0.09, &[]) {
+            tx.send(Event::Gesture(92, event, t + 0.09))
+                .map_err(|e| e.to_string())?;
+        }
+        runtime.drain();
+        if runtime.discovery.scan_count != scans || runtime.deadline.is_some() {
+            return Err("Rapid swipe focus acknowledgments scheduled a full discovery scan".into());
+        }
+    }
+    let expected = runtime.engine.focused().ok_or("No rapid swipe selection")?;
+    let until = Instant::now() + Duration::from_millis(800);
+    while !runtime.native_focus_is(expected) {
+        if Instant::now() >= until {
+            return Err("Rapid swipe burst did not reach real native focus".into());
+        }
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+        }
+    }
+    // Invalid cohort data must still fall back to discovery; structural dirty
+    // events keep their original census path regardless of focus notifications.
+    runtime.discovery.invalidate_navigation();
+    tx.send(Event::FocusChanged).map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.deadline.is_none() {
+        return Err("Invalid focus cache did not request discovery".into());
+    }
+    runtime.deadline = Some(Instant::now());
+    runtime.drain();
+    if runtime.discovery.scan_count == scans {
+        return Err("Invalid focus cache skipped discovery".into());
+    }
+    runtime.clear_scroll();
+    runtime.render();
+    println!(
+        "PASS: four rapid recognized strokes select before lift without census scans, retain real native focus, and reject invalid caches; slowest fixture input turn {:.2} ms",
+        slowest.as_secs_f64() * 1000.
+    );
+    Ok(())
 }
 
 fn post_space_swipe(runtime: &mut Runtime, tx: &mpsc::Sender<Event>) -> Result<(), String> {
