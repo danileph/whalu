@@ -53,6 +53,49 @@ pub enum KeyRoute {
     Consume(Option<Command>),
     Native(NativeShortcut),
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonRoute {
+    Pass,
+    Consume(Option<Command>),
+}
+
+/// Back/forward presses belong to the overview only if it was visible at
+/// button-down. Keep that ownership through release, even after dismissal.
+#[derive(Default)]
+pub struct OverviewButtons {
+    pressed: [Option<bool>; 2],
+}
+impl OverviewButtons {
+    pub fn route(&mut self, visible: bool, kind: u32, button: i64) -> ButtonRoute {
+        let (index, command) = match button {
+            3 => (0, Command::FocusPrevious),
+            4 => (1, Command::FocusNext),
+            _ => return ButtonRoute::Pass,
+        };
+        match kind {
+            25 => {
+                let first = self.pressed[index].is_none();
+                let owned = *self.pressed[index].get_or_insert(visible);
+                if owned {
+                    ButtonRoute::Consume(first.then_some(command))
+                } else {
+                    ButtonRoute::Pass
+                }
+            }
+            26 => {
+                if self.pressed[index].take() == Some(true) {
+                    ButtonRoute::Consume(None)
+                } else {
+                    ButtonRoute::Pass
+                }
+            }
+            27 if self.pressed[index] == Some(true) => ButtonRoute::Consume(None),
+            _ => ButtonRoute::Pass,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ShortcutRouter {
     held: std::collections::BTreeMap<u16, Command>,

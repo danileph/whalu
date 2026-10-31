@@ -324,6 +324,7 @@ impl Ui {
     pub fn suspend_overview(&self) {
         self.cancel_drag();
         self.panel.setIgnoresMouseEvents(true);
+        self.clicks.targets.borrow_mut().take();
         self.clicks.reset();
         self.visibility_epoch.set(self.visibility_epoch.get() + 1);
     }
@@ -1298,6 +1299,13 @@ pub(super) enum ClickRoute {
     },
 }
 impl ThumbnailClicks {
+    /// Visibility and identity without AppKit/AX calls from an input callback.
+    pub fn navigation_target(&self) -> Option<(u64, u64)> {
+        let targets = self.targets.try_borrow().ok()?;
+        let map = targets.as_ref()?;
+        (!map.cards.is_empty()).then_some((map.context, map.epoch))
+    }
+
     /// Cached geometry only: safe for the event tap, including card gaps.
     /// Hidden/suspended overviews remove this map and cannot capture new scrolls.
     pub fn contains_pointer(&self, point: NSPoint) -> bool {

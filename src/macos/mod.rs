@@ -1,5 +1,6 @@
 //! All native callbacks enqueue work; Accessibility calls never run in the event tap.
 #![allow(unsafe_op_in_unsafe_fn)]
+mod buttons;
 mod discovery;
 mod ffi;
 mod input_probe;
@@ -55,6 +56,11 @@ pub(super) enum Event {
     NativeGesture,
     Command(Command),
     WindowSwitch(Command),
+    OverviewButton {
+        context: u64,
+        epoch: u64,
+        command: Command,
+    },
     OverviewHeld(bool),
     PointerMoved {
         point: Point,
@@ -463,6 +469,13 @@ impl Runtime {
                 Event::ContactBegan => self.contact_began(),
                 Event::TouchOverview(device, held) => self.touch_overview(device, held),
                 Event::Wheel(delta, time) => self.wheel_event(delta, time),
+                Event::OverviewButton {
+                    context,
+                    epoch,
+                    command,
+                } => {
+                    self.overview_button(context, epoch, command);
+                }
                 Event::SelectThumbnail {
                     context,
                     window,
@@ -804,6 +817,42 @@ impl Runtime {
         self.pending_swipe = None;
         self.motion_due = None;
         self.linger_until = None;
+    }
+    fn overview_button(&mut self, context: u64, epoch: u64, command: Command) {
+        if self.ui.clicks.navigation_target() != Some((context, epoch))
+            || !self.ui.is_visible()
+            || context != self.engine.current
+            || self.engine.frozen
+            || self.space_until.is_some()
+            || self.mouse
+            || self.ui.pointer_active()
+            || !matches!(command, Command::FocusNext | Command::FocusPrevious)
+        {
+            return;
+        }
+        // Keep the displayed monitor even when the pointer is elsewhere, and
+        // interrupt previous swipe/wheel/click motion before taking one step.
+        self.navigation_display = self.engine.display();
+        self.clear_scroll();
+        self.overlay_deadline = None;
+        // Reconciliation may render. Preserve continuity when a swipe or
+        // transient feedback was the overview's only owner.
+        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+        if !self.refresh_navigation_focus() {
+            self.reconcile(false);
+            self.deadline = None;
+        }
+        if context != self.engine.current
+            || self.ui.clicks.navigation_target() != Some((context, epoch))
+            || self.engine.frozen
+            || self.space_until.is_some()
+        {
+            return;
+        }
+        let effects = self.engine.command(command);
+        self.apply(effects);
+        self.render();
+        self.save();
     }
     fn use_pointer_display(&mut self) {
         self.navigation_display = discovery::pointer_display(self.mtm);
@@ -2248,6 +2297,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         CGEventTapEnable(tap.0, true);
         let ui = ui::Ui::new(mtm);
         queue.clicks = ui.clicks.clone();
+        let _button_tap = buttons::Tap::start(ui.clicks.clone(), queue.tx.clone(), source.0)?;
         let center = NSWorkspace::sharedWorkspace().notificationCenter();
         for name in [
             "NSWorkspaceDidLaunchApplicationNotification",

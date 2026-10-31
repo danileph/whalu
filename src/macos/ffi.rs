@@ -81,6 +81,7 @@ unsafe extern "C" {
     pub fn CFRunLoopSourceSignal(source: Ref);
     pub fn CFRunLoopWakeUp(runloop: Ref);
     pub fn CFMachPortCreateRunLoopSource(a: Ref, port: Ref, order: isize) -> Ref;
+    pub fn CFMachPortInvalidate(port: Ref);
     pub fn CFAbsoluteTimeGetCurrent() -> f64;
     pub fn CFRunLoopTimerCreate(
         a: Ref,
@@ -146,6 +147,7 @@ unsafe extern "C" {
     pub fn CGEventPost(location: u32, event: Ref);
     pub fn CGEventGetFlags(event: Ref) -> u64;
     pub fn CGEventCreate(source: Ref) -> Ref;
+    pub fn CGEventCreateMouseEvent(source: Ref, kind: u32, point: Point, button: u32) -> Ref;
     pub fn CGEventGetLocation(event: Ref) -> Point;
     pub fn CGEventGetDoubleValueField(event: Ref, field: u32) -> f64;
     pub fn CGEventGetIntegerValueField(event: Ref, field: u32) -> i64;

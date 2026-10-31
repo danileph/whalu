@@ -92,6 +92,7 @@ pub(super) fn run(
     runtime.held = false;
     runtime.navigation_display = None;
     runtime.ui.hide();
+    overview_buttons(&mut runtime, &tx, &ids)?;
     println!(
         "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
     );
@@ -1843,6 +1844,143 @@ fn hover_scrolling(
     }
     println!(
         "PASS: hovered thumbnail region routes mouse wheel and two-finger scrolling without modifiers, changes real native focus, consumes owned momentum, and passes fresh outside/hidden-region scrolling"
+    );
+    Ok(())
+}
+
+fn overview_buttons(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> Result<(), String> {
+    let mut tap = buttons::Tap::start(runtime.ui.clicks.clone(), tx.clone(), null())?;
+    let event = unsafe {
+        Owned::new(CGEventCreateMouseEvent(
+            null(),
+            25,
+            Point {
+                x: -1000.,
+                y: -1000.,
+            },
+            4,
+        ))
+    }
+    .ok_or("No side-button fixture event")?;
+    let route = |tap: &mut buttons::Tap, kind, button| {
+        unsafe {
+            CGEventSetIntegerValueField(event.0, 3, button);
+        }
+        tap.verify_event(kind, event.0 as MutRef)
+    };
+    let settle = |runtime: &Runtime, id| -> Result<(), String> {
+        let until = Instant::now() + Duration::from_millis(800);
+        while !runtime.native_focus_is(id) {
+            if Instant::now() >= until {
+                return Err("Side-button selection did not change real native focus".into());
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+            }
+        }
+        Ok(())
+    };
+    for source in [
+        "modifiers",
+        "Command switch",
+        "hover",
+        "contact",
+        "swipe",
+        "wheel",
+        "feedback",
+    ] {
+        runtime.clear_scroll();
+        runtime.held = false;
+        runtime.switch_feedback = false;
+        runtime.edge_display = None;
+        runtime.touch_overview = None;
+        runtime.overlay_deadline = None;
+        runtime.ui.hide();
+        runtime.apply(vec![Effect::Focus(ids[1])]);
+        settle(runtime, ids[1])?;
+        if route(&mut tap, 25, 4) || route(&mut tap, 26, 4) {
+            return Err("Hidden overview captured a side button".into());
+        }
+        runtime.navigation_display = runtime.engine.display();
+        match source {
+            "modifiers" => runtime.held = true,
+            "Command switch" => {
+                runtime.held = true;
+                runtime.switch_feedback = true;
+            }
+            "hover" => runtime.edge_display = runtime.engine.display(),
+            "contact" => runtime.touch_overview = Some(97),
+            "swipe" => runtime.begin_scroll(ScrollSource::Trackpad(97), Axis::Vertical),
+            "wheel" => runtime.begin_scroll(ScrollSource::Wheel, Axis::Vertical),
+            _ => runtime.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK),
+        }
+        runtime.render();
+        runtime.ui.verify_onscreen()?;
+        let epoch = runtime.ui.visibility_epoch();
+        for (button, expected) in [(4, ids[2]), (3, ids[1])] {
+            if !route(&mut tap, 25, button) || !route(&mut tap, 25, button) {
+                return Err(format!(
+                    "{source} overview did not capture side-button down"
+                ));
+            }
+            runtime.drain();
+            if runtime.engine.focused() != Some(expected)
+                || !runtime.ui.is_visible()
+                || runtime.ui.visibility_epoch() != epoch
+            {
+                return Err(format!(
+                    "{source} overview missed or repeated a side-button selection: button={button}, expected={expected}, actual={:?}, visible={}, epoch={}/{epoch}",
+                    runtime.engine.focused(),
+                    runtime.ui.is_visible(),
+                    runtime.ui.visibility_epoch()
+                ));
+            }
+            settle(runtime, expected)?;
+            if !route(&mut tap, 26, button) {
+                return Err("Owned side-button release leaked".into());
+            }
+            runtime.drain();
+        }
+        // A queued button must not act on an old or reopened overview.
+        let before = runtime.engine.focused();
+        route(&mut tap, 25, 4);
+        runtime.ui.dismiss();
+        runtime.drain();
+        if runtime.engine.focused() != before || !route(&mut tap, 26, 4) {
+            return Err("Dismissal replayed stale side-button input or leaked its release".into());
+        }
+        if route(&mut tap, 25, 3) || route(&mut tap, 26, 3) {
+            return Err("Dismissing overview captured a fresh side button".into());
+        }
+    }
+    runtime.clear_scroll();
+    runtime.held = true;
+    runtime.edge_display = None;
+    runtime.touch_overview = None;
+    runtime.render();
+    let before = runtime.engine.focused();
+    route(&mut tap, 25, 4);
+    runtime.ui.hide();
+    runtime.render();
+    runtime.drain();
+    if runtime.engine.focused() != before || !route(&mut tap, 26, 4) {
+        return Err("Reopening the same overview replayed an obsolete side-button press".into());
+    }
+    for button in [0, 1, 2, 5] {
+        if route(&mut tap, 25, button) || route(&mut tap, 26, button) {
+            return Err("Visible overview captured an unrelated mouse button".into());
+        }
+    }
+    runtime.ui.suspend_overview();
+    if route(&mut tap, 25, 4) || route(&mut tap, 26, 4) {
+        return Err("Suspended Space-transition overview captured a side button".into());
+    }
+    runtime.clear_scroll();
+    runtime.held = false;
+    runtime.switch_feedback = false;
+    runtime.render();
+    println!(
+        "PASS: raw side-button tap, previous/next native focus from modifier, Command, hover, contact, swipe, wheel and feedback overviews; hidden/dismissing/suspended passthrough, unrelated buttons, duplicate-down suppression and stale/reopened-event/release isolation"
     );
     Ok(())
 }
