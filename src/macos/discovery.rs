@@ -58,13 +58,13 @@ pub fn pointer_display(mtm: MainThreadMarker) -> Option<u32> {
     )
 }
 
-pub fn right_edge_display(mtm: MainThreadMarker, point: Point) -> Option<u32> {
+pub fn left_edge_display(mtm: MainThreadMarker, point: Point) -> Option<u32> {
     NSScreen::screens(mtm)
         .iter()
         .map(|screen| display_id(&screen))
         .find(|display| {
             let frame = unsafe { CGDisplayBounds(*display) };
-            whalu::overview::at_right_edge(
+            whalu::overview::at_left_edge(
                 Rect::new(
                     frame.origin.x,
                     frame.origin.y,

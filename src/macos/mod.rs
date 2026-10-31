@@ -266,7 +266,7 @@ impl Runtime {
             None
         };
         let display = if eligible {
-            discovery::right_edge_display(self.mtm, point).or(overview)
+            discovery::left_edge_display(self.mtm, point).or(overview)
         } else {
             None
         };

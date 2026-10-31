@@ -95,7 +95,7 @@ pub(super) fn run(
     println!(
         "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
     );
-    right_edge_hover(&mut runtime, &tx)?;
+    left_edge_hover(&mut runtime, &tx)?;
     command_switching(&mut runtime, &tx, &ids)?;
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
         runtime.clear_scroll();
@@ -1423,7 +1423,7 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
     Ok(())
 }
 
-fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), String> {
+fn left_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), String> {
     runtime.clear_scroll();
     runtime.held = false;
     runtime.navigation_display = None;
@@ -1449,7 +1449,7 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
     let display = runtime.engine.display().ok_or("No hover fixture display")?;
     let frame = unsafe { CGDisplayBounds(display) };
     let edge = Point {
-        x: frame.origin.x + frame.size.width - 0.5,
+        x: frame.origin.x + 0.5,
         y: frame.origin.y + frame.size.height / 2.,
     };
     let away = Point {
@@ -1476,7 +1476,7 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
         || native_focus.is_some_and(|id| !runtime.native_focus_is(id))
     {
         return Err(format!(
-            "Right-edge overview: visible={}, key={}, edge={:?}, display={:?} (expected {display}), native_focus_unchanged={}",
+            "Left-edge overview: visible={}, key={}, edge={:?}, display={:?} (expected {display}), native_focus_unchanged={}",
             runtime.ui.is_visible(),
             runtime.ui.is_key(),
             runtime.edge_display,
@@ -1592,7 +1592,7 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
     }
     hover_scrolling(runtime, tx, edge, inside, away)?;
     println!(
-        "PASS: right-edge hover opens its monitor without focus, survives edge-to-thumbnail hover, stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
+        "PASS: left-edge hover opens its monitor without focus, survives edge-to-thumbnail hover, stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
     );
     Ok(())
 }
