@@ -41,6 +41,8 @@ Rest three fingers on the trackpad to show the overview without changing focus. 
 
 Hover at the left edge of any screen to open its Windows overview without changing focus. It stays open while the pointer rests at the edge or anywhere inside the visible thumbnail strip, including when keyboard modifiers are released or navigation feedback ends. Scroll the mouse wheel or use two-finger scrolling while hovering the thumbnails to navigate without holding modifiers. Leaving both areas starts the usual 650 ms dismissal delay; keyboard holds and thumbnail drags keep their existing behavior. Dragging an ordinary window to the edge does not open the overview.
 
+Holding the mouse button in another app temporarily hides the overview and suspends window discovery and focus changes. Releasing it refreshes the window list after 90 ms. This keeps synchronous Accessibility queries out of native window dragging; dragging thumbnails inside the overview still reorders the stack.
+
 ## Install and run
 
 ```sh

@@ -259,6 +259,9 @@ impl Runtime {
     }
 
     fn pointer_moved(&mut self, point: Point, dragging: bool) {
+        if self.mouse {
+            return;
+        }
         let eligible = self.config.overlay && !dragging && !self.mouse;
         let overview = if eligible && self.ui.contains_pointer(point) {
             self.engine.display()
@@ -500,23 +503,25 @@ impl Runtime {
                 }
                 Event::Drag => self.dragging = true,
                 Event::Mouse(down) => {
+                    self.mouse = down;
+                    self.engine.frozen = down || self.modal || self.space_until.is_some();
                     if down {
                         self.touch_overview = None;
-                        self.navigation_display = self.edge_display;
+                        self.edge_display = None;
+                        self.navigation_display = None;
                         self.pending_focus = None;
+                        self.overlay_deadline = None;
                         self.clear_scroll();
-                        self.render();
                         self.dragging = false;
                     }
                     if !down && self.dragging {
                         self.manual_until = Some(Instant::now() + Duration::from_millis(350));
                         self.dragging = false;
                     }
-                    self.mouse = down;
-                    self.engine.frozen = down || self.modal || self.space_until.is_some();
                     if !down {
                         self.deadline = Some(Instant::now() + Duration::from_millis(90));
                     }
+                    self.render();
                 }
                 Event::Command(cmd) | Event::WindowSwitch(cmd) => {
                     self.switch_feedback |= window_switch;
@@ -1566,6 +1571,12 @@ impl Runtime {
         self.render();
     }
     fn reconcile(&mut self, _allow_layout: bool) {
+        // Discovery makes synchronous AX calls on the event tap's run loop.
+        // A target app can be busy tracking a native drag: defer the census
+        // until mouse-up so these calls cannot stall delivery of drag events.
+        if self.mouse {
+            return;
+        }
         let snap = self.discovery.scan(self.mtm, &self.config.ignored_apps);
         self.modal = snap.modal;
         self.engine.frozen = self.mouse || self.modal || self.space_until.is_some();
@@ -1723,7 +1734,7 @@ impl Runtime {
         }
     }
     fn apply(&mut self, effects: Vec<Effect>) {
-        if self.space_until.is_some() || self.switched_space {
+        if self.mouse || self.space_until.is_some() || self.switched_space {
             return;
         }
         for effect in effects {
@@ -1866,6 +1877,12 @@ impl Runtime {
         }
     }
     fn render(&self) {
+        // Native clicks/drags own the pointer until release. Thumbnail drags
+        // are consumed by the tap and never enter this mouse-down state.
+        if self.mouse {
+            self.ui.hide();
+            return;
+        }
         self.ui.validate_drag(&self.engine);
         let held = (self.held && self.overlay_deadline.is_none())
             || self.edge_display.is_some()

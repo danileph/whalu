@@ -96,6 +96,7 @@ pub(super) fn run(
         "PASS: Control-Option arrow and Vim keyboard commands retain real window/app focus after repeated native tiling"
     );
     left_edge_hover(&mut runtime, &tx)?;
+    ordinary_mouse_drag(&mut runtime, &tx, &ids)?;
     command_switching(&mut runtime, &tx, &ids)?;
     let prepare = |runtime: &mut Runtime, source| -> Result<(), String> {
         runtime.clear_scroll();
@@ -1419,6 +1420,102 @@ fn background_interruptions(runtime: &mut Runtime, ids: &[u64]) -> Result<(), St
     }
     println!(
         "PASS: background repair cancels on external focus, stale identities/overviews/Spaces and retains destination focus after delayed compositor-order timeout"
+    );
+    Ok(())
+}
+
+fn ordinary_mouse_drag(
+    runtime: &mut Runtime,
+    tx: &Sender<Event>,
+    ids: &[u64],
+) -> Result<(), String> {
+    runtime.clear_scroll();
+    runtime.held = true;
+    runtime.render();
+    let display = runtime.engine.display().ok_or("No drag fixture display")?;
+    let bounds = unsafe { CGDisplayBounds(display) };
+    let edge = Point {
+        x: bounds.origin.x + 0.5,
+        y: bounds.origin.y + bounds.size.height / 2.,
+    };
+    let outside = objc2_foundation::NSPoint::new(-10000., -10000.);
+    // A press outside the cards belongs to its native app for the entire drag.
+    if runtime.ui.clicks.route(1, outside) != ui::ClickRoute::Pass {
+        return Err("Native mouse press was intercepted".into());
+    }
+    let focused = runtime.engine.focused();
+    let frames: Vec<_> = ids
+        .iter()
+        .map(|id| frame(runtime.discovery.handles[id].element.0))
+        .collect();
+    let scans = runtime.discovery.scan_count;
+    tx.send(Event::Mouse(true)).map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.ui.is_visible() || !runtime.engine.frozen {
+        return Err("Native mouse press did not suspend the overview".into());
+    }
+    for _ in 0..3 {
+        tx.send(Event::Drag).map_err(|e| e.to_string())?;
+        tx.send(Event::PointerMoved {
+            point: edge,
+            dragging: true,
+        })
+        .map_err(|e| e.to_string())?;
+        tx.send(Event::Dirty).map_err(|e| e.to_string())?;
+        tx.send(Event::FocusChanged).map_err(|e| e.to_string())?;
+        tx.send(Event::OverviewRefresh).map_err(|e| e.to_string())?;
+        tx.send(Event::Command(Command::FocusNext))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.deadline = Some(Instant::now());
+        runtime.drain();
+        runtime.reconcile(false);
+        runtime.apply(vec![Effect::Focus(
+            ids.iter().copied().find(|id| Some(*id) != focused).unwrap(),
+        )]);
+        runtime.render();
+        if runtime.discovery.scan_count != scans
+            || runtime.ui.is_visible()
+            || runtime.edge_display.is_some()
+            || runtime.engine.focused() != focused
+            || focused.is_some_and(|id| !runtime.native_focus_is(id))
+            || runtime
+                .ui
+                .clicks
+                .route(6, objc2_foundation::NSPoint::new(edge.x, edge.y))
+                != ui::ClickRoute::Pass
+        {
+            return Err(
+                "Native drag performed discovery, changed focus, or intercepted input".into(),
+            );
+        }
+    }
+    if runtime.ui.clicks.route(2, outside) != ui::ClickRoute::Pass {
+        return Err("Native mouse release was intercepted".into());
+    }
+    tx.send(Event::Mouse(false)).map_err(|e| e.to_string())?;
+    runtime.drain();
+    runtime.deadline = Some(Instant::now());
+    runtime.drain();
+    if runtime.discovery.scan_count != scans + 1
+        || runtime.engine.frozen
+        || !runtime.ui.is_visible()
+    {
+        return Err("Native mouse release did not resume discovery and held overview".into());
+    }
+    if ids
+        .iter()
+        .map(|id| frame(runtime.discovery.handles[id].element.0))
+        .collect::<Vec<_>>()
+        != frames
+    {
+        return Err("Mouse takeover changed native fixture geometry".into());
+    }
+    runtime.held = false;
+    runtime.clear_scroll();
+    runtime.render();
+    println!(
+        "PASS: native mouse drags pass through without discovery, overview, focus or geometry changes; release resumes discovery and keyboard-held overview"
     );
     Ok(())
 }
