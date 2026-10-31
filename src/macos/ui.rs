@@ -1,4 +1,5 @@
 use super::{Event, discovery, discovery::Discovery, enqueue, previews};
+use block2::RcBlock;
 use objc2::{
     AnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_send, rc::Retained,
     runtime::AnyObject, sel,
@@ -21,6 +22,23 @@ use whalu::{
     gestures::Axis,
     overview::{Pose, ReorderDrag, Wheel},
 };
+
+const OPEN_DURATION: f64 = 0.18;
+const CLOSE_DURATION: f64 = 0.14;
+const MOVE_DURATION: f64 = 0.18;
+
+/// All cards spread from, and collapse toward, the selected card's live height.
+/// Keep the entire card (including its shadow) beyond the left display edge.
+fn collapsed_pose(y: f64) -> Pose {
+    Pose {
+        x: -80.,
+        y,
+        scale: 0.9,
+        pitch: 0.,
+        yaw: 0.,
+        depth: 0.,
+    }
+}
 
 define_class!(
     #[unsafe(super=NSObject)]
@@ -76,6 +94,7 @@ pub struct Ui {
     cards: RefCell<BTreeMap<u64, Card>>,
     visibility_epoch: Cell<u64>,
     reset_layout: Cell<bool>,
+    dismissal: Rc<Cell<Option<Instant>>>,
     pub clicks: ThumbnailClicks,
     drag: RefCell<Option<ThumbnailDrag>>,
     _status: Retained<NSStatusItem>,
@@ -145,6 +164,7 @@ impl Ui {
                 cards: RefCell::new(BTreeMap::new()),
                 visibility_epoch: Cell::new(0),
                 reset_layout: Cell::new(true),
+                dismissal: Rc::new(Cell::new(None)),
                 clicks: ThumbnailClicks::default(),
                 drag: RefCell::new(None),
                 _status: status,
@@ -163,7 +183,7 @@ impl Ui {
         self.visibility_epoch.get()
     }
     pub fn is_visible(&self) -> bool {
-        self.panel.isVisible()
+        self.panel.isVisible() && self.dismissal.get().is_none()
     }
     pub fn is_key(&self) -> bool {
         self.panel.isKeyWindow()
@@ -224,6 +244,7 @@ impl Ui {
         Ok(())
     }
     pub fn hide(&self) {
+        self.dismissal.set(None);
         self.cancel_drag();
         self.clicks.targets.borrow_mut().take();
         if self.panel.isVisible() {
@@ -242,6 +263,53 @@ impl Ui {
                 true
             }
         });
+    }
+    /// Relinquish input immediately; the compositor finishes the visual exit.
+    /// A reopened overview invalidates this completion before retargeting layers.
+    pub fn dismiss(&self) {
+        if !self.is_visible() {
+            return;
+        }
+        if reduce_motion() || self.cards.borrow().is_empty() {
+            self.hide();
+            return;
+        }
+        self.cancel_drag();
+        self.clicks.targets.borrow_mut().take();
+        self.clicks.reset();
+        self.visibility_epoch.set(self.visibility_epoch.get() + 1);
+        let at = Instant::now();
+        self.dismissal.set(Some(at));
+        let panel = self.panel.clone();
+        let dismissal = self.dismissal.clone();
+        let complete = RcBlock::new(move || {
+            if dismissal.get() == Some(at) {
+                panel.orderOut(None);
+                dismissal.set(None);
+            }
+        });
+        let mut cards = self.cards.borrow_mut();
+        let height = self.content.bounds().size.height;
+        let anchor = cards
+            .values()
+            .find(|card| card.active && card.retiring.is_none())
+            .map_or(0., |card| {
+                let layer = card.view.layer().unwrap();
+                let visible = unsafe { layer.presentationLayer() }.unwrap_or(layer);
+                visible.position().y + 41. - height / 2.
+            });
+        CATransaction::begin();
+        unsafe { CATransaction::setCompletionBlock(Some(&complete)) };
+        for card in cards.values_mut() {
+            card.place_with_motion(
+                collapsed_pose(anchor),
+                height,
+                Motion::Live(CLOSE_DURATION),
+                card.active,
+                false,
+            );
+        }
+        CATransaction::commit();
     }
     pub fn suspend_overview(&self) {
         self.cancel_drag();
@@ -272,6 +340,7 @@ impl Ui {
         if ids.len() < 2 {
             return Err("Wheel probe requires two windows".into());
         }
+        self.verify_visibility_animation(engine)?;
         let reduce_motion: bool = unsafe {
             msg_send![
                 &*NSWorkspace::sharedWorkspace(),
@@ -395,6 +464,90 @@ impl Ui {
         self.show(engine);
         println!(
             "PASS: opaque wheel cards interpolate, reverse continuously, remain centered, retain 3D transforms, and draw badges in front of borders"
+        );
+        Ok(())
+    }
+    fn verify_visibility_animation(&self, engine: &Engine) -> Result<(), String> {
+        self.hide();
+        self.show(engine);
+        if reduce_motion() {
+            self.dismiss();
+            if self.panel.isVisible() {
+                return Err("Reduce Motion animated dismissal".into());
+            }
+            return Ok(());
+        }
+        let origin = NSPoint::new(-144., self.content.bounds().size.height / 2. - 41.);
+        for card in self.cards.borrow().values() {
+            let layer = card.view.layer().unwrap();
+            if position_origin(&layer)? != origin {
+                return Err("Opening did not spread from the selected thumbnail's height".into());
+            }
+        }
+        self.show(engine);
+        for card in self.cards.borrow().values() {
+            if position_origin(&card.view.layer().unwrap())? != origin {
+                return Err("An unchanged refresh restarted the opening".into());
+            }
+        }
+        pump(0.05);
+        let selected = self.selected_thumbnail().ok_or("No selected card")?;
+        let layer = self.cards.borrow()[&selected].view.layer().unwrap();
+        let identity = Retained::as_ptr(&self.cards.borrow()[&selected].view);
+        let visible = unsafe { layer.presentationLayer() }.ok_or("No opening presentation")?;
+        let point = self.thumbnail_point(selected, NSPoint::new(64., 41.))?;
+        self.dismiss();
+        if self.is_visible()
+            || !self.panel.isVisible()
+            || self.clicks.route(1, point) != ClickRoute::Pass
+        {
+            return Err("Dismissal did not immediately release input while animating".into());
+        }
+        let from = position_origin(&layer)?;
+        if (from.x - visible.position().x).abs() > 2. || (from.y - visible.position().y).abs() > 2.
+        {
+            return Err("Dismissal jumped away from the opening presentation".into());
+        }
+        let at = self.dismissal.get();
+        self.dismiss();
+        if self.dismissal.get() != at {
+            return Err("Repeated dismissal restarted the exit".into());
+        }
+        pump(0.04);
+        let visible = unsafe { layer.presentationLayer() }.ok_or("No closing presentation")?;
+        self.show(engine);
+        let from = position_origin(&layer)?;
+        if (from.x - visible.position().x).abs() > 2. || (from.y - visible.position().y).abs() > 2.
+        {
+            return Err("Reopening jumped away from the closing presentation".into());
+        }
+        if Retained::as_ptr(&self.cards.borrow()[&selected].view) != identity {
+            return Err("Reopening rebuilt the selected card".into());
+        }
+        pump(0.25);
+        if !self.is_visible() || self.clicks.targets.borrow().is_none() {
+            return Err("A stale dismissal completion hid the reopened overview".into());
+        }
+        self.verify_thumbnail_clicks()?;
+        for _ in 0..8 {
+            self.dismiss();
+            pump(0.012);
+            self.show(engine);
+            pump(0.012);
+        }
+        pump(0.25);
+        if !self.is_visible() {
+            return Err("Rapid show/hide interrupted the final opening".into());
+        }
+        self.verify_thumbnail_clicks()?;
+        self.dismiss();
+        pump(0.25);
+        if self.panel.isVisible() || self.dismissal.get().is_some() {
+            return Err("Dismissal did not order out the completed panel".into());
+        }
+        self.show(engine);
+        println!(
+            "PASS: center-spread opening, live collapse/reopening, immediate input release, eight rapid reversals, and completed panel dismissal"
         );
         Ok(())
     }
@@ -584,7 +737,9 @@ impl Ui {
         if self.clicks.route(
             1,
             NSPoint::new(
-                frame.origin.x + 1.,
+                // The left margin is occupied while cards slide in. The far
+                // right margin stays empty throughout opening and wheel motion.
+                frame.origin.x + frame.size.width - 1.,
                 top - frame.origin.y - frame.size.height / 2.,
             ),
         ) != ClickRoute::Pass
@@ -832,17 +987,14 @@ impl Ui {
             height,
         );
         let reset_layout = self.reset_layout.replace(false);
+        let reopening = self.dismissal.take().is_some();
         let animate = self.panel.isVisible() && self.panel.frame() == frame && !reset_layout;
         // Respect the system motion preference without requiring a second rendering path.
-        let reduce_motion: bool = unsafe {
-            msg_send![
-                &*NSWorkspace::sharedWorkspace(),
-                accessibilityDisplayShouldReduceMotion
-            ]
-        };
+        let reduce_motion = reduce_motion();
         self.panel.setFrame_display(frame, false);
         self.content.setFrame(rect(0., 0., 176., height));
         let mut cards = self.cards.borrow_mut();
+        let mut opening_targets = Vec::new();
         let direction = cards
             .iter()
             .find(|(_, card)| card.active)
@@ -857,9 +1009,9 @@ impl Ui {
                 return true;
             }
             if !animate
-                || card
-                    .retiring
-                    .is_some_and(|at| now.duration_since(at) >= Duration::from_millis(300))
+                || card.retiring.is_some_and(|at| {
+                    now.duration_since(at) >= Duration::from_secs_f64(MOVE_DURATION)
+                })
             {
                 card.view.removeFromSuperview();
                 return false;
@@ -920,7 +1072,7 @@ impl Ui {
                         } * (wheel.radius + 1) as f64,
                     )
                 } else {
-                    pose
+                    collapsed_pose(0.)
                 };
                 card.place(entrance, height, false, active, reduce_motion);
                 card
@@ -944,7 +1096,9 @@ impl Ui {
                     NSImage::imageNamed(&NSString::from_str("NSApplicationIcon")).as_deref(),
                 );
             }
-            if fresh || card.pose != Some(pose) || card.active != active || !animate {
+            if !animate {
+                opening_targets.push((*id, pose, active));
+            } else if reopening || fresh || card.pose != Some(pose) || card.active != active {
                 card.place(
                     pose,
                     height,
@@ -1038,12 +1192,19 @@ impl Ui {
             // geometry, which resets fresh cards' transforms. Complete that
             // display pass, then restore the poses before the compositor commits.
             self.panel.displayIfNeeded();
-            for card in self.cards.borrow_mut().values_mut() {
-                card.place(
-                    card.pose.unwrap(),
+            let mut cards = self.cards.borrow_mut();
+            for (id, pose, active) in opening_targets {
+                let card = cards.get_mut(&id).unwrap();
+                card.place(collapsed_pose(0.), height, false, active, reduce_motion);
+                card.place_with_motion(
+                    pose,
                     height,
-                    false,
-                    card.active,
+                    if reduce_motion {
+                        Motion::None
+                    } else {
+                        Motion::Initial(OPEN_DURATION)
+                    },
+                    active,
                     reduce_motion,
                 );
             }
@@ -1218,6 +1379,13 @@ impl ThumbnailClicks {
             .map(|(id, _)| (map.context, id, map.epoch))
     }
 }
+enum Motion {
+    None,
+    Live(f64),
+    // The first layout has no committed presentation layer yet.
+    Initial(f64),
+}
+
 /// Views survive selection changes so Core Animation can retarget their live
 /// presentation layers during fast swipes and reversals.
 struct Card {
@@ -1289,6 +1457,26 @@ impl Card {
         }
     }
     fn place(&mut self, pose: Pose, height: f64, animate: bool, active: bool, reduce_motion: bool) {
+        self.place_with_motion(
+            pose,
+            height,
+            if animate {
+                Motion::Live(MOVE_DURATION)
+            } else {
+                Motion::None
+            },
+            active,
+            reduce_motion,
+        );
+    }
+    fn place_with_motion(
+        &mut self,
+        pose: Pose,
+        height: f64,
+        motion: Motion,
+        active: bool,
+        reduce_motion: bool,
+    ) {
         let layer = self.view.layer().unwrap();
         let border = self.body.layer().unwrap();
         let properties = [
@@ -1297,13 +1485,23 @@ impl Card {
             (&border, "borderWidth"),
             (&border, "borderColor"),
         ];
-        let from = if animate {
+        // Preserve an existing border transition when only geometry changes.
+        let properties = &properties[..if self.active != active { 4 } else { 2 }];
+        let duration = match motion {
+            Motion::None => 0.,
+            Motion::Live(duration) | Motion::Initial(duration) => duration,
+        };
+        let from = if duration > 0. {
             // Use the pixels currently on screen, including an interrupted animation.
             properties
                 .iter()
                 .map(|(target, key)| {
-                    let visible =
-                        unsafe { target.presentationLayer() }.unwrap_or_else(|| (*target).clone());
+                    let visible = if matches!(motion, Motion::Live(_)) {
+                        unsafe { target.presentationLayer() }
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| (*target).clone());
                     layer_value(&visible, key)
                 })
                 .collect::<Vec<_>>()
@@ -1344,7 +1542,7 @@ impl Card {
             .CGColor(),
         ));
         CATransaction::commit();
-        if animate {
+        if duration > 0. {
             for ((target, key), from) in properties.iter().zip(from) {
                 let to = layer_value(target, key);
                 let key = NSString::from_str(key);
@@ -1353,7 +1551,7 @@ impl Card {
                     animation.setFromValue(from.as_deref());
                     animation.setToValue(to.as_deref());
                 }
-                animation.setDuration(0.28);
+                animation.setDuration(duration);
                 animation.setTimingFunction(Some(
                     &CAMediaTimingFunction::functionWithControlPoints(0.22, 0.72, 0.18, 1.),
                 ));
@@ -1364,9 +1562,24 @@ impl Card {
         self.active = active;
     }
 }
+fn reduce_motion() -> bool {
+    unsafe {
+        msg_send![
+            &*NSWorkspace::sharedWorkspace(),
+            accessibilityDisplayShouldReduceMotion
+        ]
+    }
+}
 fn layer_value(layer: &CALayer, key: &str) -> Option<Retained<AnyObject>> {
     // Core Animation boxes each property in its matching NSValue/NSNumber/CGColor.
     unsafe { msg_send![layer, valueForKey: &*NSString::from_str(key)] }
+}
+
+fn position_origin(layer: &CALayer) -> Result<NSPoint, String> {
+    let animation = unsafe { layer.animationForKey(&NSString::from_str("position")) }
+        .ok_or("No position animation")?;
+    let from: Retained<AnyObject> = unsafe { msg_send![&*animation, fromValue] };
+    Ok(unsafe { msg_send![&*from, pointValue] })
 }
 
 struct Source {

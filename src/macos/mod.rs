@@ -1941,7 +1941,7 @@ impl Runtime {
                     .and_then(|travel| travel.sequence.selected()),
             );
         } else {
-            self.ui.hide();
+            self.ui.dismiss();
         }
     }
     fn save(&mut self) {
