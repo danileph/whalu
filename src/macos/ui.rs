@@ -26,7 +26,7 @@ use whalu::{
 const SLIDE_DURATION: f64 = 0.18;
 const MOVE_DURATION: f64 = 0.18;
 
-const SLIDE_DISTANCE: f64 = 176.;
+const SLIDE_DISTANCE: f64 = 24.;
 
 define_class!(
     #[unsafe(super=NSObject)]
@@ -282,36 +282,42 @@ impl Ui {
         self.slide(-SLIDE_DISTANCE, SLIDE_DURATION, false);
         CATransaction::commit();
     }
-    /// Translate the complete wheel with one compositor animation. Card layout,
+    /// Fade and translate the complete wheel near its resting position. Card layout,
     /// perspective and any selection motion remain independent of visibility.
     fn slide(&self, x: f64, duration: f64, initial: bool) {
         let layer = self.content.layer().unwrap();
+        let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
         let from = if initial {
             CATransform3D::new_translation(-SLIDE_DISTANCE, 0., 0.)
         } else {
-            unsafe { layer.presentationLayer() }
-                .unwrap_or_else(|| layer.clone())
-                .sublayerTransform()
+            visible.sublayerTransform()
         };
+        let opacity = if initial { 0. } else { visible.opacity() };
         CATransaction::begin();
         CATransaction::setDisableActions(true);
         layer.setSublayerTransform(from);
-        let from = layer_value(&layer, "sublayerTransform");
+        layer.setOpacity(opacity);
+        let properties = ["sublayerTransform", "opacity"];
+        let from = properties.map(|key| layer_value(&layer, key));
         layer.setSublayerTransform(CATransform3D::new_translation(x, 0., 0.));
-        if duration > 0. {
-            let key = NSString::from_str("sublayerTransform");
+        layer.setOpacity(if x == 0. { 1. } else { 0. });
+        for (key, from) in properties.into_iter().zip(from) {
+            let to = layer_value(&layer, key);
+            let key = NSString::from_str(key);
+            if duration == 0. {
+                layer.removeAnimationForKey(&key);
+                continue;
+            }
             let animation = CABasicAnimation::animationWithKeyPath(Some(&key));
             unsafe {
                 animation.setFromValue(from.as_deref());
-                animation.setToValue(layer_value(&layer, "sublayerTransform").as_deref());
+                animation.setToValue(to.as_deref());
             }
             animation.setDuration(duration);
             animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
                 0.22, 0.72, 0.18, 1.,
             )));
             layer.addAnimation_forKey(&animation, Some(&key));
-        } else {
-            layer.removeAnimationForKey(&NSString::from_str("sublayerTransform"));
         }
         CATransaction::commit();
     }
@@ -483,8 +489,8 @@ impl Ui {
         }
         let layer = self.content.layer().unwrap();
         let origin = slide_origin(&layer)?;
-        if origin.m41 != -SLIDE_DISTANCE || origin.m42 != 0. {
-            return Err("Opening did not slide horizontally from the left".into());
+        if origin.m41 != -SLIDE_DISTANCE || origin.m42 != 0. || opacity_origin(&layer)? != 0. {
+            return Err("Opening did not fade from zero with a short horizontal slide".into());
         }
         for card in self.cards.borrow().values() {
             let card_layer = card.view.layer().unwrap();
@@ -501,15 +507,17 @@ impl Ui {
             }
         }
         self.show(engine);
-        if slide_origin(&layer)?.m41 != origin.m41 {
+        if slide_origin(&layer)?.m41 != origin.m41 || opacity_origin(&layer)? != 0. {
             return Err("An unchanged refresh restarted the opening".into());
         }
         pump(0.05);
         let selected = self.selected_thumbnail().ok_or("No selected card")?;
         let identity = Retained::as_ptr(&self.cards.borrow()[&selected].view);
         let visible = unsafe { layer.presentationLayer() }.ok_or("No opening presentation")?;
-        if !(-SLIDE_DISTANCE..-1.).contains(&visible.sublayerTransform().m41) {
-            return Err("The wheel did not interpolate its horizontal entrance".into());
+        if !(-SLIDE_DISTANCE..-0.1).contains(&visible.sublayerTransform().m41)
+            || !(0.01..0.99).contains(&visible.opacity())
+        {
+            return Err("The wheel did not interpolate its short slide and fade".into());
         }
         let point = self.thumbnail_point(selected, NSPoint::new(64., 41.))?;
         self.verify_thumbnail_clicks()?;
@@ -521,7 +529,10 @@ impl Ui {
             return Err("Dismissal did not immediately release input while animating".into());
         }
         let from = slide_origin(&layer)?;
-        if (from.m41 - visible.sublayerTransform().m41).abs() > 2. || from.m42 != 0. {
+        if (from.m41 - visible.sublayerTransform().m41).abs() > 2.
+            || from.m42 != 0.
+            || (opacity_origin(&layer)? - visible.opacity() as f64).abs() > 0.03
+        {
             return Err("Dismissal jumped away from the opening presentation".into());
         }
         let at = self.dismissal.get();
@@ -533,14 +544,17 @@ impl Ui {
         let visible = unsafe { layer.presentationLayer() }.ok_or("No closing presentation")?;
         self.show(engine);
         let from = slide_origin(&layer)?;
-        if (from.m41 - visible.sublayerTransform().m41).abs() > 2. || from.m42 != 0. {
+        if (from.m41 - visible.sublayerTransform().m41).abs() > 2.
+            || from.m42 != 0.
+            || (opacity_origin(&layer)? - visible.opacity() as f64).abs() > 0.03
+        {
             return Err("Reopening jumped away from the closing presentation".into());
         }
         if Retained::as_ptr(&self.cards.borrow()[&selected].view) != identity {
             return Err("Reopening rebuilt the selected card".into());
         }
         pump(0.25);
-        if !self.is_visible() || self.clicks.targets.borrow().is_none() {
+        if !self.is_visible() || self.clicks.targets.borrow().is_none() || layer.opacity() != 1. {
             return Err("A stale dismissal completion hid the reopened overview".into());
         }
         self.verify_thumbnail_clicks()?;
@@ -551,7 +565,7 @@ impl Ui {
             pump(0.012);
         }
         pump(0.25);
-        if !self.is_visible() {
+        if !self.is_visible() || layer.opacity() != 1. {
             return Err("Rapid show/hide interrupted the final opening".into());
         }
         self.verify_thumbnail_clicks()?;
@@ -562,7 +576,7 @@ impl Ui {
         }
         self.show(engine);
         println!(
-            "PASS: horizontal wheel slide with fixed card layout, live closing/reopening, immediate input release, eight rapid reversals, and completed panel dismissal"
+            "PASS: 24-point wheel slide and fade from zero, fixed card layout, live position/opacity reversal, immediate input release, eight rapid reversals, and completed dismissal"
         );
         Ok(())
     }
@@ -1561,6 +1575,16 @@ fn slide_origin(layer: &CALayer) -> Result<CATransform3D, String> {
     }
     let from: Retained<AnyObject> = unsafe { msg_send![&*animation, fromValue] };
     Ok(unsafe { msg_send![&*from, CATransform3DValue] })
+}
+
+fn opacity_origin(layer: &CALayer) -> Result<f64, String> {
+    let animation = unsafe { layer.animationForKey(&NSString::from_str("opacity")) }
+        .ok_or("No wheel fade animation")?;
+    if (animation.duration() - SLIDE_DURATION).abs() > f64::EPSILON {
+        return Err("The fade and slide durations differ".into());
+    }
+    let from: Retained<AnyObject> = unsafe { msg_send![&*animation, fromValue] };
+    Ok(unsafe { msg_send![&*from, doubleValue] })
 }
 
 struct Source {
