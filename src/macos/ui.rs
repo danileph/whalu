@@ -23,8 +23,7 @@ use whalu::{
     overview::{Pose, ReorderDrag, Wheel},
 };
 
-const OPEN_DURATION: f64 = 0.18;
-const CLOSE_DURATION: f64 = 0.14;
+const SLIDE_DURATION: f64 = 0.18;
 const MOVE_DURATION: f64 = 0.18;
 
 const SLIDE_DISTANCE: f64 = 176.;
@@ -280,7 +279,7 @@ impl Ui {
         });
         CATransaction::begin();
         unsafe { CATransaction::setCompletionBlock(Some(&complete)) };
-        self.slide(-SLIDE_DISTANCE, CLOSE_DURATION, false);
+        self.slide(-SLIDE_DISTANCE, SLIDE_DURATION, false);
         CATransaction::commit();
     }
     /// Translate the complete wheel with one compositor animation. Card layout,
@@ -1217,7 +1216,11 @@ impl Ui {
             }
         }
         if !animate || reopening {
-            self.slide(0., if reduce_motion { 0. } else { OPEN_DURATION }, !animate);
+            self.slide(
+                0.,
+                if reduce_motion { 0. } else { SLIDE_DURATION },
+                !animate,
+            );
         }
         previews::capture(targets);
     }
@@ -1553,6 +1556,9 @@ fn layer_value(layer: &CALayer, key: &str) -> Option<Retained<AnyObject>> {
 fn slide_origin(layer: &CALayer) -> Result<CATransform3D, String> {
     let animation = unsafe { layer.animationForKey(&NSString::from_str("sublayerTransform")) }
         .ok_or("No wheel slide animation")?;
+    if (animation.duration() - SLIDE_DURATION).abs() > f64::EPSILON {
+        return Err("Opening and closing slide durations differ".into());
+    }
     let from: Retained<AnyObject> = unsafe { msg_send![&*animation, fromValue] };
     Ok(unsafe { msg_send![&*from, CATransform3DValue] })
 }

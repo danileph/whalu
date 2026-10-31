@@ -291,7 +291,19 @@ impl Runtime {
             // must not restart navigation, clear a click, or perform a census.
             self.linger_until = None;
         } else {
-            self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+            // Hover ends at the strip boundary. A wheel burst owned only by
+            // hover must not coast or schedule feedback that reopens the strip.
+            self.linger_until = None;
+            if !self.held
+                && self
+                    .gesture
+                    .as_ref()
+                    .is_some_and(|active| active.source == ScrollSource::Wheel)
+            {
+                self.gesture = None;
+                self.motion_due = None;
+                self.save();
+            }
         }
         self.render();
     }

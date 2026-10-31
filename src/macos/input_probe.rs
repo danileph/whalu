@@ -1629,20 +1629,16 @@ fn left_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Stri
     }
     send(away, false)?;
     runtime.drain();
-    if !runtime.ui.is_visible() || runtime.linger_until.is_none() {
-        return Err("Leaving edge lost the dismissal grace period".into());
+    if runtime.ui.is_visible() || runtime.linger_until.is_some() {
+        return Err("Leaving the hover strip delayed dismissal".into());
     }
-    let scans = runtime.discovery.scan_count;
-    send(inside, false)?;
+    send(edge, false)?;
     runtime.drain();
-    if runtime.linger_until.is_some()
-        || runtime.discovery.scan_count != scans
-        || runtime.ui.visibility_epoch() != epoch
+    if !runtime.ui.is_visible()
+        || runtime.linger_until.is_some()
+        || runtime.ui.visibility_epoch() <= epoch
     {
-        return Err(
-            "Thumbnail re-entry retained a dismissal deadline or restarted overview discovery"
-                .into(),
-        );
+        return Err("Immediate hover dismissal did not reopen on edge re-entry".into());
     }
     // Click navigation must survive pointer ownership changing on re-entry.
     let target = runtime
@@ -1665,7 +1661,7 @@ fn left_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Stri
     runtime.click_travel = None;
     send(away, false)?;
     runtime.drain();
-    // Re-enter before expiry and ensure the obsolete deadline cannot hide it.
+    // Re-enter during the exit and ensure its obsolete completion cannot hide it.
     send(edge, false)?;
     runtime.drain();
     runtime.linger_until = Some(Instant::now());
@@ -1689,7 +1685,7 @@ fn left_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Stri
     }
     hover_scrolling(runtime, tx, edge, inside, away)?;
     println!(
-        "PASS: left-edge hover opens its monitor without focus, survives edge-to-thumbnail hover, stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
+        "PASS: left-edge hover opens its monitor without focus, survives edge-to-thumbnail hover, stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses immediately on exit/reopens on re-entry, and ignores window drags"
     );
     Ok(())
 }
@@ -1787,17 +1783,30 @@ fn hover_scrolling(
             return Err("Hover scrolling replayed native trackpad momentum".into());
         }
     }
+    // Exit before a fresh hover-owned wheel burst can finish or coast.
+    tx.send(Event::Wheel(0.1, 1.05))
+        .map_err(|e| e.to_string())?;
+    runtime.drain();
+    if runtime.gesture.is_none() {
+        return Err("No active hover wheel burst for exit regression".into());
+    }
     tx.send(Event::PointerMoved {
         point: away,
         dragging: false,
     })
     .map_err(|e| e.to_string())?;
     runtime.drain();
+    runtime.advance_scroll(Instant::now() + Duration::from_secs(2));
+    if runtime.ui.is_visible()
+        || runtime.gesture.is_some()
+        || runtime.motion_due.is_some()
+        || runtime.linger_until.is_some()
+    {
+        return Err("Hover exit retained wheel motion or delayed dismissal feedback".into());
+    }
     let held = queue.scroll_held(Modifiers::default(), point(away));
     if held || queue.wheel.route(held, -1., false, 0, 0, 1.1) != WheelRoute::Pass {
-        return Err(
-            "Wheel outside thumbnail region was intercepted during dismissal feedback".into(),
-        );
+        return Err("Wheel outside thumbnail region was intercepted during dismissal".into());
     }
     if queue.wheel.route(held, -90., true, 1, 0, 1.1) != WheelRoute::Consume
         || queue.wheel.route(held, -90., true, 0, 1, 1.2) != WheelRoute::Pass
