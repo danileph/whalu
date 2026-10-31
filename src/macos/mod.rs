@@ -99,6 +99,11 @@ struct Queue {
     clicks: ui::ThumbnailClicks,
 }
 impl Queue {
+    fn scroll_held(&mut self, modifiers: Modifiers, point: objc2_foundation::NSPoint) -> bool {
+        // Hover owns wheel navigation without creating a keyboard hold. Read
+        // the rendered hit map; never call AppKit or Accessibility in the tap.
+        self.update_overview_hold(modifiers) || self.clicks.contains_pointer(point)
+    }
     fn update_overview_hold(&mut self, modifiers: Modifiers) -> bool {
         let held = self
             .shortcuts
@@ -254,8 +259,14 @@ impl Runtime {
     }
 
     fn pointer_moved(&mut self, point: Point, dragging: bool) {
-        let display = if self.config.overlay && !dragging && !self.mouse {
-            discovery::right_edge_display(self.mtm, point)
+        let eligible = self.config.overlay && !dragging && !self.mouse;
+        let overview = if eligible && self.ui.contains_pointer(point) {
+            self.engine.display()
+        } else {
+            None
+        };
+        let display = if eligible {
+            discovery::right_edge_display(self.mtm, point).or(overview)
         } else {
             None
         };
@@ -264,13 +275,18 @@ impl Runtime {
         }
         self.edge_display = display;
         if let Some(display) = display {
-            self.clear_scroll();
-            self.pending_focus = None;
-            self.overlay_deadline = None;
-            self.navigation_display = Some(display);
-            // Opening is read-only: refresh this monitor without focusing it.
-            self.reconcile(false);
-            self.ui.preload_previews(&self.discovery);
+            if overview != Some(display) {
+                self.clear_scroll();
+                self.pending_focus = None;
+                self.overlay_deadline = None;
+                self.navigation_display = Some(display);
+                // Opening is read-only: refresh this monitor without focusing it.
+                self.reconcile(false);
+                self.ui.preload_previews(&self.discovery);
+            }
+            // Entering visible cards only takes ownership of dismissal. It
+            // must not restart navigation, clear a click, or perform a census.
+            self.linger_until = None;
         } else {
             self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
         }
@@ -2021,7 +2037,9 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
                 CGEventGetIntegerValueField(event, 11) as f64
             };
             let now = (*q).clock.elapsed().as_secs_f64();
-            let held = (*q).update_overview_hold(modifiers);
+            let point = CGEventGetLocation(event);
+            let held =
+                (*q).scroll_held(modifiers, objc2_foundation::NSPoint::new(point.x, point.y));
             match (*q).wheel.route(
                 held,
                 delta,

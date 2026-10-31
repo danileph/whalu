@@ -1427,7 +1427,25 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
     runtime.clear_scroll();
     runtime.held = false;
     runtime.navigation_display = None;
-    runtime.reconcile(false);
+    // AX focus can precede NSWorkspace activation in mixed-app fixtures.
+    // Establish a read-only native baseline before asserting hover preserves it.
+    let until = Instant::now() + Duration::from_secs(1);
+    loop {
+        runtime.reconcile(false);
+        if runtime
+            .engine
+            .focused()
+            .is_some_and(|id| runtime.native_focus_is(id))
+        {
+            break;
+        }
+        if Instant::now() >= until {
+            return Err("Hover fixture did not establish native focus baseline".into());
+        }
+        unsafe {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+        }
+    }
     let display = runtime.engine.display().ok_or("No hover fixture display")?;
     let frame = unsafe { CGDisplayBounds(display) };
     let edge = Point {
@@ -1435,7 +1453,7 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
         y: frame.origin.y + frame.size.height / 2.,
     };
     let away = Point {
-        x: edge.x - 100.,
+        x: frame.origin.x + frame.size.width / 2.,
         ..edge
     };
     let focused = runtime.engine.focused();
@@ -1476,11 +1494,80 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
     if !runtime.ui.is_visible() || runtime.linger_until.is_some() {
         return Err("Stationary edge hover expired with feedback or a refresh".into());
     }
+    let id = runtime
+        .engine
+        .context()
+        .and_then(|ctx| ctx.focused.or(ctx.order.first().copied()))
+        .ok_or("No hover thumbnail")?;
+    let inside = runtime
+        .ui
+        .thumbnail_point(id, objc2_foundation::NSPoint::new(64., 41.))?;
+    let inside = Point {
+        x: inside.x,
+        y: inside.y,
+    };
+    if !runtime.ui.contains_pointer(inside) {
+        return Err("Native thumbnail point is outside hover strip".into());
+    }
+    let epoch = runtime.ui.visibility_epoch();
+    send(inside, false)?;
+    runtime.drain();
+    runtime.linger_until = Some(Instant::now());
+    runtime.drain();
+    runtime.reconcile(false);
+    if !runtime.ui.is_visible()
+        || runtime.edge_display != Some(display)
+        || runtime.ui.visibility_epoch() != epoch
+        || runtime.engine.focused() != focused
+        || native_focus.is_some_and(|id| !runtime.native_focus_is(id))
+    {
+        return Err(format!(
+            "Moving from edge onto thumbnails lost stationary hover or native focus: visible={}, owner={:?}/{display}, epoch={}/{epoch}, recorded={:?}/{focused:?}, native={native_focus:?}/{}",
+            runtime.ui.is_visible(),
+            runtime.edge_display,
+            runtime.ui.visibility_epoch(),
+            runtime.engine.focused(),
+            native_focus.is_none_or(|id| runtime.native_focus_is(id))
+        ));
+    }
     send(away, false)?;
     runtime.drain();
     if !runtime.ui.is_visible() || runtime.linger_until.is_none() {
         return Err("Leaving edge lost the dismissal grace period".into());
     }
+    let scans = runtime.discovery.scan_count;
+    send(inside, false)?;
+    runtime.drain();
+    if runtime.linger_until.is_some()
+        || runtime.discovery.scan_count != scans
+        || runtime.ui.visibility_epoch() != epoch
+    {
+        return Err(
+            "Thumbnail re-entry retained a dismissal deadline or restarted overview discovery"
+                .into(),
+        );
+    }
+    // Click navigation must survive pointer ownership changing on re-entry.
+    let target = runtime
+        .engine
+        .context()
+        .and_then(|ctx| ctx.order.iter().copied().find(|window| *window != id))
+        .ok_or("No second hover click fixture")?;
+    runtime.click_travel = Some(ClickTravel {
+        sequence: ClickSequence::new(&runtime.engine, target).ok_or("No hover click fixture")?,
+        due: Instant::now() + Duration::from_secs(5),
+        background: None,
+    });
+    send(away, false)?;
+    runtime.drain();
+    send(inside, false)?;
+    runtime.drain();
+    if runtime.click_travel.is_none() {
+        return Err("Thumbnail hover interrupted click navigation".into());
+    }
+    runtime.click_travel = None;
+    send(away, false)?;
+    runtime.drain();
     // Re-enter before expiry and ensure the obsolete deadline cannot hide it.
     send(edge, false)?;
     runtime.drain();
@@ -1503,8 +1590,130 @@ fn right_edge_hover(runtime: &mut Runtime, tx: &Sender<Event>) -> Result<(), Str
     if runtime.ui.is_visible() || runtime.edge_display.is_some() {
         return Err("Overview remained open after all holds ended".into());
     }
+    hover_scrolling(runtime, tx, edge, inside, away)?;
     println!(
-        "PASS: right-edge hover opens its monitor without focus, survives stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
+        "PASS: right-edge hover opens its monitor without focus, survives edge-to-thumbnail hover, stationary feedback expiry/modifier release/refresh/re-entry, respects keyboard holds, dismisses on exit, and ignores window drags"
+    );
+    Ok(())
+}
+
+fn hover_scrolling(
+    runtime: &mut Runtime,
+    tx: &Sender<Event>,
+    edge: Point,
+    inside: Point,
+    away: Point,
+) -> Result<(), String> {
+    use objc2_foundation::NSPoint;
+    let point = |p: Point| NSPoint::new(p.x, p.y);
+    let mut queue = Queue {
+        tx: tx.clone(),
+        source: null(),
+        bindings: runtime.config.bindings.clone(),
+        shortcuts: ShortcutRouter::default(),
+        runtime: null_mut(),
+        scroll_modifiers: runtime.config.overlay_modifiers,
+        overview_held: false,
+        wheel: WheelRouter::default(),
+        clock: Instant::now(),
+        clicks: runtime.ui.clicks.clone(),
+    };
+    if queue.scroll_held(Modifiers::default(), point(inside)) {
+        return Err("Hidden thumbnail region captured scrolling".into());
+    }
+    tx.send(Event::PointerMoved {
+        point: edge,
+        dragging: false,
+    })
+    .map_err(|e| e.to_string())?;
+    tx.send(Event::PointerMoved {
+        point: inside,
+        dragging: false,
+    })
+    .map_err(|e| e.to_string())?;
+    runtime.drain();
+    for (index, continuous) in [false, true].into_iter().enumerate() {
+        let held = queue.scroll_held(Modifiers::default(), point(inside));
+        if !held || queue.overview_held || runtime.held {
+            return Err("Hover scrolling required or fabricated a modifier hold".into());
+        }
+        let before = runtime.engine.focused();
+        let direction = if runtime
+            .engine
+            .context()
+            .is_some_and(|ctx| ctx.order.last().copied() == before)
+        {
+            -1
+        } else {
+            1
+        };
+        let mut expected = ScrubSession::new(&runtime.engine, Axis::Vertical)
+            .ok_or("Missing hover scroll fixture")?;
+        expected.update(direction);
+        let raw = -(direction as f64) * if continuous { 90. } else { 1. };
+        let time = index as f64;
+        let WheelRoute::Navigate(delta) = queue.wheel.route(
+            held,
+            raw,
+            continuous,
+            0,
+            if continuous { 1 } else { 0 },
+            time,
+        ) else {
+            return Err("Hovered thumbnail scroll passed to the underlying application".into());
+        };
+        tx.send(Event::Wheel(delta, time))
+            .map_err(|e| e.to_string())?;
+        runtime.drain();
+        runtime.advance_scroll(Instant::now() + Duration::from_millis(112));
+        if runtime.engine.focused() != expected.selected() || !runtime.ui.is_visible() {
+            return Err(
+                "Hover wheel/two-finger packet missed native selection or dismissed overview"
+                    .into(),
+            );
+        }
+        let expected = expected
+            .selected()
+            .ok_or("Hover scroll selection missing")?;
+        let until = Instant::now() + Duration::from_millis(800);
+        while !runtime.native_focus_is(expected) {
+            if Instant::now() >= until {
+                return Err("Hover scrolling did not change actual native focus".into());
+            }
+            unsafe {
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, false);
+            }
+        }
+        if continuous
+            && queue.wheel.route(held, raw, true, 1, 0, time + 0.02) != WheelRoute::Consume
+        {
+            return Err("Hover scrolling replayed native trackpad momentum".into());
+        }
+    }
+    tx.send(Event::PointerMoved {
+        point: away,
+        dragging: false,
+    })
+    .map_err(|e| e.to_string())?;
+    runtime.drain();
+    let held = queue.scroll_held(Modifiers::default(), point(away));
+    if held || queue.wheel.route(held, -1., false, 0, 0, 1.1) != WheelRoute::Pass {
+        return Err(
+            "Wheel outside thumbnail region was intercepted during dismissal feedback".into(),
+        );
+    }
+    if queue.wheel.route(held, -90., true, 1, 0, 1.1) != WheelRoute::Consume
+        || queue.wheel.route(held, -90., true, 0, 1, 1.2) != WheelRoute::Pass
+    {
+        return Err("Hover exit leaked owned momentum or captured a fresh outside scroll".into());
+    }
+    runtime.linger_until = Some(Instant::now());
+    runtime.drain();
+    if queue.scroll_held(Modifiers::default(), point(inside)) || runtime.ui.is_visible() {
+        return Err("Dismissed overview retained scroll capture".into());
+    }
+    println!(
+        "PASS: hovered thumbnail region routes mouse wheel and two-finger scrolling without modifiers, changes real native focus, consumes owned momentum, and passes fresh outside/hidden-region scrolling"
     );
     Ok(())
 }

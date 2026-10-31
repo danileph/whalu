@@ -681,6 +681,20 @@ impl Ui {
             self.clicks.reset();
         }
     }
+    /// Hold the whole overview strip, including the gaps between cards. Use
+    /// its native frame so hovering still works while click targets are paused.
+    pub fn contains_pointer(&self, point: super::ffi::Point) -> bool {
+        if !self.panel.isVisible() || !self.panel.isOnActiveSpace() {
+            return false;
+        }
+        let Some(screen) = NSScreen::screens(self.panel.mtm()).firstObject() else {
+            return false;
+        };
+        contains(
+            self.panel.frame(),
+            NSPoint::new(point.x, screen.frame().size.height - point.y),
+        )
+    }
     pub fn pointer_active(&self) -> bool {
         self.drag.borrow().is_some()
     }
@@ -1096,6 +1110,22 @@ pub(super) enum ClickRoute {
     },
 }
 impl ThumbnailClicks {
+    /// Cached geometry only: safe for the event tap, including card gaps.
+    /// Hidden/suspended overviews remove this map and cannot capture new scrolls.
+    pub fn contains_pointer(&self, point: NSPoint) -> bool {
+        self.targets
+            .try_borrow()
+            .ok()
+            .and_then(|targets| {
+                targets.as_ref().map(|map| {
+                    contains(
+                        rect(0., 0., map.frame.size.width, map.frame.size.height),
+                        map.local(point),
+                    )
+                })
+            })
+            .unwrap_or(false)
+    }
     pub fn reset(&self) {
         if let Some(mut press) = self.pressed.get() {
             press.cancelled = true;
