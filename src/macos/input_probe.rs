@@ -214,6 +214,29 @@ pub(super) fn run(
         {
             return Err("Modifier-wheel burst failed to finish with feedback".into());
         }
+        // Fractional packets accumulate, and accelerated wheel distance is
+        // usable immediately rather than waiting at the old one-entry gate.
+        prepare(&mut runtime, ScrollSource::Wheel)?;
+        runtime.wheel_event(0.25, 0.);
+        if runtime.engine.focused() != Some(ids[0]) {
+            return Err("Fractional wheel packet became a whole selection".into());
+        }
+        runtime.wheel_event(0.75, 0.01);
+        if runtime.engine.focused() != Some(ids[1]) {
+            return Err("Fractional wheel travel did not accumulate".into());
+        }
+        runtime.wheel_event(2., 0.02);
+        if runtime.engine.focused() != Some(ids[3]) {
+            return Err("Accelerated wheel travel stalled or lost distance".into());
+        }
+        runtime.wheel_event(-1., 0.03);
+        if runtime.engine.focused() != Some(ids[2]) {
+            return Err("Accelerated wheel traversal did not reverse immediately".into());
+        }
+        runtime.finish_scroll();
+        println!(
+            "PASS: fractional wheel accumulation, immediate accelerated traversal and reversal"
+        );
         tx.send(Event::ContactBegan).map_err(|e| e.to_string())?;
         runtime.drain();
         if runtime.linger_until.is_none() || !runtime.ui.is_visible() {

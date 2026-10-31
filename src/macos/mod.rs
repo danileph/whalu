@@ -2063,7 +2063,14 @@ unsafe extern "C" fn event_callback(_: MutRef, ty: u32, event: MutRef, _: MutRef
             let delta = if continuous {
                 CGEventGetDoubleValueField(event, 96)
             } else {
-                CGEventGetIntegerValueField(event, 11) as f64
+                // Fixed-point lines retain sub-line motion from high-resolution
+                // wheels. Some drivers populate only the legacy integer field.
+                let precise = CGEventGetDoubleValueField(event, 93);
+                if precise.is_finite() && precise != 0. {
+                    precise
+                } else {
+                    CGEventGetIntegerValueField(event, 11) as f64
+                }
             };
             let now = (*q).clock.elapsed().as_secs_f64();
             let point = CGEventGetLocation(event);

@@ -47,7 +47,7 @@ fn modifier_wheel_has_normal_direction_and_consumes_only_its_momentum() {
     assert_eq!(router.route(false, -3., false, 0, 0, 0.), WheelRoute::Pass);
     assert_eq!(
         router.route(true, -3., false, 0, 0, 0.1),
-        WheelRoute::Navigate(1.)
+        WheelRoute::Navigate(3.)
     );
     assert_eq!(
         router.route(true, 1., false, 0, 0, 0.2),
@@ -253,26 +253,44 @@ fn real_contact_intent_controls_release_momentum() {
 }
 
 #[test]
-fn wheel_traversal_starts_later_and_does_not_replay_early_travel() {
+fn wheel_traversal_preserves_fast_bursts_and_native_acceleration() {
     let mut wheel = WheelScroll::default();
-    for i in 0..=8 {
-        assert_eq!(wheel.sample(1., i as f64 * 0.1), 1.);
-        assert!(!wheel.sustained());
-    }
-    let unlocked = wheel.sample(1., 0.9);
+    assert_eq!(wheel.sample(1., 0.), 1.);
+    assert_eq!(wheel.sample(3., 0.02), 4.);
+    assert_eq!(wheel.sample(6., 0.04), 10.);
     assert!(wheel.sustained());
-    assert!(unlocked > 1. && unlocked < 1.5);
-    assert_eq!(unlocked.round(), 1.);
-    let next = wheel.sample(1., 1.);
-    assert_eq!(next.round(), 2.);
-    assert!((next - unlocked - 0.45).abs() < 0.001);
-    // Short bursts stay at one slot and reverse without undoing earlier overshoot.
-    let mut short = WheelScroll::default();
-    for i in 0..20 {
-        assert_eq!(short.sample(1., i as f64 * 0.01), 1.);
+    assert_eq!(wheel.sample(-1., 0.05), 9.);
+}
+
+#[test]
+fn high_resolution_wheel_travel_is_independent_of_packet_size() {
+    let mut fine = WheelScroll::default();
+    let mut coarse = WheelScroll::default();
+    for i in 0..100 {
+        fine.sample(0.1, i as f64 * 0.005);
     }
-    assert_eq!(short.sample(-1., 0.21), 0.);
-    assert!(!short.sustained());
+    for i in 0..10 {
+        coarse.sample(1., i as f64 * 0.05);
+    }
+    assert!((fine.sample(0., 0.5) - coarse.sample(0., 0.5)).abs() < 1e-9);
+    assert!(fine.sustained() && coarse.sustained());
+    assert_eq!(fine.sample(f64::NAN, 0.6), fine.sample(0., 0.6));
+}
+
+#[test]
+fn free_spin_tail_slows_with_the_input_instead_of_advancing_per_packet() {
+    let mut router = WheelRouter::default();
+    let mut wheel = WheelScroll::default();
+    for (i, delta) in [4., 2., 1., 0.5, 0.25, 0.125].into_iter().enumerate() {
+        let WheelRoute::Navigate(travel) = router.route(true, -delta, false, 0, 0, i as f64 * 0.01)
+        else {
+            panic!("wheel packet was lost");
+        };
+        assert_eq!(travel, delta);
+        wheel.sample(travel, i as f64 * 0.01);
+    }
+    assert_eq!(wheel.sample(0., 0.1), 7.875);
+    assert_eq!(wheel.sample(-0.25, 0.11), 7.625);
 }
 
 #[test]

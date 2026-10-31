@@ -104,8 +104,8 @@ impl WheelRouter {
         WheelRoute::Navigate(if continuous {
             -delta / 90.
         } else {
-            // Accelerated line counts differ across mice; one detent is one entry.
-            -delta.signum()
+            // Preserve native wheel acceleration and fractional high-resolution travel.
+            -delta
         })
     }
     pub fn reset(&mut self) {
@@ -113,40 +113,25 @@ impl WheelRouter {
     }
 }
 
-/// Mouse-wheel intent is deliberately more conservative than trackpad intent.
-/// A short burst stays within one slot. Sustained traversal requires both a
-/// longer burst and extra travel after the waiting period; old travel is not replayed.
+/// Preserve the distance supplied by macOS, including wheel acceleration.
+/// Free-spinning wheels deliver their own decaying stream; do not hold that
+/// stream at one entry or discard its early travel before allowing traversal.
 #[derive(Default, Debug)]
 pub struct WheelScroll {
-    started: Option<f64>,
-    raw: f64,
-    anchor: f64,
+    travel: f64,
     position: f64,
-    sustained: bool,
 }
 impl WheelScroll {
     pub fn sample(&mut self, delta: f64, time: f64) -> f64 {
         if !delta.is_finite() || !time.is_finite() {
             return self.position;
         }
-        let started = *self.started.get_or_insert(time);
-        self.raw += delta;
-        if !self.sustained {
-            if time - started < 0.65 {
-                self.anchor = self.raw;
-            } else if (self.raw - self.anchor).abs() >= 2.5 {
-                self.sustained = true;
-            }
-        }
-        self.position = if self.sustained {
-            self.position + delta * 0.45
-        } else {
-            (self.position + delta).clamp(-1., 1.)
-        };
+        self.travel += delta.abs();
+        self.position += delta;
         self.position
     }
     pub fn sustained(&self) -> bool {
-        self.sustained
+        self.travel >= 2.
     }
 }
 
