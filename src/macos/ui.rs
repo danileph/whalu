@@ -27,18 +27,7 @@ const OPEN_DURATION: f64 = 0.18;
 const CLOSE_DURATION: f64 = 0.14;
 const MOVE_DURATION: f64 = 0.18;
 
-/// All cards spread from, and collapse toward, the selected card's live height.
-/// Keep the entire card (including its shadow) beyond the left display edge.
-fn collapsed_pose(y: f64) -> Pose {
-    Pose {
-        x: -80.,
-        y,
-        scale: 0.9,
-        pitch: 0.,
-        yaw: 0.,
-        depth: 0.,
-    }
-}
+const SLIDE_DISTANCE: f64 = 176.;
 
 define_class!(
     #[unsafe(super=NSObject)]
@@ -245,6 +234,7 @@ impl Ui {
     }
     pub fn hide(&self) {
         self.dismissal.set(None);
+        self.slide(0., 0., true);
         self.cancel_drag();
         self.clicks.targets.borrow_mut().take();
         if self.panel.isVisible() {
@@ -288,26 +278,41 @@ impl Ui {
                 dismissal.set(None);
             }
         });
-        let mut cards = self.cards.borrow_mut();
-        let height = self.content.bounds().size.height;
-        let anchor = cards
-            .values()
-            .find(|card| card.active && card.retiring.is_none())
-            .map_or(0., |card| {
-                let layer = card.view.layer().unwrap();
-                let visible = unsafe { layer.presentationLayer() }.unwrap_or(layer);
-                visible.position().y + 41. - height / 2.
-            });
         CATransaction::begin();
         unsafe { CATransaction::setCompletionBlock(Some(&complete)) };
-        for card in cards.values_mut() {
-            card.place_with_motion(
-                collapsed_pose(anchor),
-                height,
-                Motion::Live(CLOSE_DURATION),
-                card.active,
-                false,
-            );
+        self.slide(-SLIDE_DISTANCE, CLOSE_DURATION, false);
+        CATransaction::commit();
+    }
+    /// Translate the complete wheel with one compositor animation. Card layout,
+    /// perspective and any selection motion remain independent of visibility.
+    fn slide(&self, x: f64, duration: f64, initial: bool) {
+        let layer = self.content.layer().unwrap();
+        let from = if initial {
+            CATransform3D::new_translation(-SLIDE_DISTANCE, 0., 0.)
+        } else {
+            unsafe { layer.presentationLayer() }
+                .unwrap_or_else(|| layer.clone())
+                .sublayerTransform()
+        };
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        layer.setSublayerTransform(from);
+        let from = layer_value(&layer, "sublayerTransform");
+        layer.setSublayerTransform(CATransform3D::new_translation(x, 0., 0.));
+        if duration > 0. {
+            let key = NSString::from_str("sublayerTransform");
+            let animation = CABasicAnimation::animationWithKeyPath(Some(&key));
+            unsafe {
+                animation.setFromValue(from.as_deref());
+                animation.setToValue(layer_value(&layer, "sublayerTransform").as_deref());
+            }
+            animation.setDuration(duration);
+            animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(
+                0.22, 0.72, 0.18, 1.,
+            )));
+            layer.addAnimation_forKey(&animation, Some(&key));
+        } else {
+            layer.removeAnimationForKey(&NSString::from_str("sublayerTransform"));
         }
         CATransaction::commit();
     }
@@ -477,25 +482,38 @@ impl Ui {
             }
             return Ok(());
         }
-        let origin = NSPoint::new(-144., self.content.bounds().size.height / 2. - 41.);
+        let layer = self.content.layer().unwrap();
+        let origin = slide_origin(&layer)?;
+        if origin.m41 != -SLIDE_DISTANCE || origin.m42 != 0. {
+            return Err("Opening did not slide horizontally from the left".into());
+        }
         for card in self.cards.borrow().values() {
-            let layer = card.view.layer().unwrap();
-            if position_origin(&layer)? != origin {
-                return Err("Opening did not spread from the selected thumbnail's height".into());
+            let card_layer = card.view.layer().unwrap();
+            if unsafe { card_layer.animationForKey(&NSString::from_str("position")) }.is_some() {
+                return Err("Opening animated individual thumbnail positions".into());
+            }
+            if (card_layer.position().y + 41.
+                - self.content.bounds().size.height / 2.
+                - card.pose.unwrap().y)
+                .abs()
+                > 0.01
+            {
+                return Err("Opening changed a thumbnail's vertical layout".into());
             }
         }
         self.show(engine);
-        for card in self.cards.borrow().values() {
-            if position_origin(&card.view.layer().unwrap())? != origin {
-                return Err("An unchanged refresh restarted the opening".into());
-            }
+        if slide_origin(&layer)?.m41 != origin.m41 {
+            return Err("An unchanged refresh restarted the opening".into());
         }
         pump(0.05);
         let selected = self.selected_thumbnail().ok_or("No selected card")?;
-        let layer = self.cards.borrow()[&selected].view.layer().unwrap();
         let identity = Retained::as_ptr(&self.cards.borrow()[&selected].view);
         let visible = unsafe { layer.presentationLayer() }.ok_or("No opening presentation")?;
+        if !(-SLIDE_DISTANCE..-1.).contains(&visible.sublayerTransform().m41) {
+            return Err("The wheel did not interpolate its horizontal entrance".into());
+        }
         let point = self.thumbnail_point(selected, NSPoint::new(64., 41.))?;
+        self.verify_thumbnail_clicks()?;
         self.dismiss();
         if self.is_visible()
             || !self.panel.isVisible()
@@ -503,9 +521,8 @@ impl Ui {
         {
             return Err("Dismissal did not immediately release input while animating".into());
         }
-        let from = position_origin(&layer)?;
-        if (from.x - visible.position().x).abs() > 2. || (from.y - visible.position().y).abs() > 2.
-        {
+        let from = slide_origin(&layer)?;
+        if (from.m41 - visible.sublayerTransform().m41).abs() > 2. || from.m42 != 0. {
             return Err("Dismissal jumped away from the opening presentation".into());
         }
         let at = self.dismissal.get();
@@ -516,9 +533,8 @@ impl Ui {
         pump(0.04);
         let visible = unsafe { layer.presentationLayer() }.ok_or("No closing presentation")?;
         self.show(engine);
-        let from = position_origin(&layer)?;
-        if (from.x - visible.position().x).abs() > 2. || (from.y - visible.position().y).abs() > 2.
-        {
+        let from = slide_origin(&layer)?;
+        if (from.m41 - visible.sublayerTransform().m41).abs() > 2. || from.m42 != 0. {
             return Err("Reopening jumped away from the closing presentation".into());
         }
         if Retained::as_ptr(&self.cards.borrow()[&selected].view) != identity {
@@ -547,7 +563,7 @@ impl Ui {
         }
         self.show(engine);
         println!(
-            "PASS: center-spread opening, live collapse/reopening, immediate input release, eight rapid reversals, and completed panel dismissal"
+            "PASS: horizontal wheel slide with fixed card layout, live closing/reopening, immediate input release, eight rapid reversals, and completed panel dismissal"
         );
         Ok(())
     }
@@ -994,7 +1010,6 @@ impl Ui {
         self.panel.setFrame_display(frame, false);
         self.content.setFrame(rect(0., 0., 176., height));
         let mut cards = self.cards.borrow_mut();
-        let mut opening_targets = Vec::new();
         let direction = cards
             .iter()
             .find(|(_, card)| card.active)
@@ -1072,7 +1087,7 @@ impl Ui {
                         } * (wheel.radius + 1) as f64,
                     )
                 } else {
-                    collapsed_pose(0.)
+                    pose
                 };
                 card.place(entrance, height, false, active, reduce_motion);
                 card
@@ -1096,9 +1111,7 @@ impl Ui {
                     NSImage::imageNamed(&NSString::from_str("NSApplicationIcon")).as_deref(),
                 );
             }
-            if !animate {
-                opening_targets.push((*id, pose, active));
-            } else if reopening || fresh || card.pose != Some(pose) || card.active != active {
+            if fresh || card.pose != Some(pose) || card.active != active || !animate {
                 card.place(
                     pose,
                     height,
@@ -1193,21 +1206,18 @@ impl Ui {
             // display pass, then restore the poses before the compositor commits.
             self.panel.displayIfNeeded();
             let mut cards = self.cards.borrow_mut();
-            for (id, pose, active) in opening_targets {
-                let card = cards.get_mut(&id).unwrap();
-                card.place(collapsed_pose(0.), height, false, active, reduce_motion);
-                card.place_with_motion(
-                    pose,
+            for card in cards.values_mut() {
+                card.place(
+                    card.pose.unwrap(),
                     height,
-                    if reduce_motion {
-                        Motion::None
-                    } else {
-                        Motion::Initial(OPEN_DURATION)
-                    },
-                    active,
+                    false,
+                    card.active,
                     reduce_motion,
                 );
             }
+        }
+        if !animate || reopening {
+            self.slide(0., if reduce_motion { 0. } else { OPEN_DURATION }, !animate);
         }
         previews::capture(targets);
     }
@@ -1379,13 +1389,6 @@ impl ThumbnailClicks {
             .map(|(id, _)| (map.context, id, map.epoch))
     }
 }
-enum Motion {
-    None,
-    Live(f64),
-    // The first layout has no committed presentation layer yet.
-    Initial(f64),
-}
-
 /// Views survive selection changes so Core Animation can retarget their live
 /// presentation layers during fast swipes and reversals.
 struct Card {
@@ -1457,26 +1460,6 @@ impl Card {
         }
     }
     fn place(&mut self, pose: Pose, height: f64, animate: bool, active: bool, reduce_motion: bool) {
-        self.place_with_motion(
-            pose,
-            height,
-            if animate {
-                Motion::Live(MOVE_DURATION)
-            } else {
-                Motion::None
-            },
-            active,
-            reduce_motion,
-        );
-    }
-    fn place_with_motion(
-        &mut self,
-        pose: Pose,
-        height: f64,
-        motion: Motion,
-        active: bool,
-        reduce_motion: bool,
-    ) {
         let layer = self.view.layer().unwrap();
         let border = self.body.layer().unwrap();
         let properties = [
@@ -1487,21 +1470,13 @@ impl Card {
         ];
         // Preserve an existing border transition when only geometry changes.
         let properties = &properties[..if self.active != active { 4 } else { 2 }];
-        let duration = match motion {
-            Motion::None => 0.,
-            Motion::Live(duration) | Motion::Initial(duration) => duration,
-        };
-        let from = if duration > 0. {
+        let from = if animate {
             // Use the pixels currently on screen, including an interrupted animation.
             properties
                 .iter()
                 .map(|(target, key)| {
-                    let visible = if matches!(motion, Motion::Live(_)) {
-                        unsafe { target.presentationLayer() }
-                    } else {
-                        None
-                    }
-                    .unwrap_or_else(|| (*target).clone());
+                    let visible =
+                        unsafe { target.presentationLayer() }.unwrap_or_else(|| (*target).clone());
                     layer_value(&visible, key)
                 })
                 .collect::<Vec<_>>()
@@ -1542,7 +1517,7 @@ impl Card {
             .CGColor(),
         ));
         CATransaction::commit();
-        if duration > 0. {
+        if animate {
             for ((target, key), from) in properties.iter().zip(from) {
                 let to = layer_value(target, key);
                 let key = NSString::from_str(key);
@@ -1551,7 +1526,7 @@ impl Card {
                     animation.setFromValue(from.as_deref());
                     animation.setToValue(to.as_deref());
                 }
-                animation.setDuration(duration);
+                animation.setDuration(MOVE_DURATION);
                 animation.setTimingFunction(Some(
                     &CAMediaTimingFunction::functionWithControlPoints(0.22, 0.72, 0.18, 1.),
                 ));
@@ -1575,11 +1550,11 @@ fn layer_value(layer: &CALayer, key: &str) -> Option<Retained<AnyObject>> {
     unsafe { msg_send![layer, valueForKey: &*NSString::from_str(key)] }
 }
 
-fn position_origin(layer: &CALayer) -> Result<NSPoint, String> {
-    let animation = unsafe { layer.animationForKey(&NSString::from_str("position")) }
-        .ok_or("No position animation")?;
+fn slide_origin(layer: &CALayer) -> Result<CATransform3D, String> {
+    let animation = unsafe { layer.animationForKey(&NSString::from_str("sublayerTransform")) }
+        .ok_or("No wheel slide animation")?;
     let from: Retained<AnyObject> = unsafe { msg_send![&*animation, fromValue] };
-    Ok(unsafe { msg_send![&*from, pointValue] })
+    Ok(unsafe { msg_send![&*from, CATransform3DValue] })
 }
 
 struct Source {
