@@ -85,19 +85,32 @@ function useScrollMotion() {
     const reveals = [
       ...document.querySelectorAll<HTMLElement>("[data-reveal]"),
     ];
+    const revealAnimations = new Set<Animation>();
     let frame = 0;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries)
           if (entry.isIntersecting) {
-            entry.target.classList.add("is-visible");
             observer.unobserve(entry.target);
+            // Content stays visible before observation, including screenshots,
+            // restored scroll positions, and browsers that skip an entry.
+            if (!media.matches && typeof entry.target.animate === "function") {
+              const animation = entry.target.animate(
+                [
+                  { opacity: 0, transform: "translateY(32px)" },
+                  { opacity: 1, transform: "translateY(0)" },
+                ],
+                { duration: 700, easing: "cubic-bezier(.2,.65,.3,1)" },
+              );
+              revealAnimations.add(animation);
+              animation.onfinish = animation.oncancel = () =>
+                revealAnimations.delete(animation);
+            }
           }
       },
-      { threshold: 0.12 },
+      { threshold: 0 },
     );
     reveals.forEach((node) => observer.observe(node));
-    document.documentElement.classList.add("motion-ready");
 
     function update() {
       frame = 0;
@@ -134,17 +147,22 @@ function useScrollMotion() {
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
+    const onMotionChange = () => {
+      if (media.matches)
+        revealAnimations.forEach((animation) => animation.finish());
+      schedule();
+    };
     update();
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
-    media.addEventListener("change", schedule);
+    media.addEventListener("change", onMotionChange);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      revealAnimations.forEach((animation) => animation.cancel());
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
-      media.removeEventListener("change", schedule);
-      document.documentElement.classList.remove("motion-ready");
+      media.removeEventListener("change", onMotionChange);
     };
   }, []);
 }
