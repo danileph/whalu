@@ -16,7 +16,8 @@ Open the printed local URL, usually `http://127.0.0.1:5173/`.
 
 ```sh
 npm run check   # TypeScript
-npm run build   # TypeScript + production build
+npm test        # Localization checks
+npm run build   # TypeScript + localization checks + production build
 npm run preview
 ```
 
@@ -49,7 +50,13 @@ Restart Vite after changing environment variables. Without a repository URL, cal
 - The hero supports thumbnail selection, app selector buttons, horizontal touch swipes, arrow keys and J/K while focused, and wheel input over the thumbnail strip. Keyboard navigation wraps; wheel input stops at the ends. Modified browser shortcuts and vertical page scrolling remain available. The current selection is visible and announced through a status region.
 - The system Reduce Motion setting disables animated transitions and reveals, removes pinning, and lays out all overview chapters as static readable content. The footer also offers a persistent local preference, respecting the system setting. `useMotionPreference` applies both paths through the same layout rules.
 - Mobile navigation has an expandable section menu with Escape and outside-click dismissal. Input-method tabs support arrow keys and Home/End, and their panels keep a stable height.
-- When changing the native app version or installation requirements, update the corresponding copy in `src/App.tsx`.
+- When changing the native app version, update the version passed to `install.compatibility` in `src/App.tsx`. Installation copy and requirements are in the language catalogs.
+
+## Localization
+
+English and Russian are available from the header language selector. The site remembers the selection, detects supported browser languages on first visit, and accepts shareable links such as `?lang=ru#controls`. Switching preserves the current demo state and updates accessible labels and page metadata.
+
+Translations use typed message catalogs and a shared language registry. Adding a language requires a catalog and one registry entry; the selector updates automatically. See [LOCALIZATION.md](LOCALIZATION.md) for the architecture, preference order, extension steps, and static-hosting limits.
 
 ## Verification
 

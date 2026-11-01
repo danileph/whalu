@@ -168,6 +168,81 @@ main:focus {
   align-items: center;
   gap: 30px;
 }
+.language-switcher {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 6px;
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.language-switcher:hover {
+  color: var(--ink);
+  background: #e8e8ed;
+}
+.language-switcher:focus-within {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+}
+.language-switcher > svg {
+  width: 15px;
+  height: 15px;
+}
+.language-switcher .language-chevron {
+  width: 10px;
+  height: 10px;
+  transform: rotate(90deg);
+}
+.language-code {
+  display: none;
+}
+.language-switcher select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.language-switcher option {
+  color: var(--ink);
+  background: white;
+}
+@media (max-width: 760px) {
+  .language-switcher {
+    width: 44px;
+    padding: 4px;
+    gap: 4px;
+    font-size: 11px;
+  }
+  .language-switcher > svg:not(.language-chevron),
+  .language-name {
+    display: none;
+  }
+  .language-code {
+    display: inline;
+  }
+}
+@media (max-width: 600px) {
+  .product-nav .nav-actions {
+    gap: 8px;
+  }
+}
+@media (max-width: 375px) {
+  .product-nav .nav-actions {
+    gap: 6px;
+  }
+}
 .nav-toggle,
 .nav-install {
   display: none;
@@ -3522,8 +3597,22 @@ kbd {
   }
 }
 @media (max-width: 375px) {
+  .product-nav > div {
+    padding-inline: 18px;
+  }
+  h1 {
+    font-size: clamp(40px, 12vw, 45px);
+  }
+  .demo-apps {
+    flex-wrap: wrap;
+    border-radius: 20px;
+  }
   .demo-apps button {
-    font-size: 10px;
+    flex: 1 0 calc((100% - 6px) / 3);
+    font-size: 11px;
+  }
+  .method-panel {
+    min-height: 270px;
   }
 }
 @media (max-height: 650px) and (min-width: 601px) {
@@ -3578,8 +3667,8 @@ kbd {
     font-size: 12px;
   }
   .story-stage {
-    top: 40%;
-    height: 48%;
+    top: 46%;
+    height: 42%;
   }
   .story-stack {
     top: 50%;

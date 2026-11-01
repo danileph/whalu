@@ -6,12 +6,16 @@ import type {
   ReactNode,
   SVGProps,
 } from "react";
+import { useLocale } from "./i18n/I18nProvider";
+import { catalogs, supportedLocales } from "./i18n/catalogs";
+import type { Locale } from "./i18n/catalogs";
 
 const repository = (
   import.meta.env.VITE_REPOSITORY_URL as string | undefined
 )?.replace(/\/$/, "");
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
+const illustrationDate = new Date("2026-11-01T10:24:00Z");
 
 function Icon({
   name,
@@ -26,9 +30,17 @@ function Icon({
     | "keyboard"
     | "trackpad"
     | "mouse"
-    | "shield";
+    | "shield"
+    | "globe";
 }) {
   const paths: Record<string, ReactNode> = {
+    globe: (
+      <>
+        <circle cx="12" cy="12" r="9" />
+        <ellipse cx="12" cy="12" rx="4" ry="9" />
+        <path d="M3 12h18" />
+      </>
+    ),
     arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
     chevron: <path d="m9 5 7 7-7 7" />,
     copy: (
@@ -120,7 +132,7 @@ function useMotionPreference() {
   return { reducedMotion, systemReduced, toggleMotion };
 }
 
-function useScrollMotion(reducedMotion: boolean) {
+function useScrollMotion(reducedMotion: boolean, locale: Locale) {
   const revealed = useRef(new WeakSet<Element>());
   useEffect(() => {
     const scenes = [
@@ -206,7 +218,7 @@ function useScrollMotion(reducedMotion: boolean) {
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
     };
-  }, [reducedMotion]);
+  }, [reducedMotion, locale]);
 }
 
 function Wallpaper() {
@@ -267,36 +279,26 @@ function Wallpaper() {
 const apps = [
   {
     id: "finder",
-    name: "Finder",
-    title: "Projects",
     glyph: "⌑",
     color: "#2589ed",
   },
   {
     id: "editor",
-    name: "Editor",
-    title: "Whalu — main.rs",
     glyph: "⌘",
     color: "#4669df",
   },
   {
     id: "safari",
-    name: "Safari",
-    title: "Project Atlas",
     glyph: "↗",
     color: "#007aff",
   },
   {
     id: "notes",
-    name: "Notes",
-    title: "What’s next",
     glyph: "≡",
     color: "#e6ad25",
   },
   {
     id: "terminal",
-    name: "Terminal",
-    title: "whalu — zsh",
     glyph: ">_",
     color: "#333336",
   },
@@ -317,52 +319,56 @@ function AppBadge({ index }: { index: number }) {
 }
 
 function WindowBody({ id }: { id: AppId }) {
+  const { t, formatDate, formatNumber } = useLocale();
   if (id === "safari")
     return (
       <div className="safari-body">
         <aside>
           <span className="atlas-logo">a.</span>
-          <span>Workspace</span>
-          <b>◈ Overview</b>
-          <span>▦ Projects</span>
-          <span>◷ Timeline</span>
-          <span>☷ Resources</span>
+          <span>{t("atlas.workspace")}</span>
+          <b>◈ {t("atlas.overview")}</b>
+          <span>▦ {t("atlas.projects")}</span>
+          <span>◷ {t("atlas.timeline")}</span>
+          <span>☷ {t("atlas.resources")}</span>
           <div className="avatar-row">
             <i>J</i>
             <i>A</i>
             <i>M</i>
-            <small>Design team</small>
+            <small>{t("atlas.team")}</small>
           </div>
         </aside>
         <div className="atlas-main">
           <div className="atlas-top">
-            <span>Workspace / Projects</span>
+            <span>{t("atlas.breadcrumb")}</span>
             <span>◉　⋯</span>
           </div>
           <div className="atlas-heading">
             <div>
-              <small>YOUR NEXT BIG THING</small>
-              <h4>Project Atlas</h4>
-              <p>A fresh perspective on what’s possible.</p>
+              <small>{t("atlas.kicker")}</small>
+              <h4>{t("apps.safari.title")}</h4>
+              <p>{t("atlas.subtitle")}</p>
             </div>
-            <span className="project-tag">In progress</span>
+            <span className="project-tag">{t("atlas.progress")}</span>
           </div>
           <div className="atlas-art">
             <div className="chrome-orbit orbit-one" />
             <div className="chrome-orbit orbit-two" />
             <div className="chrome-orbit orbit-three" />
-            <span>Room for a new perspective.</span>
-            <small>ATLAS® / DESIGN EXPLORATIONS</small>
+            <span>{t("atlas.art")}</span>
+            <small>{t("atlas.artCaption")}</small>
           </div>
           <div className="atlas-tasks">
             <span>
-              <i className="task-dot blue" /> Research <b>Complete</b>
+              <i className="task-dot blue" /> {t("atlas.research")}{" "}
+              <b>{t("atlas.complete")}</b>
             </span>
             <span>
-              <i className="task-dot purple" /> Design <b>In progress</b>
+              <i className="task-dot purple" /> {t("atlas.design")}{" "}
+              <b>{t("atlas.progress")}</b>
             </span>
             <span>
-              <i className="task-dot green" /> Development <b>Up next</b>
+              <i className="task-dot green" /> {t("atlas.development")}{" "}
+              <b>{t("atlas.next")}</b>
             </span>
           </div>
         </div>
@@ -372,34 +378,39 @@ function WindowBody({ id }: { id: AppId }) {
     return (
       <div className="notes-body">
         <aside>
-          <span>Notes</span>
+          <span>{t("apps.notes.name")}</span>
           <b>
-            All Notes <i>12</i>
+            {t("notes.all")} <i>{formatNumber(12)}</i>
           </b>
           <span>
-            Projects <i>5</i>
+            {t("notes.projects")} <i>{formatNumber(5)}</i>
           </span>
           <span>
-            Personal <i>7</i>
+            {t("notes.personal")} <i>{formatNumber(7)}</i>
           </span>
         </aside>
         <div>
-          <time>November 1, 2026 at 10:24 AM</time>
-          <h4>What’s next.</h4>
-          <p>A few things to move forward.</p>
+          <time dateTime={illustrationDate.toISOString()}>
+            {formatDate(illustrationDate, {
+              dateStyle: "long",
+              timeStyle: "short",
+            })}
+          </time>
+          <h4>{t("notes.title")}</h4>
+          <p>{t("notes.intro")}</p>
           <ul>
             <li>
-              <i className="checked">✓</i> A fresh start
+              <i className="checked">✓</i> {t("notes.first")}
             </li>
             <li>
-              <i className="checked">✓</i> Space for the next idea
+              <i className="checked">✓</i> {t("notes.second")}
             </li>
             <li>
-              <i /> Build something worth using
+              <i /> {t("notes.third")}
             </li>
           </ul>
           <div className="note-rule" />
-          <p className="note-quiet">One window at a time.</p>
+          <p className="note-quiet">{t("notes.quiet")}</p>
         </div>
       </div>
     );
@@ -407,25 +418,27 @@ function WindowBody({ id }: { id: AppId }) {
     return (
       <div className="finder-body">
         <aside>
-          <small>Favorites</small>
-          <span>◷ Recents</span>
-          <span>⌂ Desktop</span>
-          <b>▱ Projects</b>
-          <span>↓ Downloads</span>
+          <small>{t("finder.favorites")}</small>
+          <span>◷ {t("finder.recents")}</span>
+          <span>⌂ {t("finder.desktop")}</span>
+          <b>▱ {t("finder.projects")}</b>
+          <span>↓ {t("finder.downloads")}</span>
           <span>☁ iCloud Drive</span>
         </aside>
         <div className="folders">
-          {[
-            "Whalu",
-            "Design",
-            "Photography",
-            "Weekend",
-            "Archive",
-            "Resources",
-          ].map((name) => (
+          {(
+            [
+              "Whalu",
+              "design",
+              "photography",
+              "weekend",
+              "archive",
+              "resources",
+            ] as const
+          ).map((name) => (
             <div key={name}>
               <i className="folder" />
-              <span>{name}</span>
+              <span>{name === "Whalu" ? name : t(`finder.${name}`)}</span>
             </div>
           ))}
         </div>
@@ -435,7 +448,7 @@ function WindowBody({ id }: { id: AppId }) {
     return (
       <div className="editor-body">
         <aside>
-          <small>EXPLORER</small>
+          <small>{t("editor.explorer")}</small>
           <span>⌄ WHALU</span>
           <span>　⌄ src</span>
           <b>　　main.rs</b>
@@ -445,7 +458,7 @@ function WindowBody({ id }: { id: AppId }) {
         <div className="code-pane">
           <span className="code-tab">main.rs　×</span>
           <pre>
-            <span className="code-comment">// Every window has its place.</span>
+            <span className="code-comment">// {t("editor.comment")}</span>
             {"\n\n"}
             <span className="code-pink">fn</span>{" "}
             <span className="code-blue">main</span>() {"{"}
@@ -488,6 +501,7 @@ function MacWindow({
   className?: string;
   style?: CSSProperties;
 }) {
+  const { t } = useLocale();
   return (
     <div className={`mac-window ${className}`} style={style} aria-hidden="true">
       <div className="window-bar">
@@ -501,7 +515,7 @@ function MacWindow({
             ◈　 atlas.local <span>↻</span>
           </span>
         ) : (
-          <span>{apps[index].title}</span>
+          <span>{t(`apps.${apps[index].id}.title`)}</span>
         )}
         <span className="window-tools">⊞</span>
       </div>
@@ -511,6 +525,7 @@ function MacWindow({
 }
 
 function ProductDemo() {
+  const { t, formatDate, formatNumber } = useLocale();
   const [selected, setSelected] = useState(2);
   const wheelTime = useRef(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -564,7 +579,7 @@ function ProductDemo() {
             className="mac-desktop"
             tabIndex={0}
             role="region"
-            aria-label="Interactive Whalu window overview"
+            aria-label={t("demo.label")}
             aria-describedby="demo-help"
             onKeyDown={keyDown}
             onPointerDown={(event) => {
@@ -587,9 +602,17 @@ function ProductDemo() {
             <Wallpaper />
             <div className="menu-bar" aria-hidden="true">
               <span>
-                ●　 <b>{apps[selected].name}</b>　 File　 Edit　 View　 Window
+                ●　 <b>{t(`apps.${apps[selected].id}.name`)}</b>　{" "}
+                {t("demo.menu")}
               </span>
-              <span>W　 ◒　 Sun 10:24 AM</span>
+              <span>
+                W　 ◒　{" "}
+                {formatDate(illustrationDate, {
+                  weekday: "short",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
             </div>
             <MacWindow index={3} className="desktop-back-window" />
             <MacWindow
@@ -622,7 +645,9 @@ function ProductDemo() {
                         zIndex: 10 - Math.abs(distance),
                       } as CSSProperties
                     }
-                    aria-label={`Switch to ${app.name}`}
+                    aria-label={t("demo.switch", {
+                      app: t(`apps.${app.id}.name`),
+                    })}
                     aria-pressed={distance === 0}
                     tabIndex={distance === 0 ? 0 : -1}
                     onClick={() => select(index)}
@@ -648,79 +673,42 @@ function ProductDemo() {
         <div className="laptop-shadow" />
       </div>
       <div className="demo-controls">
-        <span>Try the overview.</span>
-        <div
-          className="demo-apps"
-          role="group"
-          aria-label="Choose a demo window"
-        >
+        <span>{t("demo.try")}</span>
+        <div className="demo-apps" role="group" aria-label={t("demo.choose")}>
           {apps.map((app, index) => (
             <button
               key={app.id}
-              aria-label={`Show ${app.name}`}
+              aria-label={t("demo.show", { app: t(`apps.${app.id}.name`) })}
               aria-pressed={selected === index}
               onClick={() => select(index)}
             >
-              {app.name}
+              {t(`apps.${app.id}.name`)}
             </button>
           ))}
         </div>
         <span className="demo-selection" role="status" aria-atomic="true">
-          {apps[selected].name} <span>0{selected + 1} / 05</span>
+          {t(`apps.${apps[selected].id}.name`)}{" "}
+          <span>
+            {formatNumber(selected + 1, { minimumIntegerDigits: 2 })} /{" "}
+            {formatNumber(apps.length, { minimumIntegerDigits: 2 })}
+          </span>
         </span>
       </div>
       <p className="demo-disclaimer" id="demo-help">
-        <span className="desktop-demo-hint">
-          Select a window, or focus the demo and use ← →.
-        </span>
-        <span className="touch-demo-hint">
-          Select a window or swipe across the screen.
-        </span>
+        <span className="desktop-demo-hint">{t("demo.desktopHint")}</span>
+        <span className="touch-demo-hint">{t("demo.touchHint")}</span>
         <span className="demo-illustration-label">
-          Interactive illustration.
+          {t("demo.illustration")}
         </span>
       </p>
     </div>
   );
 }
 
-const chapters = [
-  {
-    label: "See every window",
-    title: (
-      <>
-        Every window.
-        <br />
-        <span>Its own place.</span>
-      </>
-    ),
-    text: "Three browser windows. Two documents. Your terminal. Whalu gives each one a preview, so you can go straight to the one you need.",
-  },
-  {
-    label: "Find your focus",
-    title: (
-      <>
-        One movement.
-        <br />
-        <span>Right back to it.</span>
-      </>
-    ),
-    text: "A three-finger swipe, a shortcut, or a scroll. Move through your windows while their previews glide into place. Your focus follows along.",
-  },
-  {
-    label: "Keep your order",
-    title: (
-      <>
-        Your windows.
-        <br />
-        <span>Your way.</span>
-      </>
-    ),
-    text: "Drag a preview to change its place in the stack. Your windows stay exactly where you left them on the desktop.",
-  },
-];
+const chapters = ["windows", "focus", "order"] as const;
 
 function ScrollStory() {
+  const { t, formatNumber } = useLocale();
   const ref = useRef<HTMLElement>(null);
   function goToChapter(index: number) {
     const section = ref.current;
@@ -744,26 +732,30 @@ function ScrollStory() {
       data-pinned
       data-chapter="0"
       data-focus="2"
-      aria-label="Explore the Whalu overview"
+      aria-label={t("story.label")}
     >
       <div className="story-sticky">
         <div className="story-inner">
           <div className="story-copy">
-            <p className="eyebrow">A new perspective.</p>
+            <p className="eyebrow">{t("story.kicker")}</p>
             <div className="story-chapters">
               {chapters.map((chapter, index) => (
                 <div
                   className={`chapter chapter-${index}`}
                   id={`overview-chapter-${index}`}
-                  key={chapter.label}
+                  key={chapter}
                 >
-                  <h2>{chapter.title}</h2>
-                  <p>{chapter.text}</p>
+                  <h2>
+                    {t(`story.${chapter}.title`)}
+                    <br />
+                    <span>{t(`story.${chapter}.accent`)}</span>
+                  </h2>
+                  <p>{t(`story.${chapter}.text`)}</p>
                 </div>
               ))}
             </div>
             <div className="story-scroll-cue">
-              <span /> Scroll to explore
+              <span /> {t("story.scroll")}
             </div>
           </div>
           <div className="story-stage" aria-hidden="true">
@@ -795,18 +787,20 @@ function ScrollStory() {
           <div
             className="story-navigation"
             role="group"
-            aria-label="Overview chapters"
+            aria-label={t("story.navigation")}
           >
             {chapters.map((chapter, index) => (
               <button
-                key={chapter.label}
+                key={chapter}
                 data-chapter-button
                 aria-controls={`overview-chapter-${index}`}
                 aria-pressed={index === 0}
                 onClick={() => goToChapter(index)}
               >
-                <span>0{index + 1}</span>
-                {chapter.label}
+                <span>
+                  {formatNumber(index + 1, { minimumIntegerDigits: 2 })}
+                </span>
+                {t(`story.${chapter}.label`)}
               </button>
             ))}
           </div>
@@ -818,24 +812,25 @@ function ScrollStory() {
 
 const shortcutGroups = [
   {
-    title: "Navigate",
+    id: "navigate",
     rows: [
-      ["Previous / next window", "⌃ ⌥ ↑ / ↓"],
-      ["Another window of the same app", "⌃ ⌥ ← / →"],
-      ["Next window in the stack", "⌘ Tab"],
+      ["shortcuts.previousNext", "⌃ ⌥ ↑ / ↓"],
+      ["shortcuts.sameApp", "⌃ ⌥ ← / →"],
+      ["shortcuts.next", "⌘ Tab"],
     ],
   },
   {
-    title: "Arrange",
+    id: "arrange",
     rows: [
-      ["Reorder a window in the stack", "⌃ ⌥ ⌘ ↑ / ↓"],
-      ["Move to an adjacent Space", "⌃ ⌥ ⌘ ← / →"],
-      ["Tile to the left / right half", "⌃ ⌘ ← / →"],
+      ["shortcuts.reorder", "⌃ ⌥ ⌘ ↑ / ↓"],
+      ["shortcuts.space", "⌃ ⌥ ⌘ ← / →"],
+      ["shortcuts.tile", "⌃ ⌘ ← / →"],
     ],
   },
-];
+] as const;
 
 function Controls() {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [method, setMethod] = useState(0);
   function onTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -852,40 +847,16 @@ function Controls() {
       ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
       [next]?.focus();
   }
-  const methods = [
-    {
-      name: "Keyboard",
-      icon: "keyboard" as const,
-      title: "Stay in your flow.",
-      description:
-        "Hold Control + Option to see your windows. Navigate with the arrows or H, J, K, L. Even Command + Tab switches individual windows.",
-      detail: "Familiar shortcuts. A more precise destination.",
-    },
-    {
-      name: "Trackpad",
-      icon: "trackpad" as const,
-      title: "It comes naturally.",
-      description:
-        "Rest three fingers to reveal the overview. Swipe to move between windows. Lift your fingers to get back to work.",
-      detail: "Native four-finger Space gestures stay available.",
-    },
-    {
-      name: "Mouse",
-      icon: "mouse" as const,
-      title: "Point. Scroll. You’re there.",
-      description:
-        "Move to the left edge of your display to see your windows. Scroll through the previews, or click the one you want.",
-      detail: "Back and Forward buttons navigate while the overview is open.",
-    },
-  ];
+  const methods = ["keyboard", "trackpad", "mouse"] as const;
+
   return (
     <section className="controls-section section-pad" id="controls">
       <div className="section-heading" data-reveal>
-        <p className="eyebrow">Made for your muscle memory.</p>
+        <p className="eyebrow">{t("controls.kicker")}</p>
         <h2>
-          Feels familiar.
+          {t("controls.title")}
           <br />
-          <span>Works your way.</span>
+          <span>{t("controls.accent")}</span>
         </h2>
       </div>
       <div className="controls-card" data-reveal>
@@ -930,10 +901,14 @@ function Controls() {
           </div>
         </div>
         <div className="controls-copy">
-          <div className="method-tabs" role="tablist" aria-label="Input method">
+          <div
+            className="method-tabs"
+            role="tablist"
+            aria-label={t("controls.methodLabel")}
+          >
             {methods.map((item, index) => (
               <button
-                key={item.name}
+                key={item}
                 role="tab"
                 id={`method-${index}`}
                 aria-controls="method-panel"
@@ -942,8 +917,8 @@ function Controls() {
                 onClick={() => setMethod(index)}
                 onKeyDown={(event) => onTabKey(event, index)}
               >
-                <Icon name={item.icon} />
-                {item.name}
+                <Icon name={item} />
+                {t(`controls.${item}.name`)}
               </button>
             ))}
           </div>
@@ -955,9 +930,9 @@ function Controls() {
             className="method-panel"
             key={method}
           >
-            <h3>{methods[method].title}</h3>
-            <p>{methods[method].description}</p>
-            <span>{methods[method].detail}</span>
+            <h3>{t(`controls.${methods[method]}.title`)}</h3>
+            <p>{t(`controls.${methods[method]}.description`)}</p>
+            <span>{t(`controls.${methods[method]}.detail`)}</span>
           </div>
           <button
             className="link-button"
@@ -965,7 +940,7 @@ function Controls() {
             aria-expanded={open}
             aria-controls="shortcut-sheet"
           >
-            {open ? "Hide keyboard shortcuts" : "See keyboard shortcuts"}
+            {t(open ? "shortcuts.hide" : "shortcuts.show")}
             <Icon
               name={open ? "plus" : "chevron"}
               className={open ? "rotate" : ""}
@@ -975,46 +950,41 @@ function Controls() {
       </div>
       <div className="shortcut-sheet" id="shortcut-sheet" hidden={!open}>
         {shortcutGroups.map((group) => (
-          <div key={group.title}>
-            <h3>{group.title}</h3>
+          <div key={group.id}>
+            <h3>{t(`shortcuts.${group.id}`)}</h3>
             {group.rows.map(([label, keys]) => (
               <div className="shortcut-row" key={label}>
-                <span>{label}</span>
+                <span>{t(label)}</span>
                 <kbd>{keys}</kbd>
               </div>
             ))}
           </div>
         ))}
-        <p>
-          Shortcuts are configurable. Keep Space and Mission Control gestures on
-          four fingers, with three-finger dragging disabled.
-        </p>
+        <p>{t("shortcuts.note")}</p>
       </div>
     </section>
   );
 }
 
 function NativeTiling() {
+  const { t } = useLocale();
   const [layout, setLayout] = useState<"left" | "fill" | "right">("left");
   return (
     <section className="native-section section-pad" data-scroll-scene>
       <div className="native-header" data-reveal>
-        <p className="eyebrow">Right at home on your Mac.</p>
+        <p className="eyebrow">{t("tiling.kicker")}</p>
         <h2>
-          A perfect fit.
+          {t("tiling.title")}
           <br />
-          <span>By macOS.</span>
+          <span>{t("tiling.accent")}</span>
         </h2>
-        <p>
-          Left, right, center, or all the room you need. Whalu uses native macOS
-          tiling, so your windows fit just as they should.
-        </p>
+        <p>{t("tiling.description")}</p>
       </div>
       <div className="tiling-visual" data-reveal>
         <div className={`tiling-screen layout-${layout}`} aria-hidden="true">
           <Wallpaper />
           <div className="tiling-menu">
-            ●　 Finder　 File　 Edit　 View <span>W　 ◒　 10:24</span>
+            ●　 Finder　 {t("demo.menu")} <span>W　 ◒　 10:24</span>
           </div>
           <MacWindow index={3} className="tiling-back" />
           <MacWindow index={2} className="tiling-front" />
@@ -1022,29 +992,28 @@ function NativeTiling() {
         <div
           className="layout-picker"
           role="group"
-          aria-label="Try native window arrangements"
+          aria-label={t("tiling.label")}
         >
           {(["left", "fill", "right"] as const).map((item) => (
             <button
               key={item}
-              aria-label={`Tile ${item}`}
+              aria-label={t("tiling.switch", { layout: t(`tiling.${item}`) })}
               aria-pressed={layout === item}
               onClick={() => setLayout(item)}
             >
               <span className={`layout-icon icon-${item}`} aria-hidden="true" />
-              {item === "fill" ? "Fill" : item === "left" ? "Left" : "Right"}
+              {t(`tiling.${item}`)}
             </button>
           ))}
         </div>
       </div>
-      <p className="native-note">
-        Your windows stay put until you tell them otherwise.
-      </p>
+      <p className="native-note">{t("tiling.note")}</p>
     </section>
   );
 }
 
 function Install() {
+  const { t, formatNumber } = useLocale();
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -1067,65 +1036,64 @@ function Install() {
           src={asset("whalu-icon.png")}
           width="96"
           height="96"
-          alt="Whalu app icon"
+          alt={t("install.icon")}
         />
-        <p className="eyebrow">Whalu for Mac</p>
+        <p className="eyebrow">{t("hero.kicker")}</p>
         <h2>
-          Make room
+          {t("install.title")}
           <br />
-          for what’s next.
+          {t("install.titleEnd")}
         </h2>
-        <p>Free. Open source. All yours.</p>
-        <span className="compatibility">macOS 15 or later · v0.5.1</span>
+        <p>{t("install.subtitle")}</p>
+        <span className="compatibility">
+          {t("install.compatibility", { version: "0.5.1" })}
+        </span>
       </div>
       <div className="install-guide" data-reveal>
         <div>
-          <span className="step-number">1</span>
-          <h3>Build and install.</h3>
+          <span className="step-number">{formatNumber(1)}</span>
+          <h3>{t("install.build")}</h3>
           <p>
             {repository ? (
               <>
-                Clone{" "}
+                {t("install.cloneBefore")}{" "}
                 <a href={repository} target="_blank" rel="noreferrer">
-                  the repository
+                  {t("install.repository")}
                 </a>{" "}
-                and run this from its folder.
+                {t("install.cloneAfter")}
               </>
             ) : (
-              "Run this from your local Whalu source folder."
+              t("install.local")
             )}
           </p>
           <div className="install-command">
             <code>./scripts/install.sh</code>
             <button
               onClick={copy}
-              aria-label={copied ? "Command copied" : "Copy install command"}
+              aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
             >
               <Icon name={copied ? "check" : "copy"} />
             </button>
           </div>
           <small role="status">
             {copied
-              ? "Copied to clipboard."
+              ? t("install.copied")
               : error
-                ? "Select and copy the command above."
-                : "Requires Rust and Apple’s Command Line Tools."}
+                ? t("install.copyError")
+                : t("install.requires")}
           </small>
         </div>
         <div>
-          <span className="step-number">2</span>
-          <h3>Give Whalu access.</h3>
-          <p>
-            Enable Accessibility for window navigation. Allow Screen &amp;
-            System Audio Recording for previews. Whalu guides you through setup.
-          </p>
+          <span className="step-number">{formatNumber(2)}</span>
+          <h3>{t("install.permissions")}</h3>
+          <p>{t("install.permissionsText")}</p>
         </div>
         <div>
-          <span className="step-number">3</span>
-          <h3>Find your next window.</h3>
+          <span className="step-number">{formatNumber(3)}</span>
+          <h3>{t("install.start")}</h3>
           <p>
-            Hold <kbd>⌃</kbd> + <kbd>⌥</kbd>, swipe with three fingers, or visit
-            the left edge of your screen. You’re all set.
+            {t("install.hold")} <kbd>⌃</kbd> + <kbd>⌥</kbd>
+            {t("install.startEnd")}
           </p>
         </div>
       </div>
@@ -1136,7 +1104,7 @@ function Install() {
           target="_blank"
           rel="noreferrer"
         >
-          Explore the source <Icon name="chevron" />
+          {t("install.source")} <Icon name="chevron" />
         </a>
       )}
     </section>
@@ -1144,41 +1112,26 @@ function Install() {
 }
 
 function Faq() {
-  const questions = [
-    [
-      "Will Whalu rearrange my windows?",
-      "Your windows stay where you put them. Whalu changes focus and the order of its window stack. Tiling happens only when you request it, using macOS’s own window commands.",
-    ],
-    [
-      "Do window previews leave my Mac?",
-      "No. Whalu takes small snapshots of individual windows while the overview is open and keeps them in memory. It doesn’t upload previews, save them to disk, or record audio. Without permission, the overview shows app icons instead.",
-    ],
-    [
-      "What about multiple displays and Spaces?",
-      "Each display keeps its own window order and remembered selection across Spaces. The overview appears on the display under your pointer and shows windows in its current Space. Shortcuts can also send the focused window to an adjacent desktop.",
-    ],
-    [
-      "Can I customize the controls?",
-      "Yes. Open the configuration from the W menu to change shortcuts, turn gestures on or off, or ignore specific apps. Reload the configuration from the same menu. Whalu is open source under the MIT license.",
-    ],
-  ];
+  const { t } = useLocale();
+  const questions = ["geometry", "privacy", "displays", "customize"] as const;
+
   return (
     <section className="faq-section section-pad">
       <h2 data-reveal>
-        A few more things
+        {t("faq.title")}
         <br />
-        to know.
+        {t("faq.titleEnd")}
       </h2>
       <div className="faq-list" data-reveal>
-        {questions.map(([question, answer]) => (
-          <details key={question}>
+        {questions.map((id) => (
+          <details key={id}>
             <summary>
-              {question}
+              {t(`faq.${id}.question`)}
               <span>
                 <Icon name="plus" />
               </span>
             </summary>
-            <p>{answer}</p>
+            <p>{t(`faq.${id}.answer`)}</p>
           </details>
         ))}
       </div>
@@ -1186,7 +1139,40 @@ function Faq() {
   );
 }
 
+function LanguageSelector() {
+  const { locale, setLocale, t } = useLocale();
+  const language = catalogs[locale];
+  return (
+    <div className="language-switcher">
+      <Icon name="globe" />
+      <span className="language-name" aria-hidden="true">
+        {language.nativeName}
+      </span>
+      <span className="language-code" aria-hidden="true">
+        {language.shortName}
+      </span>
+      <Icon name="chevron" className="language-chevron" />
+      <select
+        value={locale}
+        aria-label={t("language.label")}
+        title={t("language.label")}
+        onChange={(event) => {
+          const value = event.currentTarget.value as Locale;
+          if (supportedLocales.includes(value)) setLocale(value);
+        }}
+      >
+        {supportedLocales.map((code) => (
+          <option key={code} value={code} lang={code}>
+            {catalogs[code].nativeName}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function ProductNav() {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const header = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -1214,7 +1200,7 @@ function ProductNav() {
         <a
           className="brand"
           href="#"
-          aria-label="Whalu home"
+          aria-label={t("nav.home")}
           onClick={() => setOpen(false)}
         >
           <img src={asset("whalu-icon.png")} width="28" height="28" alt="" />
@@ -1224,7 +1210,7 @@ function ProductNav() {
           <button
             className="nav-toggle"
             ref={toggle}
-            aria-label="Explore Whalu"
+            aria-label={t("nav.explore")}
             aria-expanded={open}
             aria-controls="product-links"
             onClick={() => setOpen(!open)}
@@ -1235,13 +1221,13 @@ function ProductNav() {
             id="product-links"
             className="nav-links"
             data-open={open}
-            aria-label="Main navigation"
+            aria-label={t("nav.label")}
             onClick={() => setOpen(false)}
           >
-            <a href="#overview">Overview</a>
-            <a href="#controls">Controls</a>
+            <a href="#overview">{t("nav.overview")}</a>
+            <a href="#controls">{t("nav.controls")}</a>
             <a href="#get-whalu" className="nav-install">
-              Installation
+              {t("nav.installation")}
             </a>
             {repository && (
               <a href={repository} target="_blank" rel="noreferrer">
@@ -1249,12 +1235,13 @@ function ProductNav() {
               </a>
             )}
           </nav>
+          <LanguageSelector />
           <a
             className="button button-small"
             href="#get-whalu"
             onClick={() => setOpen(false)}
           >
-            Get Whalu
+            {t("nav.get")}
           </a>
         </div>
       </div>
@@ -1263,12 +1250,13 @@ function ProductNav() {
 }
 
 export function App() {
+  const { t, locale } = useLocale();
   const { reducedMotion, systemReduced, toggleMotion } = useMotionPreference();
-  useScrollMotion(reducedMotion);
+  useScrollMotion(reducedMotion, locale);
   return (
     <>
       <a className="skip-link" href="#main">
-        Skip to content
+        {t("skip")}
       </a>
       <ProductNav />
       <main id="main" tabIndex={-1}>
@@ -1278,27 +1266,25 @@ export function App() {
           aria-labelledby="hero-heading"
         >
           <div className="hero-copy">
-            <p className="hero-kicker">Whalu for Mac</p>
+            <p className="hero-kicker">{t("hero.kicker")}</p>
             <h1 id="hero-heading">
-              Every window.
+              {t("hero.title")}
               <br />
-              <span>A swipe away.</span>
+              <span>{t("hero.titleAccent")}</span>
             </h1>
             <p className="hero-description">
-              Switch windows.
-              <br className="mobile-break" /> Keep your focus.
+              {t("hero.description")}
+              <br className="mobile-break" /> {t("hero.descriptionEnd")}
             </p>
             <div className="hero-actions">
               <a className="button" href="#get-whalu">
-                Get Whalu
+                {t("nav.get")}
               </a>
               <a className="text-link" href="#overview">
-                See how it works <Icon name="chevron" />
+                {t("hero.learn")} <Icon name="chevron" />
               </a>
             </div>
-            <p className="hero-availability">
-              Free and open source. macOS 15 or later.
-            </p>
+            <p className="hero-availability">{t("hero.availability")}</p>
           </div>
           <ProductDemo />
         </section>
@@ -1309,13 +1295,13 @@ export function App() {
           <div data-reveal>
             <Icon name="shield" />
             <h2>
-              Your windows.
+              {t("privacy.title")}
               <br />
-              <span>Your business.</span>
+              <span>{t("privacy.accent")}</span>
             </h2>
             <p>
-              Window previews stay in memory on your Mac.
-              <br className="desktop-break" /> No uploads. No account. No cloud.
+              {t("privacy.description")}
+              <br className="desktop-break" /> {t("privacy.descriptionEnd")}
             </p>
           </div>
         </section>
@@ -1324,36 +1310,29 @@ export function App() {
       </main>
       <footer className="site-footer">
         <div>
-          <p>
-            Whalu is an independent, open-source project for macOS. The product
-            demonstrations on this page are interactive illustrations.
-          </p>
+          <p>{t("footer.description")}</p>
           <div className="footer-bottom">
             <a href="#" className="footer-brand">
               Whalu
             </a>
-            <span>Open source. MIT licensed.</span>
-            <a href={asset("THIRD_PARTY_NOTICES.txt")}>Third-party notices</a>
+            <span>{t("footer.license")}</span>
+            <a href={asset("THIRD_PARTY_NOTICES.txt")}>{t("footer.notices")}</a>
             <button
               className="motion-preference"
               onClick={toggleMotion}
               aria-pressed={reducedMotion}
               disabled={systemReduced}
-              title={
-                systemReduced
-                  ? "Reduce Motion is enabled in your system settings."
-                  : undefined
-              }
+              title={systemReduced ? t("motion.systemHint") : undefined}
             >
               <span aria-hidden="true">{reducedMotion ? "◉" : "◌"}</span>
               {systemReduced
-                ? "Reduced motion on"
+                ? t("motion.system")
                 : reducedMotion
-                  ? "Enable animations"
-                  : "Reduce motion"}
+                  ? t("motion.enable")
+                  : t("motion.reduce")}
             </button>
             <a href="#" className="back-top">
-              Back to top ↑
+              {t("footer.top")}
             </a>
           </div>
         </div>
