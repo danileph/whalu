@@ -622,7 +622,7 @@ impl Ui {
         for screen in screens.iter() {
             let bounds = screen.visibleFrame();
             let height = (bounds.size.height - 16.).max(132.);
-            let wheel = Wheel::new(height);
+            let wheel = Wheel::new(height, reduce_motion());
             let count = 2 * wheel.radius + 3;
             let display = discovery::display_id(&screen);
             let mut sample = Engine::new(8.);
@@ -648,6 +648,7 @@ impl Ui {
             sample.set_display_visible(display, 1, &ids, Some(ids[count / 2]));
             self.hide();
             self.show(&sample);
+            self.verify_projected_gaps(&ids[..count], count / 2, wheel.radius, height)?;
             self.verify_onscreen()?;
             let expected = rect(
                 bounds.origin.x,
@@ -681,6 +682,79 @@ impl Ui {
         println!(
             "PASS: display-ID placement, usable-height wheel capacity, non-key layout and click coordinates on every connected display"
         );
+        Ok(())
+    }
+    fn verify_projected_gaps(
+        &self,
+        ids: &[u64],
+        selected: usize,
+        radius: usize,
+        height: f64,
+    ) -> Result<(), String> {
+        let cards = self.cards.borrow();
+        let reduced = reduce_motion();
+        let bounds = |id: u64, badge: bool| -> Result<(f64, f64), String> {
+            let card = &cards[&id];
+            let layer = card.view.layer().unwrap();
+            let t = layer.transform();
+            let pose = card.pose.unwrap();
+            let mut min = f64::INFINITY;
+            let mut max = f64::NEG_INFINITY;
+            let corners = [
+                (0., 0.),
+                (128., 0.),
+                (0., 82.),
+                (128., 82.),
+                (50., -12.),
+                (78., -12.),
+                (50., 16.),
+                (78., 16.),
+            ];
+            for (x, y) in &corners[..if badge { 8 } else { 4 }] {
+                let w = x * t.m14 + y * t.m24 + t.m44;
+                let projected = layer.position().y + (x * t.m12 + y * t.m22 + t.m42) / w;
+                let expected = height / 2. + pose.y + pose.projected_y(*x, *y, reduced);
+                if (projected - expected).abs() > 1e-6 {
+                    return Err(format!(
+                        "Layout projection differs from native card transform: {projected} vs {expected}"
+                    ));
+                }
+                min = min.min(projected);
+                max = max.max(projected);
+            }
+            Ok((min, max))
+        };
+        for side in [-1_isize, 1] {
+            let mut previous = ids[selected];
+            let mut previous_gap = f64::INFINITY;
+            let mut gaps = Vec::new();
+            for i in 1..=radius {
+                let current = ids[(selected as isize + side * i as isize) as usize];
+                let a = bounds(previous, false)?;
+                let b = bounds(current, false)?;
+                let gap = if side > 0 { a.0 - b.1 } else { b.0 - a.1 };
+                if gap >= previous_gap {
+                    return Err(format!(
+                        "Visible thumbnail gap grew toward wheel edge: {previous_gap:.2} -> {gap:.2}"
+                    ));
+                }
+                let a = bounds(previous, true)?;
+                let b = bounds(current, true)?;
+                let clearance = if side > 0 { a.0 - b.1 } else { b.0 - a.1 };
+                if clearance < 4. {
+                    return Err(format!(
+                        "Projected thumbnail/badge clearance is only {clearance:.2}"
+                    ));
+                }
+                gaps.push(format!("{gap:.1}"));
+                previous_gap = gap;
+                previous = current;
+            }
+            println!(
+                "PASS: native projected thumbnail gaps shrink from center to edge (side {side}): {}",
+                gaps.join(" > ")
+            );
+        }
         Ok(())
     }
     /// Native diagnostic coordinates use the same live presentation tree as hit testing.
@@ -924,6 +998,7 @@ impl Ui {
                     window,
                     self.selected_thumbnail(),
                     map.frame.size.height,
+                    reduce_motion(),
                 )?,
                 point: local,
                 grab: NSPoint::new(local.x - center.x, local.y - center.y),
@@ -996,7 +1071,9 @@ impl Ui {
         let b = screen.visibleFrame();
         // A fixed display-relative center keeps first/last entries centered too.
         let height = (b.size.height - 16.).max(132.);
-        let wheel = Wheel::new(height);
+        // Layout and rendering must use the same system motion preference.
+        let reduce_motion = reduce_motion();
+        let wheel = Wheel::new(height, reduce_motion);
         let focused = selection
             .filter(|id| ctx.order.contains(id))
             .or(ctx.focused);
@@ -1019,8 +1096,6 @@ impl Ui {
         let reset_layout = self.reset_layout.replace(false);
         let reopening = self.dismissal.take().is_some();
         let animate = self.panel.isVisible() && self.panel.frame() == frame && !reset_layout;
-        // Respect the system motion preference without requiring a second rendering path.
-        let reduce_motion = reduce_motion();
         self.panel.setFrame_display(frame, false);
         self.content.setFrame(rect(0., 0., 176., height));
         let mut cards = self.cards.borrow_mut();

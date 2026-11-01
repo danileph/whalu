@@ -12,7 +12,8 @@ pub fn at_left_edge(bounds: crate::geometry::Rect, point: (f64, f64)) -> bool {
 
 // The 82-point preview and its 12-point badge overhang, plus shadow clearance.
 const CARD_HEIGHT: f64 = 100.;
-const MIN_GAP: f64 = 16.;
+const CAPACITY_GAP: f64 = 16.;
+const PERSPECTIVE: f64 = 600.;
 const EDGE_INSET: f64 = 66.;
 const TAPER: f64 = 0.28;
 const CURVE_POWER: f64 = 1.25;
@@ -28,10 +29,36 @@ pub struct Pose {
     pub depth: f64,
 }
 
+impl Pose {
+    /// Project a card-local point around its (64, 41) center, matching the
+    /// renderer's scale, yaw, pitch, depth and perspective in that order.
+    pub fn projected_y(&self, x: f64, y: f64, reduce_motion: bool) -> f64 {
+        let x = (x - 64.) * self.scale;
+        let y = (y - 41.) * self.scale;
+        if reduce_motion {
+            return y;
+        }
+        let (pitch_sin, pitch_cos) = self.pitch.sin_cos();
+        let yaw_sin = self.yaw.sin();
+        let rotated_y = y * pitch_cos + x * yaw_sin * pitch_sin;
+        let z = self.depth + y * pitch_sin - x * yaw_sin * pitch_cos;
+        rotated_y / (1. - z / PERSPECTIVE)
+    }
+
+    /// Vertical silhouette of the preview body, relative to its projected center.
+    pub fn vertical_bounds(&self, reduce_motion: bool) -> (f64, f64) {
+        [(0., 0.), (128., 0.), (0., 82.), (128., 82.)]
+            .into_iter()
+            .map(|(x, y)| self.projected_y(x, y, reduce_motion))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), y| {
+                (min.min(y), max.max(y))
+            })
+    }
+}
+
 pub struct Wheel {
     pub radius: usize,
-    extent: f64,
-    exit_extent: f64,
+    positions: Vec<f64>,
 }
 
 /// Provisional drag order. Commit only on a valid drop; cancellation is free.
@@ -41,10 +68,17 @@ pub struct ReorderDrag {
     pub center: usize,
     pub destination: usize,
     height: f64,
+    reduce_motion: bool,
     y: f64,
 }
 impl ReorderDrag {
-    pub fn new(order: &[u64], window: u64, selected: Option<u64>, height: f64) -> Option<Self> {
+    pub fn new(
+        order: &[u64],
+        window: u64,
+        selected: Option<u64>,
+        height: f64,
+        reduce_motion: bool,
+    ) -> Option<Self> {
         let destination = order.iter().position(|id| *id == window)?;
         Some(Self {
             original: order.to_vec(),
@@ -54,13 +88,14 @@ impl ReorderDrag {
                 .unwrap_or(0),
             destination,
             height,
+            reduce_motion,
             y: height / 2.,
         })
     }
     /// Pointer y increases downward, in logical points within the overview.
     pub fn update(&mut self, y: f64) {
         self.y = y;
-        let wheel = Wheel::new(self.height);
+        let wheel = Wheel::new(self.height, self.reduce_motion);
         let start = self.center.saturating_sub(wheel.radius);
         let end = (self.center + wheel.radius + 1).min(self.original.len());
         self.destination = (start..end)
@@ -94,40 +129,67 @@ impl ReorderDrag {
 }
 
 impl Wheel {
-    pub fn new(height: f64) -> Self {
-        // AppKit supplies logical points: Retina pixel density must not change
-        // card size or spacing. Grow the working set with usable display height.
+    pub fn new(height: f64, reduce_motion: bool) -> Self {
+        // Keep the working set based on logical display height, independently
+        // of Retina density or the system motion preference.
         let available = (height / 2. - EDGE_INSET).max(0.);
-        let radius = (available / (CARD_HEIGHT * MEAN_SCALE + MIN_GAP)).floor() as usize;
-        Self {
+        let radius = (available / (CARD_HEIGHT * MEAN_SCALE + CAPACITY_GAP)).floor() as usize;
+        let mut wheel = Self {
             radius,
-            extent: if radius == 0 { 0. } else { available },
-            exit_extent: height / 2. + EDGE_INSET,
+            positions: vec![0.; radius + 2],
+        };
+        if radius > 0 {
+            let mut slots = Vec::with_capacity(radius);
+            for i in 1..=radius {
+                let previous = wheel.shape((i - 1) as f64).vertical_bounds(reduce_motion);
+                let current = wheel.shape(i as f64).vertical_bounds(reduce_motion);
+                let midpoint = wheel.shape(i as f64 - 0.5);
+                let weight = if reduce_motion {
+                    midpoint.scale
+                } else {
+                    midpoint.scale * midpoint.pitch.cos() / (1. - midpoint.depth / PERSPECTIVE)
+                };
+                slots.push((current.1 - previous.0, weight));
+            }
+            // Allocate free space between the actual projected thumbnail
+            // edges. Rotation must not turn a shrinking layout gap into more
+            // visible whitespace. Gap weights recede with scale and tilt.
+            let occupied: f64 = slots.iter().map(|slot| slot.0).sum();
+            let weights: f64 = slots.iter().map(|slot| slot.1).sum();
+            let gap = (available - occupied) / weights;
+            for (i, (occupied, weight)) in slots.into_iter().enumerate() {
+                wheel.positions[i + 1] = wheel.positions[i] + occupied + gap * weight;
+            }
+        }
+        wheel.positions[radius + 1] = height / 2. + EDGE_INSET;
+        wheel
+    }
+
+    fn shape(&self, offset: f64) -> Pose {
+        let progress = (offset.abs() / self.radius.max(1) as f64).min(1.);
+        let curve = progress.powf(CURVE_POWER);
+        Pose {
+            x: 88. - 12. * curve,
+            y: 0.,
+            scale: 1. - TAPER * curve,
+            pitch: offset.signum() * 46_f64.to_radians() * progress,
+            // Both ends turn right; only the vertical wheel pitch changes sign.
+            yaw: 24_f64.to_radians() * progress,
+            depth: -70. * curve,
         }
     }
 
     /// Positive offsets are later entries, below the selected card in AppKit coordinates.
     /// One extra slot beyond each edge lets opaque cards travel fully off-screen.
     pub fn pose(&self, offset: f64) -> Pose {
-        let distance = offset.abs() / self.radius.max(1) as f64;
-        let progress = distance.min(1.);
-        let sign = offset.signum();
-        let curve = progress.powf(CURVE_POWER);
-        let edge = (offset.abs() - self.radius as f64).clamp(0., 1.);
-        // Integrate the same taper for the whole slot, including its gap.
-        // Keeping the gap linear leaves receding cards surrounded by almost
-        // constant whitespace. Normalize by the mean to retain the usable
-        // display extent and conservative badge clearance with Reduce Motion.
-        let travel =
-            (progress - TAPER * progress.powf(CURVE_POWER + 1.) / (CURVE_POWER + 1.)) / MEAN_SCALE;
+        let distance = offset.abs().min((self.radius + 1) as f64);
+        let index = (distance.floor() as usize).min(self.radius);
+        let fraction = distance - index as f64;
+        let y =
+            self.positions[index] + (self.positions[index + 1] - self.positions[index]) * fraction;
         Pose {
-            x: 88. - 12. * curve,
-            y: -sign * (self.extent * travel + edge * (self.exit_extent - self.extent)),
-            scale: 1. - TAPER * curve,
-            pitch: sign * 46_f64.to_radians() * progress,
-            // Both ends turn right; only the vertical wheel pitch changes sign.
-            yaw: 24_f64.to_radians() * progress,
-            depth: -70. * curve,
+            y: -offset.signum() * y,
+            ..self.shape(offset)
         }
     }
 }
@@ -165,21 +227,48 @@ mod tests {
     #[test]
     fn drag_inserts_in_both_directions_without_mutating_original() {
         let order = [1, 2, 3, 4];
-        let mut drag = ReorderDrag::new(&order, 2, Some(2), 800.).unwrap();
-        let wheel = Wheel::new(800.);
+        let mut drag = ReorderDrag::new(&order, 2, Some(2), 800., false).unwrap();
+        let wheel = Wheel::new(800., false);
         drag.update(400. - wheel.pose(2.).y);
         assert_eq!(drag.order(), [1, 3, 4, 2]);
         drag.update(400. - wheel.pose(-1.).y);
         assert_eq!(drag.order(), [2, 1, 3, 4]);
         assert_eq!(drag.original, order);
-        assert!(ReorderDrag::new(&order, 99, None, 800.).is_none());
+        assert!(ReorderDrag::new(&order, 99, None, 800., false).is_none());
+    }
+
+    #[test]
+    fn drag_targets_match_projected_slots_in_both_motion_modes() {
+        let order: Vec<_> = (1..=40).collect();
+        for reduce_motion in [false, true] {
+            for height in [132., 400., 787., 1400., 3440.] {
+                let wheel = Wheel::new(height, reduce_motion);
+                for center in [0, 20, 39] {
+                    let mut drag = ReorderDrag::new(
+                        &order,
+                        order[center],
+                        Some(order[center]),
+                        height,
+                        reduce_motion,
+                    )
+                    .unwrap();
+                    let start = center.saturating_sub(wheel.radius);
+                    let end = (center + wheel.radius + 1).min(order.len());
+                    for target in start..end {
+                        let pose = wheel.pose(target as f64 - center as f64);
+                        drag.update(height / 2. - pose.y);
+                        assert_eq!(drag.destination, target);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
     fn edge_scrolling_reaches_every_slot_and_reverses_at_all_display_heights() {
         for height in [132., 240., 800., 1400., 2500.] {
             let order: Vec<_> = (1..=40).collect();
-            let mut drag = ReorderDrag::new(&order, 20, Some(20), height).unwrap();
+            let mut drag = ReorderDrag::new(&order, 20, Some(20), height, false).unwrap();
             drag.update(height - 1.);
             for _ in 0..50 {
                 drag.scroll();
@@ -202,7 +291,7 @@ mod tests {
     #[test]
     fn selection_pose_is_centered_on_every_display_size() {
         for height in [132., 240., 600., 800., 1400., 2160., 3440.] {
-            let wheel = Wheel::new(height);
+            let wheel = Wheel::new(height, false);
             {
                 let pose = wheel.pose(0.);
                 assert_eq!(pose.y, 0.);
@@ -213,67 +302,93 @@ mod tests {
         }
     }
 
+    fn bounds_with_badge(pose: Pose, reduce_motion: bool) -> (f64, f64) {
+        let (mut min, mut max) = pose.vertical_bounds(reduce_motion);
+        for (x, y) in [(50., -12.), (78., -12.), (50., 16.), (78., 16.)] {
+            let projected = pose.projected_y(x, y, reduce_motion);
+            min = min.min(projected);
+            max = max.max(projected);
+        }
+        (min, max)
+    }
+
+    fn visible_gap(a: Pose, b: Pose, reduce_motion: bool) -> f64 {
+        a.y + a.vertical_bounds(reduce_motion).0 - b.y - b.vertical_bounds(reduce_motion).1
+    }
+
     #[test]
     fn wheel_progresses_symmetrically_without_overlapping_cards() {
-        for height in [240., 400., 600., 800., 1400., 2160., 3440.] {
-            let wheel = Wheel::new(height);
-            let mut previous = wheel.pose(0.);
-            for i in 1..=wheel.radius {
-                let below = wheel.pose(i as f64);
-                let above = wheel.pose(-(i as f64));
-                assert_eq!(above.y, -below.y);
-                assert_eq!(above.pitch, -below.pitch);
-                assert_eq!(above.yaw, below.yaw);
-                assert!(above.yaw > 0.);
-                assert_eq!(above.scale, below.scale);
-                assert!(below.scale < previous.scale);
-                assert!(below.pitch > previous.pitch);
-                assert!(below.yaw.abs() > previous.yaw.abs());
-                assert!(below.depth < previous.depth);
-                // Include the icon extending below the card in the separation bound.
-                let occupied = 100. * (previous.scale + below.scale) / 2.;
-                let gap = MIN_GAP * (previous.scale + below.scale) / 2.;
-                assert!(previous.y - below.y >= occupied + gap - 1e-9);
-                assert!(below.y.abs() + 52. * below.scale < height / 2.);
-                previous = below;
+        for reduce_motion in [false, true] {
+            for height in [240., 400., 600., 800., 1400., 2160., 3440.] {
+                let wheel = Wheel::new(height, reduce_motion);
+                let mut previous = wheel.pose(0.);
+                for i in 1..=wheel.radius {
+                    let below = wheel.pose(i as f64);
+                    let above = wheel.pose(-(i as f64));
+                    assert_eq!(above.y, -below.y);
+                    assert_eq!(above.pitch, -below.pitch);
+                    assert_eq!(above.yaw, below.yaw);
+                    assert!(above.yaw > 0.);
+                    assert_eq!(above.scale, below.scale);
+                    assert!(below.scale < previous.scale);
+                    assert!(below.pitch > previous.pitch);
+                    assert!(below.yaw.abs() > previous.yaw.abs());
+                    assert!(below.depth < previous.depth);
+                    let gap = previous.y + bounds_with_badge(previous, reduce_motion).0
+                        - below.y
+                        - bounds_with_badge(below, reduce_motion).1;
+                    assert!(gap >= 4., "badge clearance: {gap}");
+                    assert!(below.y.abs() + 52. * below.scale < height / 2.);
+                    previous = below;
+                }
+                assert!(wheel.pose(wheel.radius as f64 + 1.).y.abs() >= height / 2. + 65.);
             }
-            assert!(wheel.pose(wheel.radius as f64 + 1.).y.abs() >= height / 2. + 65.);
         }
     }
 
     #[test]
     fn tall_displays_use_the_available_height_without_a_card_limit() {
-        let laptop = Wheel::new(800.);
-        let desktop = Wheel::new(1400.);
-        let portrait = Wheel::new(2500.);
-        assert!(desktop.radius > 5);
-        assert!(desktop.radius > laptop.radius);
-        assert!(portrait.radius > desktop.radius);
-        for wheel in [laptop, desktop, portrait] {
-            let edge = wheel.pose(wheel.radius as f64);
-            assert!((edge.y.abs() - wheel.extent).abs() < 1e-9);
+        for reduce_motion in [false, true] {
+            let laptop = Wheel::new(800., reduce_motion);
+            let desktop = Wheel::new(1400., reduce_motion);
+            let portrait = Wheel::new(2500., reduce_motion);
+            assert!(desktop.radius > 5);
+            assert!(desktop.radius > laptop.radius);
+            assert!(portrait.radius > desktop.radius);
+            for (wheel, height) in [(laptop, 800.), (desktop, 1400.), (portrait, 2500.)] {
+                let edge = wheel.pose(wheel.radius as f64);
+                assert!((edge.y.abs() - (height / 2. - EDGE_INSET)).abs() < 1e-9);
+            }
         }
     }
 
     #[test]
-    fn gaps_and_center_distances_shrink_toward_both_edges() {
-        for height in [600., 800., 1400., 2160., 3440.] {
-            let wheel = Wheel::new(height);
-            let mut previous_distance = f64::INFINITY;
-            let mut previous_gap = f64::INFINITY;
-            for i in 0..wheel.radius {
-                let a = wheel.pose(i as f64);
-                let b = wheel.pose(i as f64 + 1.);
-                let distance = a.y - b.y;
-                // Reserve the full scaled card/badge footprint, including
-                // when system Reduce Motion suppresses the 3D rotation.
-                let gap = distance - CARD_HEIGHT * (a.scale + b.scale) / 2.;
-                assert!(distance < previous_distance);
-                assert!(gap < previous_gap);
-                let above = wheel.pose(-(i as f64 + 1.)).y - wheel.pose(-(i as f64)).y;
-                assert!((above - distance).abs() < 1e-9);
-                previous_distance = distance;
-                previous_gap = gap;
+    fn visible_edge_gaps_shrink_toward_both_ends_with_and_without_rotation() {
+        for reduce_motion in [false, true] {
+            for height in [600., 787., 800., 1400., 2160., 3440.] {
+                let wheel = Wheel::new(height, reduce_motion);
+                for fraction in [0., 0.25, 0.5, 0.75] {
+                    let mut previous_gap = f64::INFINITY;
+                    for i in 0..wheel.radius {
+                        let offset = i as f64 + fraction;
+                        if offset + 1. > wheel.radius as f64 {
+                            break;
+                        }
+                        let gap =
+                            visible_gap(wheel.pose(offset), wheel.pose(offset + 1.), reduce_motion);
+                        let above = visible_gap(
+                            wheel.pose(-offset - 1.),
+                            wheel.pose(-offset),
+                            reduce_motion,
+                        );
+                        assert!(
+                            gap < previous_gap,
+                            "height {height}, offset {offset}, reduced {reduce_motion}: {gap} >= {previous_gap}"
+                        );
+                        assert!((above - gap).abs() < 1e-9);
+                        previous_gap = gap;
+                    }
+                }
             }
         }
     }
@@ -281,21 +396,27 @@ mod tests {
     #[test]
     fn spacing_survives_resolution_thresholds_and_fractional_travel() {
         // Cross every slot-count boundary, including very short displays.
-        for height in (132..=4000).step_by(2) {
-            let height = height as f64;
-            let wheel = Wheel::new(height);
-            let limit = (wheel.radius * 4) as isize;
-            for step in -limit - 4..=limit {
-                let offset = step as f64 / 4.;
-                let a = wheel.pose(offset);
-                let b = wheel.pose(offset + 1.);
-                let occupied = CARD_HEIGHT * (a.scale + b.scale) / 2.;
-                let gap = MIN_GAP * (a.scale + b.scale) / 2.;
-                assert!(a.y - b.y >= occupied + gap - 1e-9);
-            }
-            if wheel.radius > 0 {
-                let edge = wheel.pose(wheel.radius as f64);
-                assert!(edge.y.abs() + 52. * edge.scale < height / 2.);
+        for reduce_motion in [false, true] {
+            for height in (132..=4000).step_by(2) {
+                let height = height as f64;
+                let wheel = Wheel::new(height, reduce_motion);
+                let limit = (wheel.radius * 4) as isize;
+                for step in -limit - 4..=limit {
+                    let offset = step as f64 / 4.;
+                    let a = wheel.pose(offset);
+                    let b = wheel.pose(offset + 1.);
+                    let gap = a.y + bounds_with_badge(a, reduce_motion).0
+                        - b.y
+                        - bounds_with_badge(b, reduce_motion).1;
+                    assert!(
+                        gap >= 4.,
+                        "height {height}, offset {offset}, reduced {reduce_motion}, gap {gap}"
+                    );
+                }
+                if wheel.radius > 0 {
+                    let edge = wheel.pose(wheel.radius as f64);
+                    assert!(edge.y.abs() + 52. * edge.scale < height / 2.);
+                }
             }
         }
     }
