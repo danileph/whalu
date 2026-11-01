@@ -118,6 +118,10 @@ To keep desktop icons hidden, use **System Settings → Desktop & Dock → Show 
 
 The [brand assets](assets/README.md) include the glass app icon, silver wordmark, generation prompts, and icon rebuild instructions.
 
+## Landing page
+
+The React landing page lives in [website/](website/README.md), with an interactive window overview and a GitHub Pages deployment workflow. Run `npm ci` and `npm run dev` from that directory to preview it locally. Publishing can be configured later; see the website README for the steps.
+
 ## Verification
 
 ```sh

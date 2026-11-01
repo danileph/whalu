@@ -1,0 +1,10 @@
+:root {
+  --paper: #f5f4ef;
+  --ink: #292e24;
+  --olive: #697855;
+  --lime: #d4e69b;
+  --muted: #6c7063;
+  --line: #dcded3;
+  --blue: #5478cb;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
