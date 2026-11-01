@@ -114,16 +114,15 @@ impl Wheel {
         let sign = offset.signum();
         let curve = progress.powf(CURVE_POWER);
         let edge = (offset.abs() - self.radius as f64).clamp(0., 1.);
-        // Integrate the tapered card heights rather than compressing a sine
-        // curve near the edges. Every slot keeps its badge clearance, including
-        // with Reduce Motion, and spare room becomes evenly distributed spacing.
-        let occupied = CARD_HEIGHT
-            * self.radius as f64
-            * (progress - TAPER * progress.powf(CURVE_POWER + 1.) / (CURVE_POWER + 1.));
-        let spacing = self.extent - CARD_HEIGHT * self.radius as f64 * MEAN_SCALE;
+        // Integrate the same taper for the whole slot, including its gap.
+        // Keeping the gap linear leaves receding cards surrounded by almost
+        // constant whitespace. Normalize by the mean to retain the usable
+        // display extent and conservative badge clearance with Reduce Motion.
+        let travel =
+            (progress - TAPER * progress.powf(CURVE_POWER + 1.) / (CURVE_POWER + 1.)) / MEAN_SCALE;
         Pose {
             x: 88. - 12. * curve,
-            y: -sign * (occupied + spacing * progress + edge * (self.exit_extent - self.extent)),
+            y: -sign * (self.extent * travel + edge * (self.exit_extent - self.extent)),
             scale: 1. - TAPER * curve,
             pitch: sign * 46_f64.to_radians() * progress,
             // Both ends turn right; only the vertical wheel pitch changes sign.
@@ -233,7 +232,8 @@ mod tests {
                 assert!(below.depth < previous.depth);
                 // Include the icon extending below the card in the separation bound.
                 let occupied = 100. * (previous.scale + below.scale) / 2.;
-                assert!(previous.y - below.y >= occupied + MIN_GAP - 1e-9);
+                let gap = MIN_GAP * (previous.scale + below.scale) / 2.;
+                assert!(previous.y - below.y >= occupied + gap - 1e-9);
                 assert!(below.y.abs() + 52. * below.scale < height / 2.);
                 previous = below;
             }
@@ -256,6 +256,29 @@ mod tests {
     }
 
     #[test]
+    fn gaps_and_center_distances_shrink_toward_both_edges() {
+        for height in [600., 800., 1400., 2160., 3440.] {
+            let wheel = Wheel::new(height);
+            let mut previous_distance = f64::INFINITY;
+            let mut previous_gap = f64::INFINITY;
+            for i in 0..wheel.radius {
+                let a = wheel.pose(i as f64);
+                let b = wheel.pose(i as f64 + 1.);
+                let distance = a.y - b.y;
+                // Reserve the full scaled card/badge footprint, including
+                // when system Reduce Motion suppresses the 3D rotation.
+                let gap = distance - CARD_HEIGHT * (a.scale + b.scale) / 2.;
+                assert!(distance < previous_distance);
+                assert!(gap < previous_gap);
+                let above = wheel.pose(-(i as f64 + 1.)).y - wheel.pose(-(i as f64)).y;
+                assert!((above - distance).abs() < 1e-9);
+                previous_distance = distance;
+                previous_gap = gap;
+            }
+        }
+    }
+
+    #[test]
     fn spacing_survives_resolution_thresholds_and_fractional_travel() {
         // Cross every slot-count boundary, including very short displays.
         for height in (132..=4000).step_by(2) {
@@ -267,7 +290,8 @@ mod tests {
                 let a = wheel.pose(offset);
                 let b = wheel.pose(offset + 1.);
                 let occupied = CARD_HEIGHT * (a.scale + b.scale) / 2.;
-                assert!(a.y - b.y >= occupied + MIN_GAP - 1e-9);
+                let gap = MIN_GAP * (a.scale + b.scale) / 2.;
+                assert!(a.y - b.y >= occupied + gap - 1e-9);
             }
             if wheel.radius > 0 {
                 let edge = wheel.pose(wheel.radius as f64);
