@@ -1,5 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, ReactNode, SVGProps } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent,
+  PointerEvent,
+  ReactNode,
+  SVGProps,
+} from "react";
 
 const repository = (
   import.meta.env.VITE_REPOSITORY_URL as string | undefined
@@ -76,9 +82,47 @@ function Icon({
 
 // Read layout once per frame. Motion only updates compositor-friendly CSS variables;
 // React doesn't render on each scroll event, and the listener sleeps between events.
-function useScrollMotion() {
+function useMotionPreference() {
+  const [systemReduced, setSystemReduced] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [manualReduced, setManualReduced] = useState(() => {
+    try {
+      return localStorage.getItem("whalu-reduced-motion") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const reducedMotion = systemReduced || manualReduced;
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setSystemReduced(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.motion = reducedMotion
+      ? "reduced"
+      : "full";
+    return () => {
+      delete document.documentElement.dataset.motion;
+    };
+  }, [reducedMotion]);
+  function toggleMotion() {
+    const next = !manualReduced;
+    setManualReduced(next);
+    try {
+      localStorage.setItem("whalu-reduced-motion", String(next));
+    } catch {
+      /* The preference still works for this visit. */
+    }
+  }
+  return { reducedMotion, systemReduced, toggleMotion };
+}
+
+function useScrollMotion(reducedMotion: boolean) {
+  const revealed = useRef(new WeakSet<Element>());
+  useEffect(() => {
     const scenes = [
       ...document.querySelectorAll<HTMLElement>("[data-scroll-scene]"),
     ];
@@ -94,7 +138,11 @@ function useScrollMotion() {
             observer.unobserve(entry.target);
             // Content stays visible before observation, including screenshots,
             // restored scroll positions, and browsers that skip an entry.
-            if (!media.matches && typeof entry.target.animate === "function") {
+            if (
+              !reducedMotion &&
+              !revealed.current.has(entry.target) &&
+              typeof entry.target.animate === "function"
+            ) {
               const animation = entry.target.animate(
                 [
                   { opacity: 0, transform: "translateY(32px)" },
@@ -106,6 +154,7 @@ function useScrollMotion() {
               animation.onfinish = animation.oncancel = () =>
                 revealAnimations.delete(animation);
             }
+            revealed.current.add(entry.target);
           }
       },
       { threshold: 0 },
@@ -121,7 +170,7 @@ function useScrollMotion() {
       }));
       for (const { node, rect } of measurements) {
         const pinned = node.hasAttribute("data-pinned");
-        const progress = media.matches
+        const progress = reducedMotion
           ? 0.5
           : pinned
             ? clamp(-rect.top / Math.max(1, rect.height - height))
@@ -147,24 +196,17 @@ function useScrollMotion() {
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
-    const onMotionChange = () => {
-      if (media.matches)
-        revealAnimations.forEach((animation) => animation.finish());
-      schedule();
-    };
     update();
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", schedule);
-    media.addEventListener("change", onMotionChange);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       revealAnimations.forEach((animation) => animation.cancel());
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
-      media.removeEventListener("change", onMotionChange);
     };
-  }, []);
+  }, [reducedMotion]);
 }
 
 function Wallpaper() {
@@ -471,9 +513,12 @@ function MacWindow({
 function ProductDemo() {
   const [selected, setSelected] = useState(2);
   const wheelTime = useRef(0);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const swiped = useRef(false);
   const select = (index: number) =>
     setSelected(Math.max(0, Math.min(apps.length - 1, index)));
   function keyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (
       ![
         "ArrowDown",
@@ -498,6 +543,16 @@ function ProductDemo() {
         apps.length,
     );
   }
+  function endSwipe(event: PointerEvent<HTMLDivElement>) {
+    if (!touchStart.current) return;
+    const x = event.clientX - touchStart.current.x;
+    const y = event.clientY - touchStart.current.y;
+    touchStart.current = null;
+    if (Math.abs(x) > 38 && Math.abs(x) > Math.abs(y) * 1.3) {
+      swiped.current = true;
+      select(selected + (x < 0 ? 1 : -1));
+    }
+  }
   return (
     <div className="product-demo" id="demo">
       <div className="laptop">
@@ -509,8 +564,25 @@ function ProductDemo() {
             className="mac-desktop"
             tabIndex={0}
             role="region"
-            aria-label="Interactive window overview. Use the arrow keys or select a window."
+            aria-label="Interactive Whalu window overview"
+            aria-describedby="demo-help"
             onKeyDown={keyDown}
+            onPointerDown={(event) => {
+              swiped.current = false;
+              if (event.pointerType === "touch")
+                touchStart.current = { x: event.clientX, y: event.clientY };
+            }}
+            onClickCapture={(event) => {
+              if (swiped.current) {
+                event.preventDefault();
+                event.stopPropagation();
+                swiped.current = false;
+              }
+            }}
+            onPointerUp={endSwipe}
+            onPointerCancel={() => {
+              touchStart.current = null;
+            }}
           >
             <Wallpaper />
             <div className="menu-bar" aria-hidden="true">
@@ -576,8 +648,12 @@ function ProductDemo() {
         <div className="laptop-shadow" />
       </div>
       <div className="demo-controls">
-        <span>Take it for a spin.</span>
-        <div className="demo-apps" aria-label="Choose a demo window">
+        <span>Try the overview.</span>
+        <div
+          className="demo-apps"
+          role="group"
+          aria-label="Choose a demo window"
+        >
           {apps.map((app, index) => (
             <button
               key={app.id}
@@ -589,12 +665,20 @@ function ProductDemo() {
             </button>
           ))}
         </div>
-        <span className="demo-selection" role="status">
+        <span className="demo-selection" role="status" aria-atomic="true">
           {apps[selected].name} <span>0{selected + 1} / 05</span>
         </span>
       </div>
-      <p className="demo-disclaimer">
-        Interactive illustration of the Whalu overview.
+      <p className="demo-disclaimer" id="demo-help">
+        <span className="desktop-demo-hint">
+          Select a window, or focus the demo and use ← →.
+        </span>
+        <span className="touch-demo-hint">
+          Select a window or swipe across the screen.
+        </span>
+        <span className="demo-illustration-label">
+          Interactive illustration.
+        </span>
       </p>
     </div>
   );
@@ -642,9 +726,7 @@ function ScrollStory() {
     const section = ref.current;
     if (!section) return;
     const range = Math.max(1, section.offsetHeight - window.innerHeight);
-    const reduced = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = document.documentElement.dataset.motion === "reduced";
     window.scrollTo({
       top:
         section.getBoundingClientRect().top +
@@ -670,7 +752,11 @@ function ScrollStory() {
             <p className="eyebrow">A new perspective.</p>
             <div className="story-chapters">
               {chapters.map((chapter, index) => (
-                <div className={`chapter chapter-${index}`} key={chapter.label}>
+                <div
+                  className={`chapter chapter-${index}`}
+                  id={`overview-chapter-${index}`}
+                  key={chapter.label}
+                >
                   <h2>{chapter.title}</h2>
                   <p>{chapter.text}</p>
                 </div>
@@ -706,11 +792,16 @@ function ScrollStory() {
               })}
             </div>
           </div>
-          <div className="story-navigation" aria-label="Overview chapters">
+          <div
+            className="story-navigation"
+            role="group"
+            aria-label="Overview chapters"
+          >
             {chapters.map((chapter, index) => (
               <button
                 key={chapter.label}
                 data-chapter-button
+                aria-controls={`overview-chapter-${index}`}
                 aria-pressed={index === 0}
                 onClick={() => goToChapter(index)}
               >
@@ -858,6 +949,7 @@ function Controls() {
           </div>
           <div
             role="tabpanel"
+            tabIndex={0}
             id="method-panel"
             aria-labelledby={`method-${method}`}
             className="method-panel"
@@ -929,6 +1021,7 @@ function NativeTiling() {
         </div>
         <div
           className="layout-picker"
+          role="group"
           aria-label="Try native window arrangements"
         >
           {(["left", "fill", "right"] as const).map((item) => (
@@ -1093,34 +1186,92 @@ function Faq() {
   );
 }
 
-export function App() {
-  useScrollMotion();
+function ProductNav() {
+  const [open, setOpen] = useState(false);
+  const header = useRef<HTMLElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: globalThis.PointerEvent) => {
+      if (!header.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        toggle.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
   return (
-    <>
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <header className="product-nav">
-        <div>
-          <a className="brand" href="#" aria-label="Whalu home">
-            <img src={asset("whalu-icon.png")} width="28" height="28" alt="" />
-            <span>Whalu</span>
-          </a>
-          <nav aria-label="Main navigation">
+    <header className="product-nav" ref={header}>
+      <div>
+        <a
+          className="brand"
+          href="#"
+          aria-label="Whalu home"
+          onClick={() => setOpen(false)}
+        >
+          <img src={asset("whalu-icon.png")} width="28" height="28" alt="" />
+          <span>Whalu</span>
+        </a>
+        <div className="nav-actions">
+          <button
+            className="nav-toggle"
+            ref={toggle}
+            aria-label="Explore Whalu"
+            aria-expanded={open}
+            aria-controls="product-links"
+            onClick={() => setOpen(!open)}
+          >
+            <Icon name="chevron" />
+          </button>
+          <nav
+            id="product-links"
+            className="nav-links"
+            data-open={open}
+            aria-label="Main navigation"
+            onClick={() => setOpen(false)}
+          >
             <a href="#overview">Overview</a>
             <a href="#controls">Controls</a>
+            <a href="#get-whalu" className="nav-install">
+              Installation
+            </a>
             {repository && (
               <a href={repository} target="_blank" rel="noreferrer">
                 GitHub
               </a>
             )}
-            <a className="button button-small" href="#get-whalu">
-              Get Whalu
-            </a>
           </nav>
+          <a
+            className="button button-small"
+            href="#get-whalu"
+            onClick={() => setOpen(false)}
+          >
+            Get Whalu
+          </a>
         </div>
-      </header>
-      <main id="main">
+      </div>
+    </header>
+  );
+}
+
+export function App() {
+  const { reducedMotion, systemReduced, toggleMotion } = useMotionPreference();
+  useScrollMotion(reducedMotion);
+  return (
+    <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <ProductNav />
+      <main id="main" tabIndex={-1}>
         <section
           className="hero"
           data-scroll-scene
@@ -1134,8 +1285,8 @@ export function App() {
               <span>A swipe away.</span>
             </h1>
             <p className="hero-description">
-              A whole new way to move
-              <br className="mobile-break" /> through your Mac.
+              Switch windows.
+              <br className="mobile-break" /> Keep your focus.
             </p>
             <div className="hero-actions">
               <a className="button" href="#get-whalu">
@@ -1183,6 +1334,24 @@ export function App() {
             </a>
             <span>Open source. MIT licensed.</span>
             <a href={asset("THIRD_PARTY_NOTICES.txt")}>Third-party notices</a>
+            <button
+              className="motion-preference"
+              onClick={toggleMotion}
+              aria-pressed={reducedMotion}
+              disabled={systemReduced}
+              title={
+                systemReduced
+                  ? "Reduce Motion is enabled in your system settings."
+                  : undefined
+              }
+            >
+              <span aria-hidden="true">{reducedMotion ? "◉" : "◌"}</span>
+              {systemReduced
+                ? "Reduced motion on"
+                : reducedMotion
+                  ? "Enable animations"
+                  : "Reduce motion"}
+            </button>
             <a href="#" className="back-top">
               Back to top ↑
             </a>

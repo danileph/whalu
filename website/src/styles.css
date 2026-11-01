@@ -4,6 +4,7 @@
   box-sizing: border-box;
 }
 html {
+  color-scheme: light;
   scroll-behavior: smooth;
   scroll-padding-top: 64px;
 }
@@ -62,6 +63,9 @@ summary:focus-visible,
 }
 ::selection {
   background: #b3d8ff;
+}
+main:focus {
+  outline: none;
 }
 .skip-link {
   position: fixed;
@@ -159,10 +163,19 @@ summary:focus-visible,
 .product-nav nav > a:not(.button):hover {
   color: #06c;
 }
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+.nav-toggle,
+.nav-install {
+  display: none;
+}
 .hero {
   --progress: 0;
   overflow: clip;
-  padding-top: 74px;
+  padding-top: 60px;
   text-align: center;
 }
 .hero-copy {
@@ -212,7 +225,7 @@ h1 > span {
 .product-demo {
   max-width: 1220px;
   padding: 0 45px;
-  margin: 58px auto 0;
+  margin: 42px auto 0;
 }
 .laptop {
   position: relative;
@@ -255,6 +268,7 @@ h1 > span {
   border-radius: 50%;
 }
 .mac-desktop {
+  touch-action: pan-y;
   position: relative;
   overflow: hidden;
   aspect-ratio: 16 / 10;
@@ -965,6 +979,7 @@ h1 > span {
   background: var(--surface);
 }
 .demo-apps button {
+  min-height: 44px;
   font-size: 11px;
   padding: 9px 13px;
   border-radius: 25px;
@@ -980,13 +995,31 @@ h1 > span {
   box-shadow: 0 1px 5px #00000014;
 }
 .demo-selection {
-  display: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.demo-selection > span {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
 }
 .demo-disclaimer {
-  font-size: 10px;
-  color: #86868b;
-  margin: 14px 0 70px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 56px;
+  line-height: 1.7;
   letter-spacing: 0;
+}
+.touch-demo-hint {
+  display: none;
+}
+.demo-illustration-label {
+  display: block;
+  font-size: 11px;
+  margin-top: 3px;
 }
 .scroll-story {
   --progress: 0;
@@ -1042,11 +1075,10 @@ h1 > span {
   width: 100%;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(24px);
+  transform: translateY(12px);
   transition:
     opacity 400ms,
-    transform 500ms,
-    visibility 400ms;
+    transform 400ms;
 }
 .chapter h2 {
   font-size: clamp(47px, 4.8vw, 68px);
@@ -1189,12 +1221,13 @@ h1 > span {
   gap: 5px;
 }
 .story-navigation button {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px 19px;
   background: #1d1d1f;
-  color: #86868b;
+  color: #b0b0b5;
   border-radius: 30px;
   font-size: 11px;
   transition:
@@ -1203,7 +1236,7 @@ h1 > span {
 }
 .story-navigation button > span {
   font-size: 10px;
-  color: #86868b;
+  color: #b0b0b5;
 }
 .story-navigation button[aria-pressed="true"] {
   background: #333336;
@@ -1442,6 +1475,7 @@ h1 > span {
   border-bottom: 1px solid #e6e6eb;
 }
 .method-tabs button {
+  min-height: 60px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1675,6 +1709,7 @@ kbd {
   margin-top: 30px;
 }
 .layout-picker button {
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3312,10 +3347,251 @@ kbd {
     top: 51%;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
+.motion-preference {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  background: none;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.demo-apps button:hover:not([aria-pressed="true"]),
+.layout-picker button:hover:not([aria-pressed="true"]) {
+  background: #e8e8ed;
+  color: var(--ink);
+}
+.method-tabs button:hover {
+  color: var(--ink);
+}
+.story-navigation button:hover {
+  background: #2b2b2e;
+  color: #fff;
+}
+.faq-list summary:hover > span {
+  background: #e8e8ed;
+  color: var(--ink);
+}
+.site-footer > div,
+.site-footer p {
+  font-size: 12px;
+}
+.install-guide small {
+  font-size: 12px;
+}
+.motion-preference > span {
+  font-size: 18px;
+}
+.motion-preference:hover:not(:disabled) {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.motion-preference:disabled {
+  cursor: default;
+}
+.method-panel {
+  min-height: 200px;
+}
+.keyboard-model {
+  top: calc(50% - 135px);
+}
+.trackpad-model,
+.mouse-model {
+  top: calc(50% - 122px);
+}
+.method-panel > span,
+.method-tabs button,
+.native-note,
+.compatibility,
+.install-guide small,
+.site-footer > div {
+  color: var(--muted);
+}
+.install-command button {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+@media (pointer: coarse) {
+  .desktop-demo-hint {
+    display: none;
   }
+  .touch-demo-hint {
+    display: inline;
+  }
+}
+@media (max-width: 600px) {
+  .nav-actions {
+    gap: 12px;
+  }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 7px;
+    border-radius: 50%;
+    background: none;
+    color: var(--ink);
+  }
+  .nav-toggle:hover {
+    background: #00000005;
+  }
+  .nav-toggle svg {
+    width: 18px;
+    height: 18px;
+    transform: rotate(90deg);
+    transition: transform 180ms;
+  }
+  .nav-toggle[aria-expanded="true"] svg {
+    transform: rotate(270deg);
+  }
+  .product-nav .nav-links {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    padding: 8px 25px 20px;
+    border-bottom: 1px solid var(--line);
+    background: #fffffff7;
+    box-shadow: 0 16px 24px #00000008;
+    gap: 0;
+    align-items: stretch;
+  }
+  .product-nav .nav-links[data-open="true"] {
+    display: flex;
+    flex-direction: column;
+    animation: panel-in 180ms ease-out;
+  }
+  .product-nav .nav-links > a:not(.button) {
+    display: block;
+    font-size: 17px;
+    padding: 13px 0;
+    min-height: 44px;
+  }
+  .demo-apps {
+    width: 100%;
+    max-width: 400px;
+  }
+  .demo-apps button {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 6px;
+    font-size: 11px;
+  }
+  .demo-selection {
+    font-size: 11px;
+  }
+  .desktop-demo-hint {
+    display: none;
+  }
+  .touch-demo-hint {
+    display: inline;
+  }
+  .demo-disclaimer {
+    font-size: 11px;
+    padding: 0 20px;
+  }
+  .method-panel {
+    min-height: 245px;
+  }
+  .keyboard-model {
+    top: 7px;
+  }
+  .trackpad-model {
+    top: 31px;
+  }
+  .mouse-model {
+    top: 26px;
+  }
+  .motion-preference {
+    font-size: 10px;
+  }
+  .site-footer p,
+  .footer-bottom {
+    font-size: 11px;
+  }
+  .install-guide small,
+  .hero-availability {
+    font-size: 11px;
+  }
+}
+@media (max-width: 375px) {
+  .demo-apps button {
+    font-size: 10px;
+  }
+}
+@media (max-height: 650px) and (min-width: 601px) {
+  .story-sticky {
+    min-height: 0;
+  }
+  .story-inner {
+    padding: 20px 40px 76px;
+  }
+  .story-copy {
+    padding-bottom: 0;
+  }
+  .story-copy > .eyebrow {
+    font-size: 14px;
+  }
+  .story-chapters {
+    height: 214px;
+    margin-top: 20px;
+  }
+  .chapter h2 {
+    font-size: 40px;
+  }
+  .chapter > p {
+    font-size: 14px;
+    margin-top: 18px;
+  }
+  .story-scroll-cue {
+    display: none;
+  }
+  .story-stage {
+    transform: scale(0.58);
+    width: 172%;
+  }
+  .story-navigation {
+    bottom: 12px;
+  }
+}
+@media (max-height: 700px) and (max-width: 600px) {
+  .story-sticky {
+    min-height: 0;
+  }
+  .story-inner {
+    padding-top: 24px;
+  }
+  .story-chapters {
+    height: 150px;
+  }
+  .chapter h2 {
+    font-size: 34px;
+  }
+  .chapter > p {
+    font-size: 12px;
+  }
+  .story-stage {
+    top: 40%;
+    height: 48%;
+  }
+  .story-stack {
+    top: 50%;
+    transform: scale(0.43);
+  }
+  .story-navigation {
+    bottom: 12px;
+  }
+}
+
+:root[data-motion="reduced"] {
+  scroll-behavior: auto;
   *,
   *::before,
   *::after {
