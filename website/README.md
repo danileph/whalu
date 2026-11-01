@@ -1,6 +1,6 @@
 # Whalu website
 
-A static React + TypeScript landing page built with Vite. Its window wheel, keyboard controls, shortcut sheet, native-tiling illustration, FAQ, and command-copy button work entirely in the browser. The desktop and window content are illustrations, not recordings of the installed app.
+A static React + TypeScript landing page built with Vite. Its scroll-driven window overview, interactive desktop, input-method tabs, shortcut sheet, native-tiling illustration, FAQ, and command-copy button work entirely in the browser. The desktop and window content are illustrations, not recordings of the installed app.
 
 ## Work locally
 
@@ -40,16 +40,20 @@ Restart Vite after changing environment variables. Without a repository URL, cal
 
 ## Design and assets
 
-- DM Sans and Instrument Serif are served locally through Fontsource packages under the SIL Open Font License. No Google Fonts requests, analytics, external image services, or runtime CDNs.
-- Redistributed software and font license texts are included in `public/THIRD_PARTY_NOTICES.txt` and copied into the production build.
+- The design follows Apple's product-page visual language: white, near-black, neutral gray, blue controls, centered product typography, and generous spacing. The native system font stack uses San Francisco on macOS and appropriate system fallbacks elsewhere. No downloaded fonts, analytics, external image services, or runtime CDNs.
+- Redistributed software license texts are included in `public/THIRD_PARTY_NOTICES.txt` and copied into the production build.
 - `public/whalu-icon.png` is a resized copy of the existing Whalu brand asset. It is only used by the website.
-- The landscape, miniature app windows, and input-device illustrations are authored in SVG, React, and CSS. CSS perspective supplies the wheel depth without WebGL or a continuous render loop.
+- The wallpaper, laptop, miniature app windows, and input-device illustrations are authored in SVG, React, and CSS. CSS perspective supplies the wheel depth without WebGL.
+- `useScrollMotion` reads scroll position at most once per animation frame and writes CSS variables without rendering React on every scroll. The pinned overview separates windows into a wheel and moves focus between them. Section reveals use IntersectionObserver. The hero and native-tiling display respond to scroll position too. No artificial scrolling, wheel interception, or continuously running animation loop.
 - Colors are in `src/tokens.css`; responsive layouts and reduced-motion behavior are in `src/styles.css`.
-- The hero supports thumbnail selection, previous/next buttons, arrow keys and J/K while focused, horizontal touch swipes, and wheel input over the thumbnail strip. Keyboard navigation wraps; buttons and wheel input stop at the ends. Page scrolling remains available.
+- The hero supports thumbnail selection, app selector buttons, arrow keys and J/K while focused, and wheel input over the thumbnail strip. Keyboard navigation wraps; wheel input stops at the ends. Page scrolling remains available.
+- The system Reduce Motion setting disables animated transitions and reveals, removes pinning, and lays out all overview chapters as static readable content.
 - When changing the native app version or installation requirements, update the corresponding copy in `src/App.tsx`.
 
 ## Verification
 
-Run `npm run build` and `git diff --check`. Check the page at desktop and mobile widths, select all five demo windows, expand the shortcut sheet and FAQ, try both tiling positions, and copy the install command. Verify keyboard focus and that the layout still works with reduced motion. Before deploying, serve `dist/` under a repository-style URL path to check assets and anchors.
+Run `npm run build` and `git diff --check`. Check the page at desktop and mobile widths. Scroll through the three overview chapters in both directions and try their navigation buttons. Select all five demo windows, switch input-method tabs, expand the shortcut sheet and FAQ, try all three tiling positions, and copy the install command. Verify keyboard focus and the Reduce Motion fallback. Before deploying, serve `dist/` under a repository-style URL path to check assets and anchors.
 
-Verified on 2026-11-01: production build and TypeScript checks pass, `npm audit` reports no vulnerabilities, and browser checks pass at desktop, 768px, 390px, and 320px widths. Checked window selection, keyboard wrapping and focus, the shortcut sheet, tiling controls, clipboard feedback, FAQ, and section anchors. The production build also loads its fonts and images and switches windows under `/whalu/`, with no browser console warnings or errors. Physical touch gestures and the eventual GitHub-hosted deployment have not been tested.
+The site remains local. GitHub publication is deferred until a repository is available.
+
+Verified on 2026-11-01 after the visual redesign: TypeScript and production builds pass, `npm audit` reports no vulnerabilities, and browser checks cover desktop, 768px, 390px, and 320px widths. Checked scroll progress and reverse movement through the pinned scene, chapter buttons, all five demo windows, keyboard wrapping, keyboard-operated input tabs, shortcut disclosure, tiling, command copy, FAQ, and section anchors. The production build also loads and switches windows under `/whalu/`, with no console warnings or errors. The CSS and media-query listener provide the Reduce Motion fallback; system preference emulation was unavailable in the browser tools. GitHub deployment remains untested until publication.
