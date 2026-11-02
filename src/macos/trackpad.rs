@@ -322,6 +322,38 @@ mod tests {
             .collect()
     }
 
+    fn vertical_contacts(count: i32, y: f64) -> Vec<Contact> {
+        contacts(count, 0.3)
+            .into_iter()
+            .map(|contact| Contact { y, ..contact })
+            .collect()
+    }
+
+    #[test]
+    fn horizontal_contacts_show_overview_without_navigation() {
+        for direction in [-1., 1.] {
+            let mut tracked = Tracked::default();
+            for (time, dx) in [
+                (0., 0.),
+                (0.02, 0.02),
+                (0.05, 0.04),
+                (0.4, 0.15),
+                (0.5, 0.25),
+                (2., 0.25),
+            ] {
+                let events = tracked.feed(9, time, &contacts(3, 0.3 + direction * dx));
+                assert!(!events.iter().any(|event| matches!(
+                    event,
+                    super::super::Event::Gesture(..) | super::super::Event::GestureMotion(..)
+                )));
+            }
+            assert!(matches!(
+                tracked.feed(9, 2.1, &[]).as_slice(),
+                [super::super::Event::TouchOverview(9, false)]
+            ));
+        }
+    }
+
     #[test]
     fn stationary_contact_opens_once_and_release_closes_without_navigation() {
         let mut tracked = Tracked::default();
@@ -356,8 +388,8 @@ mod tests {
     fn fourth_contact_yields_before_cancelling_a_recognized_three_finger_swipe() {
         let mut tracked = Tracked::default();
         tracked.feed(1, 0., &contacts(3, 0.3));
-        tracked.feed(1, 0.04, &contacts(3, 0.32));
-        let began = tracked.feed(1, 0.09, &contacts(3, 0.4));
+        tracked.feed(1, 0.04, &vertical_contacts(3, 0.52));
+        let began = tracked.feed(1, 0.09, &vertical_contacts(3, 0.6));
         assert!(began.iter().any(|event| matches!(
             event,
             super::super::Event::Gesture(_, GestureEvent::Begin(_), _)

@@ -578,12 +578,8 @@ pub(super) fn run(
             0.2,
         ))
         .map_err(|e| e.to_string())?;
-        tx.send(Event::Gesture(
-            1,
-            GestureEvent::Begin(Axis::Horizontal),
-            0.21,
-        ))
-        .map_err(|e| e.to_string())?;
+        tx.send(Event::Gesture(1, GestureEvent::Begin(Axis::Vertical), 0.21))
+            .map_err(|e| e.to_string())?;
         tx.send(Event::Gesture(1, GestureEvent::Update(1), 0.22))
             .map_err(|e| e.to_string())?;
         runtime.drain();

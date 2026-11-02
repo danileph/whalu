@@ -79,11 +79,9 @@ fn overview_keyboard_gestures_and_clicks_share_the_active_monitors_stack() {
         ] {
             assert_eq!(engine.command(command), [Effect::Focus(second)]);
         }
-        for axis in [Axis::Vertical, Axis::Horizontal] {
-            let mut session = ScrubSession::new(&engine, axis).unwrap();
-            assert_eq!(session.update(100), Some(second));
-            assert_eq!(session.update(-100), Some(first));
-        }
+        let mut session = ScrubSession::new(&engine, Axis::Vertical).unwrap();
+        assert_eq!(session.update(100), Some(second));
+        assert_eq!(session.update(-100), Some(first));
         assert!(ClickSequence::new(&engine, foreign).is_none());
         engine.focus(foreign);
         assert_eq!(engine.focused(), Some(first));

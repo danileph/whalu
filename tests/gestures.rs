@@ -28,8 +28,6 @@ fn trace(n: usize, dx: f64, dy: f64) -> Vec<Event> {
 #[test]
 fn directions_start_and_update_before_release() {
     for (dx, dy, axis, sign) in [
-        (0.25, 0., Axis::Horizontal, 1),
-        (-0.25, 0., Axis::Horizontal, -1),
         (0., 0.25, Axis::Vertical, 1),
         (0., -0.25, Axis::Vertical, -1),
     ] {
@@ -60,7 +58,7 @@ fn continuous_scrub_can_move_several_entries_and_reverse_without_lifting() {
         (0.58, 0.12),
         (0.64, -0.16),
     ] {
-        events.extend(r.feed(t, &contacts(3, x, 0.)));
+        events.extend(r.feed(t, &contacts(3, 0., x)));
     }
     assert_eq!(
         events
@@ -88,12 +86,12 @@ fn continuous_scrub_can_move_several_entries_and_reverse_without_lifting() {
 fn holding_fingers_keeps_session_open_and_jitter_does_not_repeat() {
     let mut r = SwipeRecognizer::default();
     r.feed(0., &contacts(3, 0., 0.));
-    r.feed(0.04, &contacts(3, 0.04, 0.));
-    r.feed(0.08, &contacts(3, 0.1, 0.));
+    r.feed(0.04, &contacts(3, 0., 0.04));
+    r.feed(0.08, &contacts(3, 0., 0.1));
     for t in [1., 3., 20.] {
-        assert!(r.feed(t, &contacts(3, 0.11, 0.)).is_empty());
+        assert!(r.feed(t, &contacts(3, 0., 0.11)).is_empty());
     }
-    assert_eq!(r.feed(20.1, &contacts(3, 0.24, 0.)), vec![Event::Update(4)]);
+    assert_eq!(r.feed(20.1, &contacts(3, 0., 0.24)), vec![Event::Update(4)]);
     assert!(r.sustained());
     assert_eq!(r.feed(20.2, &[]), vec![Event::End { cancelled: false }]);
 }
@@ -108,7 +106,7 @@ fn two_and_four_finger_gestures_never_open_a_session() {
 fn normal_four_finger_landing_cancels_before_overview_appears() {
     let mut r = SwipeRecognizer::default();
     assert!(r.feed(0., &contacts(3, 0., 0.)).is_empty());
-    assert!(r.feed(0.02, &contacts(3, 0.1, 0.)).is_empty());
+    assert!(r.feed(0.02, &contacts(3, 0., 0.1)).is_empty());
     assert!(r.feed(0.04, &contacts(4, 0.2, 0.)).is_empty());
     assert!(r.feed(0.1, &[]).is_empty());
 }
@@ -116,24 +114,24 @@ fn normal_four_finger_landing_cancels_before_overview_appears() {
 fn a_fourth_finger_cancels_an_existing_session_once() {
     let mut r = SwipeRecognizer::default();
     r.feed(0., &contacts(3, 0., 0.));
-    r.feed(0.04, &contacts(3, 0.04, 0.));
+    r.feed(0.04, &contacts(3, 0., 0.04));
     assert!(
-        r.feed(0.08, &contacts(3, 0.15, 0.))
-            .contains(&Event::Begin(Axis::Horizontal))
+        r.feed(0.08, &contacts(3, 0., 0.15))
+            .contains(&Event::Begin(Axis::Vertical))
     );
     assert_eq!(
         r.feed(0.12, &contacts(4, 0.2, 0.)),
         vec![Event::End { cancelled: true }]
     );
-    assert!(r.feed(0.2, &contacts(3, 0.2, 0.)).is_empty());
+    assert!(r.feed(0.2, &contacts(3, 0., 0.2)).is_empty());
     assert!(r.feed(0.3, &[]).is_empty());
 }
 #[test]
 fn partial_release_waits_for_all_fingers_to_lift() {
     let mut r = SwipeRecognizer::default();
     r.feed(0., &contacts(3, 0., 0.));
-    r.feed(0.04, &contacts(3, 0.04, 0.));
-    r.feed(0.08, &contacts(3, 0.1, 0.));
+    r.feed(0.04, &contacts(3, 0., 0.04));
+    r.feed(0.08, &contacts(3, 0., 0.1));
     assert!(r.feed(0.1, &contacts(2, 0.1, 0.)).is_empty());
     assert!(r.feed(0.12, &contacts(1, 0.1, 0.)).is_empty());
     assert_eq!(r.feed(0.14, &[]), vec![Event::End { cancelled: false }]);
@@ -164,8 +162,8 @@ fn pinches_diagonals_and_scrolls_do_not_open_sessions() {
 fn invalid_data_cancels_active_overview() {
     let mut r = SwipeRecognizer::default();
     r.feed(0., &contacts(3, 0., 0.));
-    r.feed(0.04, &contacts(3, 0.04, 0.));
-    r.feed(0.08, &contacts(3, 0.1, 0.));
+    r.feed(0.04, &contacts(3, 0., 0.04));
+    r.feed(0.08, &contacts(3, 0., 0.1));
     let mut bad = contacts(3, 0.2, 0.);
     bad[0].x = f64::NAN;
     assert_eq!(r.feed(0.12, &bad), vec![Event::End { cancelled: true }]);
@@ -219,16 +217,6 @@ fn scrub_clamps_at_edges_and_reverses_immediately_after_overshoot() {
     assert_eq!(s.update(-20), Some(1));
     assert_eq!(s.update(-21), None);
     assert_eq!(s.update(-20), Some(2));
-}
-#[test]
-fn horizontal_scrub_stays_in_the_original_app() {
-    let mut e = engine();
-    let mut s = ScrubSession::new(&e, Axis::Horizontal).unwrap();
-    assert_eq!(s.update(1), Some(2));
-    e.focus(2);
-    assert_eq!(s.update(2), Some(3));
-    assert_eq!(s.update(3), None);
-    assert_eq!(s.update(2), Some(2));
 }
 #[test]
 fn unfocused_space_is_entered_without_skipping_first_entry() {
@@ -394,22 +382,22 @@ fn short_stroke_selects_both_directions_without_waiting_for_scrub_distance() {
     for direction in [-1., 1.] {
         let mut recognizer = SwipeRecognizer::default();
         recognizer.feed(0., &contacts(3, 0., 0.));
-        recognizer.feed(0.02, &contacts(3, direction * 0.02, 0.));
+        recognizer.feed(0.02, &contacts(3, 0., direction * 0.02));
         assert_eq!(
-            recognizer.feed(0.05, &contacts(3, direction * 0.04, 0.)),
+            recognizer.feed(0.05, &contacts(3, 0., direction * 0.04)),
             vec![
-                Event::Begin(Axis::Horizontal),
+                Event::Begin(Axis::Vertical),
                 Event::Update(direction as i32)
             ]
         );
         assert!(
             recognizer
-                .feed(0.2, &contacts(3, direction * 0.04, 0.))
+                .feed(0.2, &contacts(3, 0., direction * 0.04))
                 .is_empty()
         );
         assert!(
             recognizer
-                .feed(1., &contacts(3, direction * 0.04, 0.))
+                .feed(1., &contacts(3, 0., direction * 0.04))
                 .is_empty()
         );
         assert!(!recognizer.sustained());
@@ -449,4 +437,41 @@ fn fourth_contact_and_late_third_contact_cannot_prepare_overview() {
     recognizer.feed(1., &contacts(2, 0., 0.));
     recognizer.feed(1.3, &contacts(3, 0., 0.));
     assert!(!recognizer.overview_ready());
+}
+
+#[test]
+fn horizontal_strokes_and_holds_never_navigate_or_coast() {
+    for direction in [-1., 1.] {
+        let mut recognizer = SwipeRecognizer::default();
+        // Include vertical drift below the directional threshold, sustained
+        // movement, edge holds, reversal and partial release.
+        for (time, x) in [
+            (0., 0.),
+            (0.04, 0.03),
+            (0.08, 0.1),
+            (0.4, 0.2),
+            (0.5, 0.3),
+            (1., 0.3),
+            (3., 0.3),
+            (3.1, -0.15),
+        ] {
+            assert!(
+                recognizer
+                    .feed(time, &contacts(3, direction * x, 0.02 * x))
+                    .is_empty()
+            );
+            assert!(!recognizer.active());
+            assert!(!recognizer.sustained());
+            assert_eq!(recognizer.progress(), None);
+        }
+        assert!(recognizer.feed(3.2, &contacts(2, 0., 0.)).is_empty());
+        assert!(recognizer.feed(3.3, &[]).is_empty());
+        // The next vertical stroke still works normally.
+        recognizer.feed(4., &contacts(3, 0., 0.));
+        recognizer.feed(4.02, &contacts(3, 0., 0.02));
+        assert_eq!(
+            recognizer.feed(4.05, &contacts(3, 0., 0.04)),
+            vec![Event::Begin(Axis::Vertical), Event::Update(1)]
+        );
+    }
 }

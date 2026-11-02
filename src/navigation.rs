@@ -133,21 +133,7 @@ pub struct ScrubSession {
 impl ScrubSession {
     pub fn new(engine: &Engine, axis: Axis) -> Option<Self> {
         let ctx = engine.context()?;
-        let anchor = ctx
-            .focused
-            .or(ctx.last_focused.filter(|id| ctx.order.contains(id)))
-            .or(ctx.order.first().copied())?;
-        let targets: Vec<_> = match axis {
-            Axis::Vertical => ctx.order.clone(),
-            Axis::Horizontal => {
-                let app = &engine.windows.get(&anchor)?.app_id;
-                ctx.order
-                    .iter()
-                    .copied()
-                    .filter(|id| engine.windows.get(id).is_some_and(|w| &w.app_id == app))
-                    .collect()
-            }
-        };
+        let targets = ctx.order.clone();
         if targets.is_empty() {
             return None;
         }

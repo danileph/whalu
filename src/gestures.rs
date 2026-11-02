@@ -1,4 +1,4 @@
-//! Continuous three-contact navigation. Frames produce a session, signed scrub
+//! Continuous vertical three-contact navigation. Frames produce a session, signed scrub
 //! offsets, and an end/cancel event; window focus remains a main-thread concern.
 use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug)]
@@ -9,7 +9,6 @@ pub struct Contact {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
-    Horizontal,
     Vertical,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,52 +167,28 @@ impl SwipeRecognizer {
             if self.frames < 3 || time - self.triple_started.unwrap() < 0.045 {
                 return vec![];
             }
-            let axis = if dx.abs() > dy.abs() * 1.45 {
-                Axis::Horizontal
-            } else if dy.abs() > dx.abs() * 1.45 {
-                Axis::Vertical
-            } else {
-                return vec![];
-            };
-            let along = match axis {
-                Axis::Horizontal => dx,
-                Axis::Vertical => dy,
-            };
-            if along.abs() < self.step * 0.3 {
+            if dy.abs() <= dx.abs() * 1.45 || dy.abs() < self.step * 0.3 {
                 return vec![];
             }
-            if movement.iter().any(|(x, y)| {
-                let a = match axis {
-                    Axis::Horizontal => *x,
-                    Axis::Vertical => *y,
-                };
-                a * along <= 0. || (a - along).abs() > along.abs() * 0.6
-            }) {
+            if movement
+                .iter()
+                .any(|(_, y)| y * dy <= 0. || (y - dy).abs() > dy.abs() * 0.6)
+            {
                 return self.cancel();
             }
+            let axis = Axis::Vertical;
             self.axis = Some(axis);
             self.activated_at = Some(time);
             events.push(GestureEvent::Begin(axis));
         }
-        let axis = self.axis.unwrap();
-        let (along, across) = match axis {
-            Axis::Horizontal => (dx, dy),
-            Axis::Vertical => (dy, dx),
-        };
-        if movement.iter().any(|(x, y)| {
-            let (a, b) = match axis {
-                Axis::Horizontal => (*x, *y),
-                Axis::Vertical => (*y, *x),
-            };
-            (a - along).abs() > self.step * 0.75 || (b - across).abs() > self.step * 0.75
-        }) {
+        if movement
+            .iter()
+            .any(|(x, y)| (y - dy).abs() > self.step * 0.75 || (x - dx).abs() > self.step * 0.75)
+        {
             return self.cancel();
         }
         // Natural scrolling: fingers up advance down the list; fingers down go up.
-        let position = match axis {
-            Axis::Horizontal => dx,
-            Axis::Vertical => dy,
-        };
+        let position = dy;
         let delta = self.last_position.map(|last| position - last).unwrap_or(0.);
         let dt = time - self.motion_time;
         self.motion_time = time;
@@ -256,24 +231,15 @@ impl SwipeRecognizer {
         self.offset = offset;
         // Holding near an edge keeps traversing a long list without lifting and
         // repositioning fingers. Moving back toward the center stops edge travel.
-        let center = positions
-            .values()
-            .map(|(x, y)| match axis {
-                Axis::Horizontal => *x,
-                Axis::Vertical => *y,
-            })
-            .sum::<f64>()
-            / 3.;
+        let center = positions.values().map(|(_, y)| y).sum::<f64>() / 3.;
         let edge_dir = if !self.sustained {
             0
+        } else if center > 0.88 {
+            1
+        } else if center < 0.12 {
+            -1
         } else {
-            match axis {
-                Axis::Horizontal if center > 0.88 => 1,
-                Axis::Horizontal if center < 0.12 => -1,
-                Axis::Vertical if center > 0.88 => 1,
-                Axis::Vertical if center < 0.12 => -1,
-                _ => 0,
-            }
+            0
         };
         self.last_position = Some(position);
         if edge_dir == 0 {
