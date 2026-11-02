@@ -14,7 +14,6 @@ const repository = (
   import.meta.env.VITE_REPOSITORY_URL as string | undefined
 )?.replace(/\/$/, "");
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
-const clamp = (value: number) => Math.max(0, Math.min(1, value));
 const illustrationDate = new Date("2026-11-01T10:24:00Z");
 
 function Icon({
@@ -22,7 +21,6 @@ function Icon({
   ...props
 }: SVGProps<SVGSVGElement> & {
   name:
-    | "arrow"
     | "chevron"
     | "copy"
     | "check"
@@ -41,7 +39,6 @@ function Icon({
         <path d="M3 12h18" />
       </>
     ),
-    arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
     chevron: <path d="m9 5 7 7-7 7" />,
     copy: (
       <>
@@ -92,8 +89,6 @@ function Icon({
   );
 }
 
-// Read layout once per frame. Motion only updates compositor-friendly CSS variables;
-// React doesn't render on each scroll event, and the listener sleeps between events.
 function useMotionPreference() {
   const [systemReduced, setSystemReduced] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -130,95 +125,6 @@ function useMotionPreference() {
     }
   }
   return { reducedMotion, systemReduced, toggleMotion };
-}
-
-function useScrollMotion(reducedMotion: boolean, locale: Locale) {
-  const revealed = useRef(new WeakSet<Element>());
-  useEffect(() => {
-    const scenes = [
-      ...document.querySelectorAll<HTMLElement>("[data-scroll-scene]"),
-    ];
-    const reveals = [
-      ...document.querySelectorAll<HTMLElement>("[data-reveal]"),
-    ];
-    const revealAnimations = new Set<Animation>();
-    let frame = 0;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries)
-          if (entry.isIntersecting) {
-            observer.unobserve(entry.target);
-            // Content stays visible before observation, including screenshots,
-            // restored scroll positions, and browsers that skip an entry.
-            if (
-              !reducedMotion &&
-              !revealed.current.has(entry.target) &&
-              typeof entry.target.animate === "function"
-            ) {
-              const animation = entry.target.animate(
-                [
-                  { opacity: 0, transform: "translateY(32px)" },
-                  { opacity: 1, transform: "translateY(0)" },
-                ],
-                { duration: 700, easing: "cubic-bezier(.2,.65,.3,1)" },
-              );
-              revealAnimations.add(animation);
-              animation.onfinish = animation.oncancel = () =>
-                revealAnimations.delete(animation);
-            }
-            revealed.current.add(entry.target);
-          }
-      },
-      { threshold: 0 },
-    );
-    reveals.forEach((node) => observer.observe(node));
-
-    function update() {
-      frame = 0;
-      const height = window.innerHeight;
-      const measurements = scenes.map((node) => ({
-        node,
-        rect: node.getBoundingClientRect(),
-      }));
-      for (const { node, rect } of measurements) {
-        const pinned = node.hasAttribute("data-pinned");
-        const progress = reducedMotion
-          ? 0.5
-          : pinned
-            ? clamp(-rect.top / Math.max(1, rect.height - height))
-            : clamp((height - rect.top) / (height + rect.height));
-        node.style.setProperty("--progress", progress.toFixed(4));
-        if (pinned) {
-          node.dataset.focus = progress > 0.52 ? "3" : "2";
-          const chapter = progress < 0.34 ? "0" : progress < 0.7 ? "1" : "2";
-          if (node.dataset.chapter !== chapter) {
-            node.dataset.chapter = chapter;
-            node
-              .querySelectorAll<HTMLElement>("[data-chapter-button]")
-              .forEach((button, i) =>
-                button.setAttribute(
-                  "aria-pressed",
-                  String(i === Number(chapter)),
-                ),
-              );
-          }
-        }
-      }
-    }
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      revealAnimations.forEach((animation) => animation.cancel());
-      window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-    };
-  }, [reducedMotion, locale]);
 }
 
 function Wallpaper() {
@@ -569,14 +475,12 @@ function ProductDemo() {
     }
   }
   return (
-    <div className="product-demo" id="demo">
+    <div className="product-demo">
       <div className="laptop">
         <div className="laptop-display">
-          <div className="camera-notch">
-            <i />
-          </div>
           <div
             className="mac-desktop"
+            id="demo"
             tabIndex={0}
             role="region"
             aria-label={t("demo.label")}
@@ -667,13 +571,8 @@ function ProductDemo() {
             </div>
           </div>
         </div>
-        <div className="laptop-base">
-          <span />
-        </div>
-        <div className="laptop-shadow" />
       </div>
       <div className="demo-controls">
-        <span>{t("demo.try")}</span>
         <div className="demo-apps" role="group" aria-label={t("demo.choose")}>
           {apps.map((app, index) => (
             <button
@@ -705,117 +604,11 @@ function ProductDemo() {
   );
 }
 
-const chapters = ["windows", "focus", "order"] as const;
-
-function ScrollStory() {
-  const { t, formatNumber } = useLocale();
-  const ref = useRef<HTMLElement>(null);
-  function goToChapter(index: number) {
-    const section = ref.current;
-    if (!section) return;
-    const range = Math.max(1, section.offsetHeight - window.innerHeight);
-    const reduced = document.documentElement.dataset.motion === "reduced";
-    window.scrollTo({
-      top:
-        section.getBoundingClientRect().top +
-        window.scrollY +
-        range * [0.08, 0.5, 0.91][index],
-      behavior: reduced ? "instant" : "smooth",
-    });
-  }
-  return (
-    <section
-      className="scroll-story"
-      id="overview"
-      ref={ref}
-      data-scroll-scene
-      data-pinned
-      data-chapter="0"
-      data-focus="2"
-      aria-label={t("story.label")}
-    >
-      <div className="story-sticky">
-        <div className="story-inner">
-          <div className="story-copy">
-            <p className="eyebrow">{t("story.kicker")}</p>
-            <div className="story-chapters">
-              {chapters.map((chapter, index) => (
-                <div
-                  className={`chapter chapter-${index}`}
-                  id={`overview-chapter-${index}`}
-                  key={chapter}
-                >
-                  <h2>
-                    {t(`story.${chapter}.title`)}
-                    <br />
-                    <span>{t(`story.${chapter}.accent`)}</span>
-                  </h2>
-                  <p>{t(`story.${chapter}.text`)}</p>
-                </div>
-              ))}
-            </div>
-            <div className="story-scroll-cue">
-              <span /> {t("story.scroll")}
-            </div>
-          </div>
-          <div className="story-stage" aria-hidden="true">
-            <div className="story-glow" />
-            <div className="story-stack">
-              {apps.map((app, index) => {
-                const distance = index - 2;
-                const depth = Math.abs(distance);
-                return (
-                  <div
-                    className={`story-window story-window-${index}`}
-                    key={app.id}
-                    style={
-                      {
-                        "--slot": distance,
-                        "--pile-x": `${distance * 34}px`,
-                        "--pile-y": `${distance * -22}px`,
-                        "--layer": 10 - depth,
-                      } as CSSProperties
-                    }
-                  >
-                    <MacWindow index={index} />
-                    <AppBadge index={index} />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div
-            className="story-navigation"
-            role="group"
-            aria-label={t("story.navigation")}
-          >
-            {chapters.map((chapter, index) => (
-              <button
-                key={chapter}
-                data-chapter-button
-                aria-controls={`overview-chapter-${index}`}
-                aria-pressed={index === 0}
-                onClick={() => goToChapter(index)}
-              >
-                <span>
-                  {formatNumber(index + 1, { minimumIntegerDigits: 2 })}
-                </span>
-                {t(`story.${chapter}.label`)}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 const shortcutGroups = [
   {
     id: "navigate",
     rows: [
-      ["shortcuts.previousNext", "⌃ ⌥ ↑ / ↓"],
-      ["shortcuts.sameApp", "⌃ ⌥ ← / →"],
+      ["shortcuts.previousNext", "⌃ ⌥ ↑ / ↓ / ← / →"],
       ["shortcuts.next", "⌘ Tab"],
     ],
   },
@@ -831,189 +624,51 @@ const shortcutGroups = [
 
 function Controls() {
   const { t } = useLocale();
-  const [open, setOpen] = useState(false);
-  const [method, setMethod] = useState(0);
-  function onTabKey(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? 2
-          : (index + (event.key === "ArrowRight" ? 1 : -1) + 3) % 3;
-    setMethod(next);
-    event.currentTarget.parentElement
-      ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-      [next]?.focus();
-  }
   const methods = ["keyboard", "trackpad", "mouse"] as const;
-
   return (
-    <section className="controls-section section-pad" id="controls">
-      <div className="section-heading" data-reveal>
-        <p className="eyebrow">{t("controls.kicker")}</p>
-        <h2>
-          {t("controls.title")}
-          <br />
-          <span>{t("controls.accent")}</span>
-        </h2>
+    <section
+      className="controls-section section-pad"
+      id="controls"
+      aria-labelledby="controls-heading"
+    >
+      <div className="section-heading">
+        <h2 id="controls-heading">{t("controls.title")}</h2>
       </div>
-      <div className="controls-card" data-reveal>
-        <div className="input-visual" data-method={method} aria-hidden="true">
-          <div className="keyboard-model">
-            <div className="keyboard-top-row">
-              {["fn", "control", "option", "command"].map((key) => (
-                <span key={key}>
-                  <i>
-                    {key === "control"
-                      ? "⌃"
-                      : key === "option"
-                        ? "⌥"
-                        : key === "command"
-                          ? "⌘"
-                          : "fn"}
-                  </i>
-                  <small>{key}</small>
-                </span>
+      <div className="control-methods">
+        {methods.map((method) => (
+          <article key={method}>
+            <Icon name={method} />
+            <h3>{t(`controls.${method}.name`)}</h3>
+            <p>{t(`controls.${method}.description`)}</p>
+          </article>
+        ))}
+      </div>
+      <details className="shortcuts">
+        <summary>
+          {t("shortcuts.show")}
+          <Icon name="plus" />
+        </summary>
+        <div className="shortcut-sheet">
+          {shortcutGroups.map((group) => (
+            <div key={group.id}>
+              <h3>{t(`shortcuts.${group.id}`)}</h3>
+              {group.rows.map(([label, keys]) => (
+                <div className="shortcut-row" key={label}>
+                  <span>{t(label)}</span>
+                  <kbd>{keys}</kbd>
+                </div>
               ))}
             </div>
-            <div className="arrow-key-row">
-              <span>←</span>
-              <div>
-                <span className="key-up">↑</span>
-                <span className="key-down">↓</span>
-              </div>
-              <span>→</span>
-            </div>
-          </div>
-          <div className="trackpad-model">
-            <div className="finger-trails">
-              <i />
-              <i />
-              <i />
-            </div>
-            <span>↑</span>
-          </div>
-          <div className="mouse-model">
-            <span />
-            <i />
-          </div>
-        </div>
-        <div className="controls-copy">
-          <div
-            className="method-tabs"
-            role="tablist"
-            aria-label={t("controls.methodLabel")}
-          >
-            {methods.map((item, index) => (
-              <button
-                key={item}
-                role="tab"
-                id={`method-${index}`}
-                aria-controls="method-panel"
-                aria-selected={method === index}
-                tabIndex={method === index ? 0 : -1}
-                onClick={() => setMethod(index)}
-                onKeyDown={(event) => onTabKey(event, index)}
-              >
-                <Icon name={item} />
-                {t(`controls.${item}.name`)}
-              </button>
-            ))}
-          </div>
-          <div
-            role="tabpanel"
-            tabIndex={0}
-            id="method-panel"
-            aria-labelledby={`method-${method}`}
-            className="method-panel"
-            key={method}
-          >
-            <h3>{t(`controls.${methods[method]}.title`)}</h3>
-            <p>{t(`controls.${methods[method]}.description`)}</p>
-            <span>{t(`controls.${methods[method]}.detail`)}</span>
-          </div>
-          <button
-            className="link-button"
-            onClick={() => setOpen(!open)}
-            aria-expanded={open}
-            aria-controls="shortcut-sheet"
-          >
-            {t(open ? "shortcuts.hide" : "shortcuts.show")}
-            <Icon
-              name={open ? "plus" : "chevron"}
-              className={open ? "rotate" : ""}
-            />
-          </button>
-        </div>
-      </div>
-      <div className="shortcut-sheet" id="shortcut-sheet" hidden={!open}>
-        {shortcutGroups.map((group) => (
-          <div key={group.id}>
-            <h3>{t(`shortcuts.${group.id}`)}</h3>
-            {group.rows.map(([label, keys]) => (
-              <div className="shortcut-row" key={label}>
-                <span>{t(label)}</span>
-                <kbd>{keys}</kbd>
-              </div>
-            ))}
-          </div>
-        ))}
-        <p>{t("shortcuts.note")}</p>
-      </div>
-    </section>
-  );
-}
-
-function NativeTiling() {
-  const { t } = useLocale();
-  const [layout, setLayout] = useState<"left" | "fill" | "right">("left");
-  return (
-    <section className="native-section section-pad" data-scroll-scene>
-      <div className="native-header" data-reveal>
-        <p className="eyebrow">{t("tiling.kicker")}</p>
-        <h2>
-          {t("tiling.title")}
-          <br />
-          <span>{t("tiling.accent")}</span>
-        </h2>
-        <p>{t("tiling.description")}</p>
-      </div>
-      <div className="tiling-visual" data-reveal>
-        <div className={`tiling-screen layout-${layout}`} aria-hidden="true">
-          <Wallpaper />
-          <div className="tiling-menu">
-            ●　 Finder　 {t("demo.menu")} <span>W　 ◒　 10:24</span>
-          </div>
-          <MacWindow index={3} className="tiling-back" />
-          <MacWindow index={2} className="tiling-front" />
-        </div>
-        <div
-          className="layout-picker"
-          role="group"
-          aria-label={t("tiling.label")}
-        >
-          {(["left", "fill", "right"] as const).map((item) => (
-            <button
-              key={item}
-              aria-label={t("tiling.switch", { layout: t(`tiling.${item}`) })}
-              aria-pressed={layout === item}
-              onClick={() => setLayout(item)}
-            >
-              <span className={`layout-icon icon-${item}`} aria-hidden="true" />
-              {t(`tiling.${item}`)}
-            </button>
           ))}
+          <p>{t("shortcuts.note")}</p>
         </div>
-      </div>
-      <p className="native-note">{t("tiling.note")}</p>
+      </details>
     </section>
   );
 }
 
 function Install() {
-  const { t, formatNumber } = useLocale();
+  const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -1031,27 +686,14 @@ function Install() {
   }
   return (
     <section className="install-section section-pad" id="get-whalu">
-      <div className="install-heading" data-reveal>
-        <img
-          src={asset("whalu-icon.png")}
-          width="96"
-          height="96"
-          alt={t("install.icon")}
-        />
-        <p className="eyebrow">{t("hero.kicker")}</p>
-        <h2>
-          {t("install.title")}
-          <br />
-          {t("install.titleEnd")}
-        </h2>
-        <p>{t("install.subtitle")}</p>
+      <div className="install-heading">
+        <h2>{t("nav.get")}</h2>
         <span className="compatibility">
           {t("install.compatibility", { version: "0.5.1" })}
         </span>
       </div>
-      <div className="install-guide" data-reveal>
+      <div className="install-guide">
         <div>
-          <span className="step-number">{formatNumber(1)}</span>
           <h3>{t("install.build")}</h3>
           <p>
             {repository ? (
@@ -1084,16 +726,11 @@ function Install() {
           </small>
         </div>
         <div>
-          <span className="step-number">{formatNumber(2)}</span>
           <h3>{t("install.permissions")}</h3>
           <p>{t("install.permissionsText")}</p>
-        </div>
-        <div>
-          <span className="step-number">{formatNumber(3)}</span>
-          <h3>{t("install.start")}</h3>
-          <p>
-            {t("install.hold")} <kbd>⌃</kbd> + <kbd>⌥</kbd>
-            {t("install.startEnd")}
+          <p className="privacy-note">
+            <Icon name="shield" />
+            {t("privacy.description")}
           </p>
         </div>
       </div>
@@ -1107,34 +744,6 @@ function Install() {
           {t("install.source")} <Icon name="chevron" />
         </a>
       )}
-    </section>
-  );
-}
-
-function Faq() {
-  const { t } = useLocale();
-  const questions = ["geometry", "privacy", "displays", "customize"] as const;
-
-  return (
-    <section className="faq-section section-pad">
-      <h2 data-reveal>
-        {t("faq.title")}
-        <br />
-        {t("faq.titleEnd")}
-      </h2>
-      <div className="faq-list" data-reveal>
-        {questions.map((id) => (
-          <details key={id}>
-            <summary>
-              {t(`faq.${id}.question`)}
-              <span>
-                <Icon name="plus" />
-              </span>
-            </summary>
-            <p>{t(`faq.${id}.answer`)}</p>
-          </details>
-        ))}
-      </div>
     </section>
   );
 }
@@ -1173,74 +782,24 @@ function LanguageSelector() {
 
 function ProductNav() {
   const { t } = useLocale();
-  const [open, setOpen] = useState(false);
-  const header = useRef<HTMLElement>(null);
-  const toggle = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: globalThis.PointerEvent) => {
-      if (!header.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        toggle.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [open]);
   return (
-    <header className="product-nav" ref={header}>
+    <header className="product-nav">
       <div>
-        <a
-          className="brand"
-          href="#"
-          aria-label={t("nav.home")}
-          onClick={() => setOpen(false)}
-        >
+        <a className="brand" href="#" aria-label={t("nav.home")}>
           <img src={asset("whalu-icon.png")} width="28" height="28" alt="" />
           <span>Whalu</span>
         </a>
         <div className="nav-actions">
-          <button
-            className="nav-toggle"
-            ref={toggle}
-            aria-label={t("nav.explore")}
-            aria-expanded={open}
-            aria-controls="product-links"
-            onClick={() => setOpen(!open)}
-          >
-            <Icon name="chevron" />
-          </button>
-          <nav
-            id="product-links"
-            className="nav-links"
-            data-open={open}
-            aria-label={t("nav.label")}
-            onClick={() => setOpen(false)}
-          >
-            <a href="#overview">{t("nav.overview")}</a>
+          <nav aria-label={t("nav.label")}>
             <a href="#controls">{t("nav.controls")}</a>
-            <a href="#get-whalu" className="nav-install">
-              {t("nav.installation")}
-            </a>
             {repository && (
               <a href={repository} target="_blank" rel="noreferrer">
-                GitHub
+                GitHub ↗
               </a>
             )}
           </nav>
           <LanguageSelector />
-          <a
-            className="button button-small"
-            href="#get-whalu"
-            onClick={() => setOpen(false)}
-          >
+          <a className="button button-small" href="#get-whalu">
             {t("nav.get")}
           </a>
         </div>
@@ -1250,9 +809,8 @@ function ProductNav() {
 }
 
 export function App() {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const { reducedMotion, systemReduced, toggleMotion } = useMotionPreference();
-  useScrollMotion(reducedMotion, locale);
   return (
     <>
       <a className="skip-link" href="#main">
@@ -1260,57 +818,34 @@ export function App() {
       </a>
       <ProductNav />
       <main id="main" tabIndex={-1}>
-        <section
-          className="hero"
-          data-scroll-scene
-          aria-labelledby="hero-heading"
-        >
-          <div className="hero-copy">
-            <p className="hero-kicker">{t("hero.kicker")}</p>
-            <h1 id="hero-heading">
-              {t("hero.title")}
-              <br />
-              <span>{t("hero.titleAccent")}</span>
-            </h1>
-            <p className="hero-description">
-              {t("hero.description")}
-              <br className="mobile-break" /> {t("hero.descriptionEnd")}
-            </p>
-            <div className="hero-actions">
-              <a className="button" href="#get-whalu">
-                {t("nav.get")}
-              </a>
-              <a className="text-link" href="#overview">
-                {t("hero.learn")} <Icon name="chevron" />
-              </a>
+        <section className="hero" aria-labelledby="hero-heading">
+          <div className="hero-layout">
+            <div className="hero-copy">
+              <p className="hero-kicker">{t("hero.kicker")}</p>
+              <h1 id="hero-heading">
+                {t("hero.title")}
+                <br />
+                <span>{t("hero.titleAccent")}</span>
+              </h1>
+              <p className="hero-description">{t("hero.description")}</p>
+              <div className="hero-actions">
+                <a className="button" href="#get-whalu">
+                  {t("nav.get")}
+                </a>
+                <a className="text-link" href="#demo">
+                  {t("hero.learn")} <Icon name="chevron" />
+                </a>
+              </div>
+              <p className="hero-availability">{t("hero.availability")}</p>
             </div>
-            <p className="hero-availability">{t("hero.availability")}</p>
+            <ProductDemo />
           </div>
-          <ProductDemo />
         </section>
-        <ScrollStory />
         <Controls />
-        <NativeTiling />
-        <section className="privacy-section section-pad">
-          <div data-reveal>
-            <Icon name="shield" />
-            <h2>
-              {t("privacy.title")}
-              <br />
-              <span>{t("privacy.accent")}</span>
-            </h2>
-            <p>
-              {t("privacy.description")}
-              <br className="desktop-break" /> {t("privacy.descriptionEnd")}
-            </p>
-          </div>
-        </section>
         <Install />
-        <Faq />
       </main>
       <footer className="site-footer">
         <div>
-          <p>{t("footer.description")}</p>
           <div className="footer-bottom">
             <a href="#" className="footer-brand">
               Whalu
