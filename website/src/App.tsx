@@ -609,6 +609,145 @@ function ProductDemo() {
   );
 }
 
+function HeroBackdrop() {
+  const backdrop = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = backdrop.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      const svg = node.querySelector("svg");
+      if (svg)
+        svg.style.animationPlayState = entry.isIntersecting
+          ? "running"
+          : "paused";
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const id = useId().replace(/:/g, "");
+  return (
+    <div ref={backdrop} className="hero-backdrop" aria-hidden="true">
+      <svg viewBox="0 0 1440 1000" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id={`${id}-edge`} x1="0" y1="0" x2="1" y2="1">
+            <stop stopColor="#a8d8ff" stopOpacity="0" />
+            <stop offset=".35" stopColor="#c6e5ff" stopOpacity=".8" />
+            <stop offset=".6" stopColor="#559be7" stopOpacity=".35" />
+            <stop offset="1" stopColor="#3468b6" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id={`${id}-glass`} x1="0" y1="0" x2="1" y2=".3">
+            <stop stopColor="#20344f" stopOpacity="0" />
+            <stop offset=".8" stopColor="#5d9bd8" stopOpacity=".12" />
+            <stop offset="1" stopColor="#c1defb" stopOpacity=".22" />
+          </linearGradient>
+          <filter
+            id={`${id}-glow`}
+            x="-50%"
+            y="-50%"
+            width="200%"
+            height="200%"
+          >
+            <feGaussianBlur stdDeviation="16" />
+          </filter>
+        </defs>
+        <g
+          transform="rotate(-32 720 500)"
+          fill={`url(#${id}-glass)`}
+          stroke={`url(#${id}-edge)`}
+        >
+          <rect
+            x="750"
+            y="-300"
+            width="550"
+            height="1050"
+            rx="52"
+            strokeWidth="14"
+            filter={`url(#${id}-glow)`}
+          />
+          <rect
+            x="750"
+            y="-300"
+            width="550"
+            height="1050"
+            rx="52"
+            strokeWidth="1.5"
+          />
+          <rect
+            x="840"
+            y="-220"
+            width="550"
+            height="1050"
+            rx="52"
+            strokeWidth="1"
+            opacity=".6"
+          />
+          <rect
+            x="-80"
+            y="520"
+            width="480"
+            height="750"
+            rx="48"
+            strokeWidth="10"
+            filter={`url(#${id}-glow)`}
+          />
+          <rect
+            x="-80"
+            y="520"
+            width="480"
+            height="750"
+            rx="48"
+            strokeWidth="1"
+            opacity=".65"
+          />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function Preview({ reducedMotion }: { reducedMotion: boolean }) {
+  const { t } = useLocale();
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const node = section.current;
+    if (!node || reducedMotion) return;
+    let animation: Animation | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        observer.disconnect();
+        animation = node.querySelector(".product-demo")?.animate(
+          [
+            { opacity: 0.3, transform: "translateY(36px) scale(.97)" },
+            { opacity: 1, transform: "translateY(0) scale(1)" },
+          ],
+          { duration: 850, easing: "cubic-bezier(.2,.7,.2,1)" },
+        );
+      },
+      { threshold: 0.12 },
+    );
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      animation?.cancel();
+    };
+  }, [reducedMotion]);
+  return (
+    <section
+      ref={section}
+      className="preview-section"
+      id="how-it-works"
+      tabIndex={-1}
+      aria-labelledby="preview-heading"
+    >
+      <div className="preview-inner">
+        <h2 id="preview-heading">{t("hero.learn")}</h2>
+        <ProductDemo />
+      </div>
+    </section>
+  );
+}
+
 const shortcutGroups = [
   {
     id: "navigate",
@@ -842,6 +981,7 @@ export function App() {
       <ScrollThumb />
       <main id="main" tabIndex={-1}>
         <section className="hero" aria-labelledby="hero-heading">
+          <HeroBackdrop />
           <div className="hero-layout">
             <div className="hero-copy">
               <p className="hero-kicker">{t("hero.kicker")}</p>
@@ -855,15 +995,15 @@ export function App() {
                 <a className="button" href="#get-whalu">
                   {t("nav.get")}
                 </a>
-                <a className="text-link" href="#demo">
+                <a className="text-link" href="#how-it-works">
                   {t("hero.learn")} <Icon name="chevron" />
                 </a>
               </div>
               <p className="hero-availability">{t("hero.availability")}</p>
             </div>
-            <ProductDemo />
           </div>
         </section>
+        <Preview reducedMotion={reducedMotion} />
         <Controls />
         <Install />
       </main>

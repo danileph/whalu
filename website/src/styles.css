@@ -204,6 +204,8 @@ main:focus {
   background: #fff;
 }
 .hero {
+  position: relative;
+  isolation: isolate;
   background: #000;
   color: #fff;
   overflow: clip;
@@ -211,11 +213,15 @@ main:focus {
 .hero-layout {
   max-width: 1120px;
   margin: auto;
-  padding: 48px 40px 42px;
+  position: relative;
+  min-height: calc(100svh - var(--header-height));
+  display: grid;
+  place-items: center;
+  padding: 72px 40px;
 }
 .hero-copy {
   text-align: center;
-  padding-bottom: 40px;
+  padding-bottom: 0;
 }
 .hero-kicker,
 .eyebrow {
@@ -234,7 +240,7 @@ h1 {
   font-weight: 600;
 }
 h1 > span {
-  color: #949499;
+  color: #b6c3d3;
 }
 .hero-description {
   max-width: 480px;
@@ -713,10 +719,10 @@ kbd {
     padding-top: var(--header-height);
   }
   .hero-layout {
-    padding: 32px 18px 28px;
+    padding: 64px 22px;
   }
   .hero-copy {
-    padding-bottom: 30px;
+    padding-bottom: 0;
   }
   h1 {
     font-size: clamp(42px, 10.8vw, 62px);
@@ -1927,4 +1933,84 @@ kbd {
 }
 .scroll-thumb[hidden] {
   display: none;
+}
+
+.hero-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 75%, transparent);
+}
+.hero-backdrop svg {
+  width: 100%;
+  height: 100%;
+  opacity: 0.8;
+  animation: window-light 18s ease-in-out infinite alternate;
+  will-change: transform;
+}
+.hero-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    #000a 0%,
+    #0004 45%,
+    transparent 75%
+  );
+}
+@keyframes window-light {
+  from {
+    transform: translate3d(-1%, 1%, 0) scale(1.03);
+  }
+  to {
+    transform: translate3d(1%, -1%, 0) scale(1.08);
+  }
+}
+.preview-section {
+  background: #000;
+  color: #fff;
+  padding: 48px 40px 56px;
+  overflow: clip;
+}
+.preview-inner {
+  max-width: 1040px;
+  margin: auto;
+}
+.preview-section h2 {
+  text-align: center;
+  font-size: 28px;
+  margin-bottom: 36px;
+}
+@media (max-width: 600px) {
+  .preview-section {
+    padding: 36px 18px;
+  }
+  .preview-section h2 {
+    font-size: 24px;
+    margin-bottom: 28px;
+  }
+  .hero-backdrop svg {
+    opacity: 0.65;
+  }
+}
+
+.hero-actions {
+  flex-wrap: wrap;
+}
+.hero-actions > .text-link {
+  min-height: 46px;
+  padding: 11px 18px;
+  border: 1px solid #ffffff30;
+  border-radius: 8px;
+  background: #ffffff05;
+}
+.hero-actions > .text-link:hover {
+  background: #ffffff12;
+  text-decoration: none;
+}
+.hero-actions > .text-link svg {
+  transform: rotate(90deg);
 }

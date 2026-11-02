@@ -1,6 +1,6 @@
 # Whalu website
 
-A local, static React + TypeScript landing page built with Vite. Three sections cover the product demo, controls, and installation. The fixed header and hero share a black background. The centered title sits above an interactive MacBook illustration at every screen size.
+A local, static React + TypeScript landing page built with Vite. Four sections cover the introduction, product demo, controls, and installation. The fixed header and hero share a black background. The first screen contains the title and install action over a silver-blue window-light effect. The MacBook preview begins below the fold and is reached by scrolling or the How it works button.
 
 ## Work locally
 
@@ -25,12 +25,12 @@ Output is in `website/dist/`. Website dependencies and assets are separate from 
 
 ## Design and interaction
 
-- The hero contains an interactive illustration, not a recording of the installed app. Choose any of five windows, click a thumbnail, swipe horizontally, or focus the demo and use arrows, J/K, Home, or End. Keyboard selection wraps; wheel input over the thumbnails stops at the ends. Vertical page scrolling remains available.
+- The preview below the hero contains an interactive illustration, not a recording of the installed app. Choose any of five windows, click a thumbnail, swipe horizontally, or focus the demo and use arrows, J/K, Home, or End. Keyboard selection wraps; wheel input over the thumbnails stops at the ends. Vertical page scrolling remains available.
 - The controls guide uses three short columns, stacked on phones. The detailed shortcuts stay visible in contrasting Navigate and Arrange panels, with individual keycaps for each combination, including native tiling and Space transfers.
 - Installation retains the source-build command, copy feedback, requirements, and macOS permission instructions. Repository links appear when `VITE_REPOSITORY_URL` is configured; otherwise the instructions refer to the local source folder.
 - The fixed header is 56px high on desktop and 52px on phones. A draggable, keyboard-accessible scroll thumb overlays the page without a visible track or reserved gutter; native scrollbars remain the fallback if initialization fails.
 - Reloads start at the hero. Fresh shared section links still open their targets below the header, and browser Back/Forward restoration stays available.
-- The page respects system Reduce Motion and offers a persistent footer preference. There is no pinned scrolling or scroll-driven animation.
+- The page respects system Reduce Motion and offers a persistent footer preference. The hero effect pauses offscreen, and both the effect and preview entrance respect the shared motion preference. No packages or external assets are required for these SVG/CSS effects. There is no pinned scrolling.
 - English and Russian are selected in the header. Switching languages preserves demo state. See [LOCALIZATION.md](LOCALIZATION.md) for adding languages and preference behavior.
 - The icon comes from the existing Whalu asset; the illustrated desktop and app windows use SVG, React, and CSS. No external fonts, runtime CDNs, analytics, or image services are used. Third-party license texts are in `public/THIRD_PARTY_NOTICES.txt`.
 

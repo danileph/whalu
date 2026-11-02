@@ -18,7 +18,7 @@ export const ru = {
   "hero.titleAccent": "Одним жестом.",
   "hero.description":
     "Переключайте отдельные окна жестом или сочетанием клавиш.",
-  "hero.learn": "Попробовать",
+  "hero.learn": "Как это работает",
   "hero.availability": "Бесплатно · Открытый код · macOS 15+",
   "demo.label": "Интерактивный обзор окон Whalu",
   "demo.choose": "Выбор окна в демонстрации",

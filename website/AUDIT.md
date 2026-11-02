@@ -1,11 +1,11 @@
 # Whalu landing page audit
 
-Verified November 2, 2026 after the header, scrollbar, and reload fixes. This supersedes the November 1 audit of the longer page. Scope is the static website; publication remains deferred.
+Verified November 2, 2026 after the text-first hero redesign. This supersedes the November 1 audit of the longer page. Scope is the static website; publication remains deferred.
 
 ## Structure and design
 
-- Three sections: product demo, controls, and installation.
-- Fixed black header with anchor offsets. The centered hero title sits above a restored MacBook bezel, camera notch, and aluminum base at every screen size.
+- Four sections: introduction, product demo, controls, and installation.
+- Fixed black header with anchor offsets. The text-only first screen uses a silver-blue animated window-light backdrop. The MacBook illustration is in a separate preview section below the fold, reached by scrolling or How it works.
 - Removed the pinned story, separate tiling demonstration, privacy pitch, FAQ, input-method tabs, oversized installation pitch, and their unused code and translations.
 - Retained the five-window illustration, accessible selection status, always-visible shortcuts in contrasting Navigate and Arrange panels, command copying, permission instructions, language selection, and motion preference.
 - English and Russian copy uses short instructions. The shortcut guide reflects current arrow-key navigation and includes both Command + Tab and Command + grave accent.
@@ -21,6 +21,7 @@ Verified November 2, 2026 after the header, scrollbar, and reload fixes. This su
 | Window demo        | All five selector buttons update the window and live status. Home selects the first window; ArrowLeft wraps to the last.                                                                                                        |
 | Language           | Switching to Russian preserves the selected window and updates labels and page metadata.                                                                                                                                        |
 | Shortcuts          | All six shortcut rows are visible without interaction. Keycaps and longer Russian labels fit at every tested width.                                                                                                             |
+| Hero and reveal    | At 1280 × 900, the hero ends and the preview begins at y=900. How it works lands the preview below the fixed header at y=76. The preview remains interactive.                                                                   |
 | Fixed header       | Remains at y=0 while scrolling. Header measures 56px on desktop and 52px on phones. The desktop Controls link lands at y=76, below the fixed header.                                                                            |
 | Copy command       | Production build reports successful clipboard copying.                                                                                                                                                                          |
 | Motion             | Footer preference changes the shared motion setting, persists after reload, and can be restored.                                                                                                                                |
