@@ -82,11 +82,11 @@ export const en = {
   "controls.mouse.name": "Mouse",
   "controls.mouse.description":
     "Move to the left edge of your screen. Scroll to choose, or click a preview.",
-  "shortcuts.show": "See keyboard shortcuts",
   "shortcuts.navigate": "Navigate",
   "shortcuts.arrange": "Arrange",
   "shortcuts.previousNext": "Previous / next window",
   "shortcuts.next": "Next window in the stack",
+  "shortcuts.previous": "Previous window in the stack",
   "shortcuts.reorder": "Reorder a window in the stack",
   "shortcuts.space": "Move to an adjacent Space",
   "shortcuts.tile": "Tile to the left / right half",

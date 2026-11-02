@@ -85,11 +85,11 @@ export const ru = {
   "controls.mouse.name": "Мышь",
   "controls.mouse.description":
     "Подведите указатель к левому краю экрана. Прокрутите список или нажмите на миниатюру.",
-  "shortcuts.show": "Сочетания клавиш",
   "shortcuts.navigate": "Навигация",
   "shortcuts.arrange": "Порядок и размещение",
   "shortcuts.previousNext": "Предыдущее / следующее окно",
   "shortcuts.next": "Следующее окно в списке",
+  "shortcuts.previous": "Предыдущее окно в списке",
   "shortcuts.reorder": "Изменить место окна в списке",
   "shortcuts.space": "Перенести на соседний рабочий стол",
   "shortcuts.tile": "Разместить в левой / правой половине",

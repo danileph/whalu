@@ -24,7 +24,6 @@ function Icon({
     | "chevron"
     | "copy"
     | "check"
-    | "plus"
     | "keyboard"
     | "trackpad"
     | "mouse"
@@ -47,7 +46,6 @@ function Icon({
       </>
     ),
     check: <path d="m5 12 4 4L19 6" />,
-    plus: <path d="M12 5v14M5 12h14" />,
     keyboard: (
       <>
         <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -478,6 +476,9 @@ function ProductDemo() {
     <div className="product-demo">
       <div className="laptop">
         <div className="laptop-display">
+          <div className="camera-notch" aria-hidden="true">
+            <i />
+          </div>
           <div
             className="mac-desktop"
             id="demo"
@@ -571,6 +572,9 @@ function ProductDemo() {
             </div>
           </div>
         </div>
+        <div className="laptop-base" aria-hidden="true">
+          <span />
+        </div>
       </div>
       <div className="demo-controls">
         <div className="demo-apps" role="group" aria-label={t("demo.choose")}>
@@ -608,16 +612,17 @@ const shortcutGroups = [
   {
     id: "navigate",
     rows: [
-      ["shortcuts.previousNext", "⌃ ⌥ ↑ / ↓ / ← / →"],
-      ["shortcuts.next", "⌘ Tab"],
+      ["shortcuts.previousNext", ["⌃", "⌥", "↑ ↓ ← →"]],
+      ["shortcuts.next", ["⌘", "Tab"]],
+      ["shortcuts.previous", ["⌘", "`"]],
     ],
   },
   {
     id: "arrange",
     rows: [
-      ["shortcuts.reorder", "⌃ ⌥ ⌘ ↑ / ↓"],
-      ["shortcuts.space", "⌃ ⌥ ⌘ ← / →"],
-      ["shortcuts.tile", "⌃ ⌘ ← / →"],
+      ["shortcuts.reorder", ["⌃", "⌥", "⌘", "↑ ↓"]],
+      ["shortcuts.space", ["⌃", "⌥", "⌘", "← →"]],
+      ["shortcuts.tile", ["⌃", "⌘", "← →"]],
     ],
   },
 ] as const;
@@ -643,26 +648,24 @@ function Controls() {
           </article>
         ))}
       </div>
-      <details className="shortcuts">
-        <summary>
-          {t("shortcuts.show")}
-          <Icon name="plus" />
-        </summary>
-        <div className="shortcut-sheet">
-          {shortcutGroups.map((group) => (
-            <div key={group.id}>
-              <h3>{t(`shortcuts.${group.id}`)}</h3>
-              {group.rows.map(([label, keys]) => (
-                <div className="shortcut-row" key={label}>
-                  <span>{t(label)}</span>
-                  <kbd>{keys}</kbd>
-                </div>
-              ))}
-            </div>
-          ))}
-          <p>{t("shortcuts.note")}</p>
-        </div>
-      </details>
+      <div className="shortcut-sheet">
+        {shortcutGroups.map((group) => (
+          <div className={`shortcut-group shortcut-${group.id}`} key={group.id}>
+            <h3>{t(`shortcuts.${group.id}`)}</h3>
+            {group.rows.map(([label, keys]) => (
+              <div className="shortcut-row" key={label}>
+                <span>{t(label)}</span>
+                <span className="key-combination">
+                  {keys.map((key) => (
+                    <kbd key={key}>{key}</kbd>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="shortcut-note">{t("shortcuts.note")}</p>
     </section>
   );
 }
