@@ -2141,7 +2141,7 @@ kbd {
   height: 375px;
   transform: scale(0.2133, 0.2187);
   border: 2px solid #ffffff90;
-  border-radius: 8px;
+  border-radius: 48px;
 }
 .desktop-canvas .thumbnail.selected > .mac-window {
   border: 6px solid #2196ff;
@@ -2157,12 +2157,14 @@ kbd {
   object-fit: contain;
 }
 .desktop-canvas .thumbnail > .app-badge {
-  width: 24px;
-  height: 24px;
-  right: -10px;
-  bottom: -11px;
+  width: 32px;
+  height: 32px;
+  left: 50%;
+  top: 50%;
+  right: auto;
+  bottom: auto;
   border-radius: 0;
-  transform: translateZ(2px);
+  transform: translate(-50%, -50%) translateZ(2px);
 }
 .desktop-canvas .dock {
   bottom: 10px;
