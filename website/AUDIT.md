@@ -5,12 +5,12 @@ Verified November 2, 2026 after the text-first hero redesign. This supersedes th
 ## Structure and design
 
 - Four sections: introduction, product demo, controls, and installation.
-- Fixed black header with anchor offsets. The text-only first screen uses a static silver-blue window-light backdrop. The MacBook illustration is in a separate preview section below the fold, reached by scrolling or How it works.
+- Fixed black header with anchor offsets. The text-only first screen uses a animated silver-blue window-light backdrop. The MacBook illustration is in a separate preview section below the fold, reached by scrolling or How it works.
 - Removed the pinned story, separate tiling demonstration, privacy pitch, FAQ, input-method tabs, oversized installation pitch, and their unused code and translations.
 - Retained the five-window illustration, accessible selection status, always-visible shortcuts in contrasting Navigate and Arrange panels, command copying, permission instructions, language selection, and motion preference.
 - English and Russian copy uses short instructions. The shortcut guide reflects current arrow-key navigation and includes both Command + Tab and Command + grave accent.
 
-The hero backdrop no longer animates and uses no SVG blur filters or CSS masks. These layers were removed after scrolling lag was reported in the hero. Visual browser checks do not establish frame rate or energy usage on the user’s hardware.
+The hero retains its transform animation, with no SVG blur filters or CSS masks. It pauses during scrolling and offscreen, resuming 180ms after scrolling stops. These changes address the reported hero lag while preserving motion. Visual browser checks do not establish frame rate or energy usage on the user’s hardware.
 
 ## Verification
 

@@ -610,9 +610,44 @@ function ProductDemo() {
 }
 
 function HeroBackdrop() {
+  const backdrop = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = backdrop.current;
+    const svg = node?.querySelector("svg");
+    if (!node || !svg) return;
+    let visible = false;
+    let scrolling = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const update = () => {
+      svg.style.animationPlayState =
+        visible && !scrolling ? "running" : "paused";
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      update();
+    });
+    const onScroll = () => {
+      if (!scrolling) {
+        scrolling = true;
+        update();
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        scrolling = false;
+        update();
+      }, 180);
+    };
+    observer.observe(node);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
   const id = useId().replace(/:/g, "");
   return (
-    <div className="hero-backdrop" aria-hidden="true">
+    <div ref={backdrop} className="hero-backdrop" aria-hidden="true">
       <svg viewBox="0 0 1440 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id={`${id}-edge`} x1="0" y1="0" x2="1" y2="1">
