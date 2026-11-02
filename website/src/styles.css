@@ -12,13 +12,16 @@ html {
 body {
   margin: 0;
   padding-top: var(--header-height);
-  background: var(--paper);
+  background: #000;
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   font-size: 16px;
   line-height: 1.5;
   letter-spacing: -0.02em;
   -webkit-font-smoothing: antialiased;
+}
+#root {
+  background: var(--paper);
 }
 button,
 select {
@@ -126,7 +129,8 @@ main:focus {
   position: fixed;
   inset: 0 0 auto;
   z-index: 50;
-  background: #000;
+  background: #000000ed;
+  backdrop-filter: blur(20px);
   color: #eee;
   border-bottom: 1px solid #ffffff24;
 }
