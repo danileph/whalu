@@ -6,6 +6,7 @@ import type {
   ReactNode,
   SVGProps,
 } from "react";
+import { ScrollThumb } from "./ScrollThumb";
 import { useLocale } from "./i18n/I18nProvider";
 import { catalogs, supportedLocales } from "./i18n/catalogs";
 import type { Locale } from "./i18n/catalogs";
@@ -812,6 +813,24 @@ function ProductNav() {
 }
 
 export function App() {
+  useLayoutEffect(() => {
+    const navigation = performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (navigation?.type === "back_forward") return;
+    if (!location.hash) {
+      window.scrollTo({ top: 0, behavior: "instant" });
+      return;
+    }
+    // React creates section targets after the browser's initial anchor lookup.
+    try {
+      document
+        .getElementById(decodeURIComponent(location.hash.slice(1)))
+        ?.scrollIntoView({ block: "start", behavior: "instant" });
+    } catch {
+      /* Ignore malformed fragment identifiers. */
+    }
+  }, []);
   const { t } = useLocale();
   const { reducedMotion, systemReduced, toggleMotion } = useMotionPreference();
   return (
@@ -820,6 +839,7 @@ export function App() {
         {t("skip")}
       </a>
       <ProductNav />
+      <ScrollThumb />
       <main id="main" tabIndex={-1}>
         <section className="hero" aria-labelledby="hero-heading">
           <div className="hero-layout">

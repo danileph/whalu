@@ -4,6 +4,7 @@ export const en = {
     "Every window. A swipe away. Whalu brings individual-window navigation, a 3D overview, and native tiling shortcuts to your Mac. Free and open source.",
   "meta.socialDescription":
     "Switch windows. Keep your focus. Individual windows, a 3D overview, and native macOS tiling.",
+  "scrollbar.label": "Page scroll",
   "language.label": "Language",
   "nav.home": "Whalu home",
   "nav.label": "Main navigation",

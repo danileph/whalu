@@ -6,11 +6,12 @@
 html {
   color-scheme: light;
   scroll-behavior: smooth;
-  scroll-padding-top: 104px;
+  --header-height: 56px;
+  scroll-padding-top: calc(var(--header-height) + 20px);
 }
 body {
   margin: 0;
-  padding-top: 80px;
+  padding-top: var(--header-height);
   background: var(--paper);
   color: var(--ink);
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
@@ -132,7 +133,7 @@ main:focus {
 }
 .product-nav > div {
   max-width: 1280px;
-  height: 80px;
+  height: calc(var(--header-height) - 1px);
   padding: 0 40px;
   margin: auto;
   display: flex;
@@ -683,7 +684,7 @@ kbd {
 }
 @media (max-width: 600px) {
   .product-nav > div {
-    height: 68px;
+    height: calc(var(--header-height) - 1px);
     padding: 0 22px;
   }
   .nav-actions {
@@ -703,10 +704,10 @@ kbd {
     font-size: 19px;
   }
   html {
-    scroll-padding-top: 88px;
+    --header-height: 52px;
   }
   body {
-    padding-top: 68px;
+    padding-top: var(--header-height);
   }
   .hero-layout {
     padding: 32px 18px 28px;
@@ -1888,4 +1889,39 @@ kbd {
     flex: 0 1 auto;
     padding-inline: 11px;
   }
+}
+
+/* Native scrollbars remain available if the custom thumb cannot initialize. */
+:root[data-scrollbar="custom"] {
+  scrollbar-width: none;
+}
+:root[data-scrollbar="custom"]::-webkit-scrollbar {
+  display: none;
+}
+.scroll-thumb {
+  position: fixed;
+  top: 0;
+  right: 4px;
+  z-index: 60;
+  width: 6px;
+  min-height: 32px;
+  border-radius: 6px;
+  background: #96969eaa;
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.scroll-thumb::before {
+  content: "";
+  position: absolute;
+  inset: 0 -5px;
+}
+.scroll-thumb:hover {
+  background: #898991;
+}
+.scroll-thumb:active {
+  cursor: grabbing;
+}
+.scroll-thumb[hidden] {
+  display: none;
 }

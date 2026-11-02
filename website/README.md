@@ -28,6 +28,8 @@ Output is in `website/dist/`. Website dependencies and assets are separate from 
 - The hero contains an interactive illustration, not a recording of the installed app. Choose any of five windows, click a thumbnail, swipe horizontally, or focus the demo and use arrows, J/K, Home, or End. Keyboard selection wraps; wheel input over the thumbnails stops at the ends. Vertical page scrolling remains available.
 - The controls guide uses three short columns, stacked on phones. The detailed shortcuts stay visible in contrasting Navigate and Arrange panels, with individual keycaps for each combination, including native tiling and Space transfers.
 - Installation retains the source-build command, copy feedback, requirements, and macOS permission instructions. Repository links appear when `VITE_REPOSITORY_URL` is configured; otherwise the instructions refer to the local source folder.
+- The fixed header is 56px high on desktop and 52px on phones. A draggable, keyboard-accessible scroll thumb overlays the page without a visible track or reserved gutter; native scrollbars remain the fallback if initialization fails.
+- Reloads start at the hero. Fresh shared section links still open their targets below the header, and browser Back/Forward restoration stays available.
 - The page respects system Reduce Motion and offers a persistent footer preference. There is no pinned scrolling or scroll-driven animation.
 - English and Russian are selected in the header. Switching languages preserves demo state. See [LOCALIZATION.md](LOCALIZATION.md) for adding languages and preference behavior.
 - The icon comes from the existing Whalu asset; the illustrated desktop and app windows use SVG, React, and CSS. No external fonts, runtime CDNs, analytics, or image services are used. Third-party license texts are in `public/THIRD_PARTY_NOTICES.txt`.
@@ -36,7 +38,7 @@ Colors are in `src/tokens.css`; layouts and demo styles are in `src/styles.css`.
 
 ## Verification
 
-Run `npm run build` and `git diff --check`. Check desktop and phone layouts in both languages, all demo selections, keyboard wrapping, shortcut readability, the copy button, and motion preference persistence. See [AUDIT.md](AUDIT.md) for the latest checks.
+Run `npm run build` and `git diff --check`. Check desktop and phone layouts in both languages, all demo selections, keyboard wrapping, shortcut readability, reload position, section links, scrollbar dragging and keyboard controls, the copy button, and motion preference persistence. See [AUDIT.md](AUDIT.md) for the latest checks.
 
 ## GitHub Pages
 
