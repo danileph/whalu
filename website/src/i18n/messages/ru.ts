@@ -20,6 +20,7 @@ export const ru = {
     "Переключайте отдельные окна жестом или сочетанием клавиш.",
   "hero.learn": "Как это работает",
   "hero.availability": "Бесплатно · Открытый код · macOS 15+",
+  "demo.dock": "Dock",
   "demo.label": "Интерактивный обзор окон Whalu",
   "demo.choose": "Выбор окна в демонстрации",
   "demo.switch": "Переключиться на {app}",

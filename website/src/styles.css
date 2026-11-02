@@ -1919,3 +1919,299 @@ kbd {
   backdrop-filter: none;
   border-bottom-color: transparent;
 }
+
+/* A single logical desktop keeps menu, windows, and Whalu in macOS proportions. */
+.desktop-canvas {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1440px;
+  height: 900px;
+  transform: scale(var(--desktop-scale, 1));
+  transform-origin: top left;
+  isolation: isolate;
+  color: #1d1d1f;
+}
+.desktop-canvas .menu-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 28px;
+  padding: 0 20px;
+  font-size: 12px;
+  background: #e8f3ff66;
+  color: #14243a;
+  backdrop-filter: none;
+  z-index: 30;
+}
+.apple-menu {
+  font-size: 20px;
+  line-height: 1;
+}
+.system-menu-icons {
+  letter-spacing: 3px;
+}
+.desktop-windows {
+  position: absolute;
+  inset: 0;
+}
+.desktop-live-window {
+  position: absolute;
+  border-radius: 11px;
+  box-shadow:
+    0 18px 40px #0003,
+    0 0 0 1px #0002;
+}
+.desktop-live-window > .mac-window {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #fff8;
+  box-shadow: none;
+}
+.desktop-live-window:not(.is-focused) .window-bar {
+  color: #999;
+  background: #eeeef0;
+}
+.desktop-live-window:not(.is-focused) .traffic-lights > i {
+  background: #c8c8cc;
+  border-color: #0001;
+}
+.desktop-live-window.is-focused {
+  box-shadow:
+    0 22px 60px #0005,
+    0 0 0 1px #0003;
+}
+.live-finder {
+  left: 190px;
+  top: 95px;
+  width: 800px;
+  height: 500px;
+}
+.live-editor {
+  left: 240px;
+  top: 150px;
+  width: 900px;
+  height: 600px;
+}
+.live-safari {
+  left: 320px;
+  top: 160px;
+  width: 1040px;
+  height: 600px;
+}
+.live-notes {
+  left: 720px;
+  top: 80px;
+  width: 640px;
+  height: 640px;
+}
+.live-terminal {
+  left: 420px;
+  top: 350px;
+  width: 820px;
+  height: 480px;
+}
+.window-drag-region {
+  position: absolute;
+  inset: 0 45px auto 75px;
+  height: 38px;
+  z-index: 2;
+  cursor: grab;
+  touch-action: none;
+}
+.window-drag-region:active {
+  cursor: grabbing;
+}
+.desktop-live-window .window-bar {
+  height: 38px;
+  font-size: 12px;
+}
+.desktop-live-window .address-bar {
+  font-size: 11px;
+  padding: 5px 10px;
+  width: 54%;
+}
+.desktop-live-window .traffic-lights {
+  gap: 8px;
+}
+.desktop-live-window .traffic-lights i {
+  width: 12px;
+  height: 12px;
+}
+.desktop-live-window .safari-body,
+.desktop-live-window .notes-body,
+.desktop-live-window .finder-body,
+.desktop-live-window .editor-body,
+.desktop-live-window .terminal-body {
+  height: calc(100% - 38px);
+}
+.desktop-live-window .safari-body > aside {
+  padding: 24px 20px;
+  font-size: 12px;
+  gap: 22px;
+  width: 22%;
+}
+.desktop-live-window .atlas-main {
+  padding: 25px 28px;
+}
+.desktop-live-window .atlas-top {
+  font-size: 10px;
+}
+.desktop-live-window .atlas-heading h4 {
+  font-size: 36px;
+}
+.desktop-live-window .atlas-heading small,
+.desktop-live-window .atlas-heading p,
+.desktop-live-window .project-tag {
+  font-size: 11px;
+}
+.desktop-live-window .atlas-art {
+  height: 45%;
+}
+.desktop-live-window .atlas-art > span {
+  font-size: 34px;
+}
+.desktop-live-window .atlas-tasks {
+  font-size: 11px;
+}
+.desktop-live-window .atlas-tasks b {
+  font-size: 10px;
+}
+.desktop-live-window .notes-body aside {
+  font-size: 13px;
+  gap: 22px;
+}
+.desktop-live-window .notes-body time {
+  font-size: 12px;
+}
+.desktop-live-window .notes-body h4 {
+  font-size: 32px;
+}
+.desktop-live-window .notes-body p,
+.desktop-live-window .notes-body li {
+  font-size: 15px;
+}
+.desktop-live-window .finder-body aside {
+  font-size: 13px;
+  gap: 20px;
+}
+.desktop-live-window .folders {
+  font-size: 13px;
+}
+.desktop-live-window .folder {
+  width: 72px;
+  height: 54px;
+}
+.desktop-live-window .editor-body aside {
+  font-size: 13px;
+  gap: 16px;
+}
+.desktop-live-window .code-tab,
+.desktop-live-window .code-status {
+  font-size: 12px;
+}
+.desktop-live-window .code-pane pre {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.desktop-live-window .terminal-body {
+  font-size: 16px;
+  padding: 25px;
+}
+.desktop-canvas .desktop-wheel {
+  position: absolute;
+  top: 50%;
+  left: 24px;
+  width: 155px;
+  height: 0;
+  perspective: 600px;
+  z-index: 20;
+}
+.desktop-canvas .thumbnail {
+  width: 128px;
+  height: 82px;
+  top: -41px;
+  left: 0;
+  transform: translate3d(var(--wheel-x), var(--wheel-y), var(--wheel-depth))
+    rotateX(var(--wheel-pitch)) rotateY(var(--wheel-yaw))
+    scale(var(--wheel-scale));
+  transition: transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  transform-style: preserve-3d;
+}
+.desktop-canvas .thumbnail > .mac-window {
+  width: 600px;
+  height: 375px;
+  transform: scale(0.2133, 0.2187);
+  border: 2px solid #ffffff90;
+  border-radius: 8px;
+}
+.desktop-canvas .thumbnail.selected > .mac-window {
+  border: 6px solid #2196ff;
+  box-shadow:
+    0 0 0 3px #8abfff99,
+    0 6px 12px #0004;
+}
+.desktop-canvas .app-badge {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  object-fit: contain;
+}
+.desktop-canvas .thumbnail > .app-badge {
+  width: 24px;
+  height: 24px;
+  right: -10px;
+  bottom: -11px;
+  border-radius: 0;
+  transform: translateZ(2px);
+}
+.desktop-canvas .dock {
+  bottom: 10px;
+  gap: 6px;
+  padding: 7px 9px 4px;
+  background: #ffffff3d;
+  border: 1px solid #ffffff70;
+  border-radius: 17px;
+  backdrop-filter: none;
+  z-index: 25;
+  box-shadow: 0 4px 20px #0002;
+}
+.desktop-canvas .dock button {
+  position: relative;
+  padding: 0 0 7px;
+  width: 48px;
+  height: 55px;
+  background: transparent;
+  transition: transform 140ms;
+}
+.desktop-canvas .dock button:hover {
+  transform: translateY(-5px) scale(1.12);
+}
+.desktop-canvas .dock button .app-badge,
+.desktop-canvas .dock > img {
+  width: 48px;
+  height: 48px;
+  border-radius: 0;
+}
+.desktop-canvas .dock button i {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #152639;
+  bottom: 0;
+  left: 22px;
+}
+.desktop-canvas .dock button[aria-pressed="true"] i {
+  background: #071423;
+}
+.desktop-canvas .dock > span {
+  height: 39px;
+  margin: 0 4px;
+}
+.camera-notch {
+  width: 11%;
+  left: 44.5%;
+}
+:root[data-motion="reduced"] .desktop-canvas .thumbnail {
+  transform: translateY(var(--wheel-y)) scale(var(--wheel-scale));
+}

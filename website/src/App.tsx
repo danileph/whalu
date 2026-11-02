@@ -213,13 +213,15 @@ type AppId = (typeof apps)[number]["id"];
 function AppBadge({ index }: { index: number }) {
   const app = apps[index];
   return (
-    <span
+    <img
       className={`app-badge app-${app.id}`}
-      style={{ "--app-color": app.color } as CSSProperties}
+      src={asset(`app-icons/${app.id}.png`)}
+      width="40"
+      height="40"
+      alt=""
       aria-hidden="true"
-    >
-      {app.glyph}
-    </span>
+      draggable={false}
+    />
   );
 }
 
@@ -429,14 +431,77 @@ function MacWindow({
   );
 }
 
+// Match src/overview.rs: full-size centered card; both wheel edges turn right.
+function demoWheelPose(offset: number): CSSProperties {
+  const progress = Math.min(1, Math.abs(offset) / 3);
+  const curve = progress ** 1.25;
+  const slots = [0, 146, 274, 380, 516];
+  return {
+    "--wheel-y": `${Math.sign(offset) * slots[Math.min(4, Math.abs(offset))]}px`,
+    "--wheel-x": `${-12 * curve}px`,
+    "--wheel-scale": 1 - 0.28 * curve,
+    "--wheel-pitch": `${-Math.sign(offset) * 46 * progress}deg`,
+    "--wheel-yaw": `${24 * progress}deg`,
+    "--wheel-depth": `${-70 * curve}px`,
+  } as CSSProperties;
+}
+
 function ProductDemo() {
   const { t, formatDate } = useLocale();
   const [selected, setSelected] = useState(2);
-  const wheelTime = useRef(0);
+  const desktop = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLDivElement>(null);
+  const scale = useRef(1);
+  const [layers, setLayers] = useState([0, 1, 3, 4, 2]);
+  const select = (index: number) => {
+    const next = Math.max(0, Math.min(apps.length - 1, index));
+    setSelected(next);
+    setLayers((order) => [...order.filter((item) => item !== next), next]);
+  };
+  const windowDrag = useRef<{
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+    node: HTMLElement;
+  } | null>(null);
+  useLayoutEffect(() => {
+    const node = desktop.current!;
+    const update = () => {
+      scale.current = node.clientWidth / 1440;
+      canvas.current?.style.setProperty(
+        "--desktop-scale",
+        String(scale.current),
+      );
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    update();
+    return () => observer.disconnect();
+  }, []);
+  const selection = useRef(selected);
+  selection.current = selected;
+  useEffect(() => {
+    const wheel = canvas.current?.querySelector<HTMLElement>(".desktop-wheel");
+    if (!wheel) return;
+    let distance = 0;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY))
+        return;
+      event.preventDefault();
+      distance +=
+        event.deltaY *
+        (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? 900 : 1);
+      if (Math.abs(distance) < 35) return;
+      const steps = Math.trunc(distance / 35);
+      distance -= steps * 35;
+      select(selection.current + steps);
+    };
+    wheel.addEventListener("wheel", onWheel, { passive: false });
+    return () => wheel.removeEventListener("wheel", onWheel);
+  }, []);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const swiped = useRef(false);
-  const select = (index: number) =>
-    setSelected(Math.max(0, Math.min(apps.length - 1, index)));
   function keyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (
@@ -482,6 +547,7 @@ function ProductDemo() {
           </div>
           <div
             className="mac-desktop"
+            ref={desktop}
             id="demo"
             tabIndex={0}
             role="region"
@@ -504,71 +570,135 @@ function ProductDemo() {
               touchStart.current = null;
             }}
           >
-            <Wallpaper />
-            <div className="menu-bar" aria-hidden="true">
-              <span>
-                ●　 <b>{t(`apps.${apps[selected].id}.name`)}</b>　{" "}
-                {t("demo.menu")}
-              </span>
-              <span>
-                W　 ◒　{" "}
-                {formatDate(illustrationDate, {
-                  weekday: "short",
-                  hour: "numeric",
-                  minute: "2-digit",
+            <div className="desktop-canvas" ref={canvas}>
+              <Wallpaper />
+              <div className="menu-bar" aria-hidden="true">
+                <span>
+                  <span className="apple-menu"></span>　{" "}
+                  <b>{t(`apps.${apps[selected].id}.name`)}</b>　{" "}
+                  {t("demo.menu")}
+                </span>
+                <span>
+                  <span className="system-menu-icons">W　⌁　▰</span>　{" "}
+                  {formatDate(illustrationDate, {
+                    weekday: "short",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+              <div className="desktop-windows">
+                {apps.map((app, index) => (
+                  <div
+                    key={app.id}
+                    className={`desktop-live-window live-${app.id}${selected === index ? " is-focused" : ""}`}
+                    style={{ zIndex: layers.indexOf(index) + 1 }}
+                    onPointerDown={() => select(index)}
+                  >
+                    <div
+                      className="window-drag-region"
+                      aria-hidden="true"
+                      onPointerDown={(event) => {
+                        if (event.pointerType !== "mouse" || event.button !== 0)
+                          return;
+                        event.stopPropagation();
+                        event.preventDefault();
+                        select(index);
+                        const node = event.currentTarget.parentElement!;
+                        windowDrag.current = {
+                          x: event.clientX,
+                          y: event.clientY,
+                          left: node.offsetLeft,
+                          top: node.offsetTop,
+                          node,
+                        };
+                        event.currentTarget.setPointerCapture(event.pointerId);
+                      }}
+                      onPointerMove={(event) => {
+                        const drag = windowDrag.current;
+                        if (!drag) return;
+                        const left = Math.max(
+                          170,
+                          Math.min(
+                            1270,
+                            drag.left +
+                              (event.clientX - drag.x) / scale.current,
+                          ),
+                        );
+                        const top = Math.max(
+                          30,
+                          Math.min(
+                            770,
+                            drag.top + (event.clientY - drag.y) / scale.current,
+                          ),
+                        );
+                        drag.node.style.left = `${left}px`;
+                        drag.node.style.top = `${top}px`;
+                      }}
+                      onPointerUp={(event) => {
+                        windowDrag.current = null;
+                        if (
+                          event.currentTarget.hasPointerCapture(event.pointerId)
+                        )
+                          event.currentTarget.releasePointerCapture(
+                            event.pointerId,
+                          );
+                      }}
+                      onLostPointerCapture={() => {
+                        windowDrag.current = null;
+                      }}
+                    />
+                    <MacWindow index={index} />
+                  </div>
+                ))}
+              </div>
+              <div className="desktop-wheel">
+                {apps.map((app, index) => {
+                  const distance = index - selected;
+                  return (
+                    <button
+                      key={app.id}
+                      className={`thumbnail${distance === 0 ? " selected" : ""}`}
+                      style={
+                        {
+                          ...demoWheelPose(distance),
+                          zIndex: 10 - Math.abs(distance),
+                        } as CSSProperties
+                      }
+                      aria-label={t("demo.switch", {
+                        app: t(`apps.${app.id}.name`),
+                      })}
+                      aria-pressed={distance === 0}
+                      tabIndex={distance === 0 ? 0 : -1}
+                      onClick={() => select(index)}
+                    >
+                      <MacWindow index={index} />
+                      <AppBadge index={index} />
+                    </button>
+                  );
                 })}
-              </span>
-            </div>
-            <MacWindow index={3} className="desktop-back-window" />
-            <MacWindow
-              index={selected}
-              className="desktop-main-window"
-              key={selected}
-            />
-            <div
-              className="desktop-wheel"
-              onWheel={(event) => {
-                if (
-                  Math.abs(event.deltaY) < 8 ||
-                  Date.now() - wheelTime.current < 220
-                )
-                  return;
-                wheelTime.current = Date.now();
-                select(selected + Math.sign(event.deltaY));
-              }}
-            >
-              {apps.map((app, index) => {
-                const distance = index - selected;
-                return (
+              </div>
+              <div className="dock" role="group" aria-label={t("demo.dock")}>
+                {apps.map((app, index) => (
                   <button
                     key={app.id}
-                    className={`thumbnail${distance === 0 ? " selected" : ""}`}
-                    style={
-                      {
-                        "--distance": distance,
-                        "--depth": Math.abs(distance),
-                        zIndex: 10 - Math.abs(distance),
-                      } as CSSProperties
-                    }
+                    onClick={() => select(index)}
                     aria-label={t("demo.switch", {
                       app: t(`apps.${app.id}.name`),
                     })}
-                    aria-pressed={distance === 0}
-                    tabIndex={distance === 0 ? 0 : -1}
-                    onClick={() => select(index)}
+                    aria-pressed={selected === index}
                   >
-                    <MacWindow index={index} />
                     <AppBadge index={index} />
+                    <i />
                   </button>
-                );
-              })}
-            </div>
-            <div className="dock" aria-hidden="true">
-              {apps.map((app, index) => (
-                <AppBadge index={index} key={app.id} />
-              ))}
-              <span />
-              <img src={asset("whalu-icon.png")} alt="" />
+                ))}
+                <span />
+                <img
+                  src={asset("whalu-icon.png")}
+                  alt="Whalu"
+                  draggable={false}
+                />
+              </div>
             </div>
           </div>
         </div>

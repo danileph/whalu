@@ -17,6 +17,7 @@ export const en = {
   "hero.description": "Switch individual windows with a gesture or a shortcut.",
   "hero.learn": "How it works",
   "hero.availability": "Free & open source · macOS 15+",
+  "demo.dock": "Dock",
   "demo.label": "Interactive Whalu window overview",
   "demo.choose": "Choose a demo window",
   "demo.switch": "Switch to {app}",
