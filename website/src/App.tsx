@@ -430,7 +430,7 @@ function MacWindow({
 }
 
 function ProductDemo() {
-  const { t, formatDate, formatNumber } = useLocale();
+  const { t, formatDate } = useLocale();
   const [selected, setSelected] = useState(2);
   const wheelTime = useRef(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -486,7 +486,6 @@ function ProductDemo() {
             tabIndex={0}
             role="region"
             aria-label={t("demo.label")}
-            aria-describedby="demo-help"
             onKeyDown={keyDown}
             onPointerDown={(event) => {
               swiped.current = false;
@@ -577,34 +576,9 @@ function ProductDemo() {
           <span />
         </div>
       </div>
-      <div className="demo-controls">
-        <div className="demo-apps" role="group" aria-label={t("demo.choose")}>
-          {apps.map((app, index) => (
-            <button
-              key={app.id}
-              aria-label={t("demo.show", { app: t(`apps.${app.id}.name`) })}
-              aria-pressed={selected === index}
-              onClick={() => select(index)}
-            >
-              {t(`apps.${app.id}.name`)}
-            </button>
-          ))}
-        </div>
-        <span className="demo-selection" role="status" aria-atomic="true">
-          {t(`apps.${apps[selected].id}.name`)}{" "}
-          <span>
-            {formatNumber(selected + 1, { minimumIntegerDigits: 2 })} /{" "}
-            {formatNumber(apps.length, { minimumIntegerDigits: 2 })}
-          </span>
-        </span>
-      </div>
-      <p className="demo-disclaimer" id="demo-help">
-        <span className="desktop-demo-hint">{t("demo.desktopHint")}</span>
-        <span className="touch-demo-hint">{t("demo.touchHint")}</span>
-        <span className="demo-illustration-label">
-          {t("demo.illustration")}
-        </span>
-      </p>
+      <span className="sr-only" role="status" aria-atomic="true">
+        {t(`apps.${apps[selected].id}.name`)}
+      </span>
     </div>
   );
 }
@@ -937,8 +911,20 @@ function LanguageSelector() {
 
 function ProductNav() {
   const { t } = useLocale();
+  const header = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const node = header.current;
+    if (!node) return;
+    const update = () => {
+      const scrolled = String(window.scrollY > 1);
+      if (node.dataset.scrolled !== scrolled) node.dataset.scrolled = scrolled;
+    };
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
   return (
-    <header className="product-nav">
+    <header ref={header} className="product-nav" data-scrolled="false">
       <div>
         <a className="brand" href="#" aria-label={t("nav.home")}>
           <img src={asset("whalu-icon.png")} width="28" height="28" alt="" />
