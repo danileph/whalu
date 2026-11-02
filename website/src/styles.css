@@ -1941,33 +1941,19 @@ kbd {
   z-index: -1;
   pointer-events: none;
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, #000 75%, transparent);
 }
 .hero-backdrop svg {
   width: 100%;
   height: 100%;
   opacity: 0.8;
-  animation: window-light 18s ease-in-out infinite alternate;
-  will-change: transform;
 }
 .hero-backdrop::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(
-    ellipse at center,
-    #000a 0%,
-    #0004 45%,
-    transparent 75%
-  );
-}
-@keyframes window-light {
-  from {
-    transform: translate3d(-1%, 1%, 0) scale(1.03);
-  }
-  to {
-    transform: translate3d(1%, -1%, 0) scale(1.08);
-  }
+  background:
+    linear-gradient(to bottom, transparent 70%, #000),
+    radial-gradient(ellipse at center, #000a 0%, #0004 45%, transparent 75%);
 }
 .preview-section {
   background: #000;

@@ -610,23 +610,9 @@ function ProductDemo() {
 }
 
 function HeroBackdrop() {
-  const backdrop = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const node = backdrop.current;
-    if (!node) return;
-    const observer = new IntersectionObserver(([entry]) => {
-      const svg = node.querySelector("svg");
-      if (svg)
-        svg.style.animationPlayState = entry.isIntersecting
-          ? "running"
-          : "paused";
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
   const id = useId().replace(/:/g, "");
   return (
-    <div ref={backdrop} className="hero-backdrop" aria-hidden="true">
+    <div className="hero-backdrop" aria-hidden="true">
       <svg viewBox="0 0 1440 1000" preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id={`${id}-edge`} x1="0" y1="0" x2="1" y2="1">
@@ -640,15 +626,6 @@ function HeroBackdrop() {
             <stop offset=".8" stopColor="#5d9bd8" stopOpacity=".12" />
             <stop offset="1" stopColor="#c1defb" stopOpacity=".22" />
           </linearGradient>
-          <filter
-            id={`${id}-glow`}
-            x="-50%"
-            y="-50%"
-            width="200%"
-            height="200%"
-          >
-            <feGaussianBlur stdDeviation="16" />
-          </filter>
         </defs>
         <g
           transform="rotate(-32 720 500)"
@@ -662,7 +639,7 @@ function HeroBackdrop() {
             height="1050"
             rx="52"
             strokeWidth="14"
-            filter={`url(#${id}-glow)`}
+            opacity=".08"
           />
           <rect
             x="750"
@@ -688,7 +665,7 @@ function HeroBackdrop() {
             height="750"
             rx="48"
             strokeWidth="10"
-            filter={`url(#${id}-glow)`}
+            opacity=".08"
           />
           <rect
             x="-80"
