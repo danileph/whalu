@@ -358,17 +358,43 @@ const shortcutGroups = [
   {
     id: "navigate",
     rows: [
-      ["shortcuts.previousNext", ["⌃", "⌥", "↑ ↓ ← →"]],
-      ["shortcuts.next", ["⌘", "Tab"]],
-      ["shortcuts.previous", ["⌘", "`"]],
+      ["shortcuts.overview", [["⌃", "⌥"]]],
+      ["shortcuts.previous", [["⌃", "⌥", "↑"], ["⌃", "⌥", "K"]]],
+      ["shortcuts.next", [["⌃", "⌥", "↓"], ["⌃", "⌥", "J"]]],
+      ["shortcuts.appPrevious", [["⌃", "⌥", "←"], ["⌃", "⌥", "H"]]],
+      ["shortcuts.appNext", [["⌃", "⌥", "→"], ["⌃", "⌥", "L"]]],
+      ["shortcuts.next", [["⌘", "Tab"]]],
+      ["shortcuts.previous", [["⌘", "`"]]],
+    ],
+  },
+  {
+    id: "tile",
+    rows: [
+      ["shortcuts.left", [["⌃", "⌘", "←"], ["⌃", "⌘", "H"]]],
+      ["shortcuts.right", [["⌃", "⌘", "→"], ["⌃", "⌘", "L"]]],
+      ["shortcuts.top", [["⌃", "⌘", "↑"], ["⌃", "⌘", "K"]]],
+      ["shortcuts.bottom", [["⌃", "⌘", "↓"], ["⌃", "⌘", "J"]]],
+      ["shortcuts.fill", [["⌃", "⌘", "M"]]],
+      ["shortcuts.center", [["⌃", "⌘", "I"]]],
+      ["shortcuts.restore", [["⌃", "⌘", "N"]]],
+    ],
+  },
+  {
+    id: "stack",
+    rows: [
+      ["shortcuts.stackUp", [["⌃", "⌥", "⌘", "↑"], ["⌃", "⌥", "⌘", "K"]]],
+      ["shortcuts.stackDown", [["⌃", "⌥", "⌘", "↓"], ["⌃", "⌥", "⌘", "J"]]],
+      ["shortcuts.spacePrevious", [["⌃", "⌥", "⌘", "←"], ["⌃", "⌥", "⌘", "H"]]],
+      ["shortcuts.spaceNext", [["⌃", "⌥", "⌘", "→"], ["⌃", "⌥", "⌘", "L"]]],
     ],
   },
   {
     id: "arrange",
     rows: [
-      ["shortcuts.reorder", ["⌃", "⌥", "⌘", "↑ ↓"]],
-      ["shortcuts.space", ["⌃", "⌥", "⌘", "← →"]],
-      ["shortcuts.tile", ["⌃", "⌘", "← →"]],
+      ["shortcuts.leftRight", [["⌃", "⇧", "⌘", "←"], ["⌃", "⇧", "⌘", "H"]]],
+      ["shortcuts.rightLeft", [["⌃", "⇧", "⌘", "→"], ["⌃", "⇧", "⌘", "L"]]],
+      ["shortcuts.topBottom", [["⌃", "⇧", "⌘", "↑"], ["⌃", "⇧", "⌘", "K"]]],
+      ["shortcuts.bottomTop", [["⌃", "⇧", "⌘", "↓"], ["⌃", "⇧", "⌘", "J"]]],
     ],
   },
 ] as const;
@@ -394,16 +420,24 @@ function Controls() {
           </article>
         ))}
       </div>
+      <p className="shortcut-intro">{t("shortcuts.intro")}</p>
       <div className="shortcut-sheet">
         {shortcutGroups.map((group) => (
           <div className={`shortcut-group shortcut-${group.id}`} key={group.id}>
             <h3>{t(`shortcuts.${group.id}`)}</h3>
-            {group.rows.map(([label, keys]) => (
-              <div className="shortcut-row" key={label}>
+            {group.rows.map(([label, combinations], rowIndex) => (
+              <div className="shortcut-row" key={`${label}-${rowIndex}`}>
                 <span>{t(label)}</span>
-                <span className="key-combination">
-                  {keys.map((key) => (
-                    <kbd key={key}>{key}</kbd>
+                <span className="shortcut-alternatives">
+                  {combinations.map((keys, index) => (
+                    <span className="shortcut-alternative" key={keys.join("")}>
+                      {index > 0 && <span className="shortcut-or">{t("shortcuts.or")}</span>}
+                      <span className="key-combination">
+                        {keys.map((key) => (
+                          <kbd key={key}>{key}</kbd>
+                        ))}
+                      </span>
+                    </span>
                   ))}
                 </span>
               </div>
@@ -411,6 +445,7 @@ function Controls() {
           </div>
         ))}
       </div>
+      <p className="shortcut-legend">{t("shortcuts.legend")}</p>
       <p className="shortcut-note">{t("shortcuts.note")}</p>
     </section>
   );

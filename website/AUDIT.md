@@ -1,6 +1,14 @@
 # Whalu landing page audit
 
-Verified November 3, 2026 after replacing the interactive illustration with the corrected product video. Scope is the static website; publication remains deferred.
+Verified November 3, 2026 after completing the shortcut guide. Scope is the static website; publication remains deferred.
+
+## Shortcut guide
+
+- All 37 default keyboard bindings were compared against `Config::default` in `src/config.rs`, including Command + Tab/grave, arrows, H/J/K/L aliases, same-app navigation, stack edits, Space transfers, all four halves, fill, center, restore, and all four arrangements. No bindings are missing or duplicated.
+- The overview modifier hold has its own row. The guide has 22 rows across four always-visible groups, with 38 rendered key combinations in each language. The native Fn + Control + R restore alternative is described below the guide.
+- Each direction has a separate label. A key-symbol legend and native Window-menu support note are provided in English and Russian. The keyboard and trackpad instructions describe immediate switching, and mouse instructions include side-button navigation and thumbnail reordering.
+- Production browser checks passed in both languages at 320, 390, 850, and 1280 CSS pixels. Every width renders the complete list without horizontal page overflow or clipped shortcut rows/key combinations. Visual review covered English desktop and Russian narrow-phone layouts, and language switching updates the guide.
+- `npm run build` passes TypeScript, all eight localization tests, and the production Vite build. `git diff --check` passes.
 
 ## Video and frame
 
