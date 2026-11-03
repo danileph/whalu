@@ -42,7 +42,7 @@ Run `npm run build` and `git diff --check`. Check desktop and phone layouts in b
 
 ## GitHub Pages
 
-The site is published at [danileph.github.io/whalu](https://danileph.github.io/whalu/). The workflow in `.github/workflows/pages.yml` builds the static website, supplies the repository URL, and deploys to GitHub Pages on website changes pushed to `main` or a manual run on `main`. Set the repository’s Pages source to GitHub Actions. `develop` is checked by CI but never deployed to production. Relative Vite asset paths support the `/whalu/` repository subpath and custom domains.
+The configured site URL is [danileph.github.io/whalu](https://danileph.github.io/whalu/). Check the [deployment workflow](https://github.com/danileph/whalu/actions/workflows/pages.yml) for publication status. The workflow in `.github/workflows/pages.yml` builds the static website, supplies the repository URL, and deploys to GitHub Pages on website changes pushed to `main` or a manual run on `main`. Set the repository’s Pages source to GitHub Actions. `develop` is checked by CI but never deployed to production. Relative Vite asset paths support the `/whalu/` repository subpath and custom domains.
 
 The download URL uses GitHub’s stable `/releases/latest/download/Whalu-macOS-universal.zip` route. Release tags publish that fixed asset name, so the page needs no GitHub API requests, credentials, or hardcoded release version. The compatibility label describes supported systems and architectures.
 
