@@ -1,6 +1,6 @@
 # Website localization
 
-The site ships with English and Russian. The header's native language selector works with a keyboard and screen reader, displays each language's own name, and switches content without remounting the demos. All interface copy, accessible labels, illustrative window content, and page metadata live in `src/i18n/messages/`.
+The site ships with English and Russian. The header's native language selector works with a keyboard and screen reader, displays each language's own name, and switches content without remounting the video. All interface copy, accessible labels, and page metadata live in `src/i18n/messages/`.
 
 ## Add a language
 
@@ -45,4 +45,4 @@ The provider updates `html.lang`, `html.dir`, the title, description, and Open G
 
 `npm test` checks registry completeness, placeholders, locale matching, preference precedence, fallback behavior, Intl configuration, and interpolation. `npm run check` checks component usage and catalog types. `npm run build` runs both before producing static assets.
 
-Browser verification covers switching and reloading, shared language URLs, translated metadata and accessible controls, demo-state preservation, copy feedback, and responsive layouts. Check longer translations without truncating essential text. Legal third-party license notices remain in their original language.
+Browser verification covers switching and reloading, shared language URLs, translated metadata and accessible controls, video-position preservation, copy feedback, and responsive layouts. Check longer translations without truncating essential text. Legal third-party license notices remain in their original language.

@@ -1,40 +1,22 @@
 # Whalu landing page audit
 
-Verified November 2, 2026 after the native-style desktop preview update. This supersedes the November 1 audit of the longer page. Scope is the static website; publication remains deferred.
+Verified November 3, 2026 after replacing the interactive illustration with the corrected product video. Scope is the static website; publication remains deferred.
 
-## Structure and design
+## Video and frame
 
-- Four sections: introduction, product demo, controls, and installation.
-- Fixed black header with anchor offsets. The text-only first screen uses a animated silver-blue window-light backdrop. The MacBook illustration is in a separate preview section below the fold, reached by scrolling or How it works.
-- Removed the pinned story, separate tiling demonstration, privacy pitch, FAQ, input-method tabs, oversized installation pitch, and their unused code and translations.
-- Retained the five-window illustration, accessible selection status, always-visible shortcuts in contrasting Navigate and Arrange panels, command copying, permission instructions, language selection, and motion preference.
-- English and Russian copy uses short instructions. The shortcut guide reflects current arrow-key navigation and includes both Command + Tab and Command + grave accent.
-
-The hero retains its transform animation, with no SVG blur filters or CSS masks. It pauses during scrolling and offscreen, resuming 180ms after scrolling stops. These changes address the reported hero lag while preserving motion. Visual browser checks do not establish frame rate or energy usage on the user’s hardware.
-
-The preview uses real application icons, flat window stacking, active/inactive title bars, mouse-driven title-bar dragging, Dock selection, and selection-relative Whalu thumbnail transforms. Native wheel dimensions and perspective constants are taken from `src/overview.rs`; the demo uses five illustrative windows on a scaled logical desktop, not a live macOS session.
+- The existing CSS MacBook display, camera notch, bezel, and base remain in place. Its 16:10 screen contains the full 1920 × 1248 recording without cropping or stretching.
+- The 74.7-second H.264 MP4 includes the corrected Command–Tab / Command–backtick cues and vertical held-mouse dragging animation. The bundled MP4 and poster match the reviewed v2 export.
+- Native controls provide playback, seeking, and fullscreen. The recording is muted, loops, and plays inline. It uses a local poster and metadata preloading.
+- Playback starts when the video is visible, pauses offscreen or while the document is hidden, and preserves a visitor's manual pause. Reduce Motion prevents autoplay and still allows manual playback.
+- The former desktop illustration, synthetic windows, window dragging, Dock selection, and related CSS have been removed.
 
 ## Verification
 
-`npm run build` passes TypeScript, all eight localization tests, and the production build. `git diff --check` passes.
-
-| Check               | Result                                                                                                                                                                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Responsive widths   | No horizontal overflow at 320, 390, 768, 1024, 1440, and 4096 CSS pixels, including Russian copy.                                                                                                                                    |
-| Visual review       | Reviewed desktop production layout and Russian phone layout. Narrow phones wrap demo selectors rather than truncating their names.                                                                                                   |
-| Window demo         | Thumbnail buttons select windows and update a screen-reader-only live status. The external selector row, count, and helper copy have been removed. Home selects the first window; ArrowLeft wraps to the last.                       |
-| Language            | Switching to Russian preserves the selected window and updates labels and page metadata.                                                                                                                                             |
-| Shortcuts           | All six shortcut rows are visible without interaction. Keycaps and longer Russian labels fit at every tested width.                                                                                                                  |
-| Hero and reveal     | At 1280 × 900, the hero ends and the preview begins at y=900. How it works lands the preview below the fixed header at y=76. The preview remains interactive.                                                                        |
-| Fixed header        | Remains at y=0 while scrolling; transparent at the top, translucent after scrolling. Header measures 56px on desktop and 52px on phones. The desktop Controls link lands at y=76, below the fixed header.                            |
-| Copy command        | Production build reports successful clipboard copying.                                                                                                                                                                               |
-| Motion              | Footer preference changes the shared motion setting, persists after reload, and can be restored.                                                                                                                                     |
-| Overlay scrollbar   | No reserved gutter at 320, 390, 768, and 1280px. Dragging moves the viewport; End reaches the bottom and updates the accessible value to 100. Native scrolling remains available through wheel, touch, and page keyboard input.      |
-| Reload and anchors  | Reloading from a section anchor or the page bottom returns to y=0, including Russian on a phone. Fresh shared section links resolve after React mounts, with the fixed-header offset.                                                |
-| Desktop interaction | All five Dock buttons select and raise the corresponding window. Dragging the Terminal title bar changes its position and preserves it after switching focus. Wheel input over thumbnails changes selection without moving the page. |
-| Desktop assets      | All real app icons load locally. Logical desktop scaling and absence of horizontal page overflow checked from 320 to 1440px, including Russian.                                                                                      |
-| Production console  | No warnings or errors observed for the production build.                                                                                                                                                                             |
-
-Changing translation modules during development can cause Vite Fast Refresh to invalidate the shared locale context; a full reload recovers it. Production verification used `vite preview`, independently of development hot reload. Touch gestures and the OS Reduce Motion setting were not emulated in this audit; their existing handlers remain in place.
+- `npm run build` passes TypeScript, all eight localization tests, and the production Vite build. `git diff --check` passes.
+- Production browser review confirmed the 74.7-second video loads at 1920 × 1248, with native controls, muted inline playback, and `object-fit: contain` inside the MacBook.
+- Checked English desktop layout at 1280 × 900 and Russian phone layout at 390 × 844. No horizontal page overflow at 320, 390, or 1280 CSS pixels.
+- Checked normal playback, manual pause persistence after leaving and returning to the preview, and no autoplay after reloading with Reduce Motion enabled.
+- Language switching updates the video label without replacing the video element or resetting its playback position.
+- The local video URL supports byte-range requests: a 1 KiB request returns HTTP 206 with 1 KiB of data.
 
 The native macOS app bundle, dependencies, permissions, and installed executable are unaffected by this website-only change.

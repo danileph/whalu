@@ -1,11 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type {
-  CSSProperties,
-  KeyboardEvent,
-  PointerEvent,
-  ReactNode,
-  SVGProps,
-} from "react";
+import type { ReactNode, SVGProps } from "react";
 import { ScrollThumb } from "./ScrollThumb";
 import { useLocale } from "./i18n/I18nProvider";
 import { catalogs, supportedLocales } from "./i18n/catalogs";
@@ -15,7 +9,6 @@ const repository = (
   import.meta.env.VITE_REPOSITORY_URL as string | undefined
 )?.replace(/\/$/, "");
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
-const illustrationDate = new Date("2026-11-01T10:24:00Z");
 
 function Icon({
   name,
@@ -126,418 +119,54 @@ function useMotionPreference() {
   return { reducedMotion, systemReduced, toggleMotion };
 }
 
-function Wallpaper() {
-  const id = useId().replace(/:/g, "");
-  return (
-    <svg
-      className="wallpaper"
-      viewBox="0 0 1440 900"
-      preserveAspectRatio="xMidYMid slice"
-      aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id={`${id}-sky`} x1="0" x2="1" y1="0" y2="1">
-          <stop stopColor="#051f67" />
-          <stop offset=".48" stopColor="#1474ca" />
-          <stop offset="1" stopColor="#73d6e9" />
-        </linearGradient>
-        <linearGradient id={`${id}-wave`} x1=".2" x2=".8" y1="0" y2="1">
-          <stop stopColor="#84e1f3" />
-          <stop offset=".48" stopColor="#218ee0" />
-          <stop offset="1" stopColor="#15369e" />
-        </linearGradient>
-        <linearGradient id={`${id}-edge`} x1="0" x2="1">
-          <stop stopColor="#091a52" />
-          <stop offset=".5" stopColor="#3068ce" />
-          <stop offset="1" stopColor="#d4f8fc" />
-        </linearGradient>
-        <linearGradient id={`${id}-warm`} x1="0" x2="1" y1="1" y2="0">
-          <stop stopColor="#e15534" />
-          <stop offset=".4" stopColor="#ffb078" />
-          <stop offset="1" stopColor="#f9e5be" />
-        </linearGradient>
-      </defs>
-      <rect width="1440" height="900" fill={`url(#${id}-sky)`} />
-      <path
-        d="M0 900V590C270 765 440 53 837 47c360-5 249 560 603 570v283Z"
-        fill={`url(#${id}-edge)`}
-      />
-      <path
-        d="M-120 900C278 1070 345 182 824 151c282-18 300 394 616 391v358Z"
-        fill={`url(#${id}-wave)`}
-      />
-      <path
-        d="M529 900c170-89 275-372 418-414s295 143 493 118v296Z"
-        fill={`url(#${id}-warm)`}
-      />
-      <path
-        d="M-80 900c490 137 406-654 913-693 341-26 333 352 607 327"
-        fill="none"
-        stroke="#c0f4ff"
-        strokeOpacity=".48"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
-
-const apps = [
-  {
-    id: "finder",
-    glyph: "⌑",
-    color: "#2589ed",
-  },
-  {
-    id: "editor",
-    glyph: "⌘",
-    color: "#4669df",
-  },
-  {
-    id: "safari",
-    glyph: "↗",
-    color: "#007aff",
-  },
-  {
-    id: "notes",
-    glyph: "≡",
-    color: "#e6ad25",
-  },
-  {
-    id: "terminal",
-    glyph: ">_",
-    color: "#333336",
-  },
-] as const;
-type AppId = (typeof apps)[number]["id"];
-
-function AppBadge({ index }: { index: number }) {
-  const app = apps[index];
-  return (
-    <img
-      className={`app-badge app-${app.id}`}
-      src={asset(`app-icons/${app.id}.png`)}
-      width="40"
-      height="40"
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-    />
-  );
-}
-
-function WindowBody({ id }: { id: AppId }) {
-  const { t, formatDate, formatNumber } = useLocale();
-  if (id === "safari")
-    return (
-      <div className="safari-body">
-        <aside>
-          <span className="atlas-logo">a.</span>
-          <span>{t("atlas.workspace")}</span>
-          <b>◈ {t("atlas.overview")}</b>
-          <span>▦ {t("atlas.projects")}</span>
-          <span>◷ {t("atlas.timeline")}</span>
-          <span>☷ {t("atlas.resources")}</span>
-          <div className="avatar-row">
-            <i>J</i>
-            <i>A</i>
-            <i>M</i>
-            <small>{t("atlas.team")}</small>
-          </div>
-        </aside>
-        <div className="atlas-main">
-          <div className="atlas-top">
-            <span>{t("atlas.breadcrumb")}</span>
-            <span>◉　⋯</span>
-          </div>
-          <div className="atlas-heading">
-            <div>
-              <small>{t("atlas.kicker")}</small>
-              <h4>{t("apps.safari.title")}</h4>
-              <p>{t("atlas.subtitle")}</p>
-            </div>
-            <span className="project-tag">{t("atlas.progress")}</span>
-          </div>
-          <div className="atlas-art">
-            <div className="chrome-orbit orbit-one" />
-            <div className="chrome-orbit orbit-two" />
-            <div className="chrome-orbit orbit-three" />
-            <span>{t("atlas.art")}</span>
-            <small>{t("atlas.artCaption")}</small>
-          </div>
-          <div className="atlas-tasks">
-            <span>
-              <i className="task-dot blue" /> {t("atlas.research")}{" "}
-              <b>{t("atlas.complete")}</b>
-            </span>
-            <span>
-              <i className="task-dot purple" /> {t("atlas.design")}{" "}
-              <b>{t("atlas.progress")}</b>
-            </span>
-            <span>
-              <i className="task-dot green" /> {t("atlas.development")}{" "}
-              <b>{t("atlas.next")}</b>
-            </span>
-          </div>
-        </div>
-      </div>
-    );
-  if (id === "notes")
-    return (
-      <div className="notes-body">
-        <aside>
-          <span>{t("apps.notes.name")}</span>
-          <b>
-            {t("notes.all")} <i>{formatNumber(12)}</i>
-          </b>
-          <span>
-            {t("notes.projects")} <i>{formatNumber(5)}</i>
-          </span>
-          <span>
-            {t("notes.personal")} <i>{formatNumber(7)}</i>
-          </span>
-        </aside>
-        <div>
-          <time dateTime={illustrationDate.toISOString()}>
-            {formatDate(illustrationDate, {
-              dateStyle: "long",
-              timeStyle: "short",
-            })}
-          </time>
-          <h4>{t("notes.title")}</h4>
-          <p>{t("notes.intro")}</p>
-          <ul>
-            <li>
-              <i className="checked">✓</i> {t("notes.first")}
-            </li>
-            <li>
-              <i className="checked">✓</i> {t("notes.second")}
-            </li>
-            <li>
-              <i /> {t("notes.third")}
-            </li>
-          </ul>
-          <div className="note-rule" />
-          <p className="note-quiet">{t("notes.quiet")}</p>
-        </div>
-      </div>
-    );
-  if (id === "finder")
-    return (
-      <div className="finder-body">
-        <aside>
-          <small>{t("finder.favorites")}</small>
-          <span>◷ {t("finder.recents")}</span>
-          <span>⌂ {t("finder.desktop")}</span>
-          <b>▱ {t("finder.projects")}</b>
-          <span>↓ {t("finder.downloads")}</span>
-          <span>☁ iCloud Drive</span>
-        </aside>
-        <div className="folders">
-          {(
-            [
-              "Whalu",
-              "design",
-              "photography",
-              "weekend",
-              "archive",
-              "resources",
-            ] as const
-          ).map((name) => (
-            <div key={name}>
-              <i className="folder" />
-              <span>{name === "Whalu" ? name : t(`finder.${name}`)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  if (id === "editor")
-    return (
-      <div className="editor-body">
-        <aside>
-          <small>{t("editor.explorer")}</small>
-          <span>⌄ WHALU</span>
-          <span>　⌄ src</span>
-          <b>　　main.rs</b>
-          <span>　　navigation.rs</span>
-          <span>　Cargo.toml</span>
-        </aside>
-        <div className="code-pane">
-          <span className="code-tab">main.rs　×</span>
-          <pre>
-            <span className="code-comment">// {t("editor.comment")}</span>
-            {"\n\n"}
-            <span className="code-pink">fn</span>{" "}
-            <span className="code-blue">main</span>() {"{"}
-            {"\n"} <span className="code-pink">let</span> desktop =
-            Desktop::current();{"\n\n"} <span className="code-pink">for</span>{" "}
-            window <span className="code-pink">in</span> desktop.windows() {"{"}
-            {"\n"} window.focus();{"\n"} {"}"}
-            {"\n"}
-            {"}"}
-          </pre>
-          <div className="code-status">
-            main* <span>Rust　 UTF-8</span>
-          </div>
-        </div>
-      </div>
-    );
-  return (
-    <div className="terminal-body">
-      <p>
-        <span>~/projects/whalu</span> on main
-      </p>
-      <p>❯ cargo build --release</p>
-      <p className="terminal-dim">　 Compiling whalu v0.5.1</p>
-      <p>
-        <span>　 Finished</span> release profile
-      </p>
-      <p>
-        ❯ <i />
-      </p>
-    </div>
-  );
-}
-
-function MacWindow({
-  index,
-  className = "",
-  style,
-}: {
-  index: number;
-  className?: string;
-  style?: CSSProperties;
-}) {
+function ProductDemo({ reducedMotion }: { reducedMotion: boolean }) {
   const { t } = useLocale();
-  return (
-    <div className={`mac-window ${className}`} style={style} aria-hidden="true">
-      <div className="window-bar">
-        <div className="traffic-lights">
-          <i />
-          <i />
-          <i />
-        </div>
-        {apps[index].id === "safari" ? (
-          <span className="address-bar">
-            ◈　 atlas.local <span>↻</span>
-          </span>
-        ) : (
-          <span>{t(`apps.${apps[index].id}.title`)}</span>
-        )}
-        <span className="window-tools">⊞</span>
-      </div>
-      <WindowBody id={apps[index].id} />
-    </div>
-  );
-}
+  const video = useRef<HTMLVideoElement>(null);
+  const userPaused = useRef(false);
 
-// Match src/overview.rs: full-size centered card; both wheel edges turn right.
-function demoWheelPose(offset: number): CSSProperties {
-  const progress = Math.min(1, Math.abs(offset) / 3);
-  const curve = progress ** 1.25;
-  const slots = [0, 146, 274, 380, 516];
-  return {
-    "--wheel-y": `${Math.sign(offset) * slots[Math.min(4, Math.abs(offset))]}px`,
-    "--wheel-x": `${-12 * curve}px`,
-    "--wheel-scale": 1 - 0.28 * curve,
-    "--wheel-pitch": `${-Math.sign(offset) * 46 * progress}deg`,
-    "--wheel-yaw": `${24 * progress}deg`,
-    "--wheel-depth": `${-70 * curve}px`,
-  } as CSSProperties;
-}
-
-function ProductDemo() {
-  const { t, formatDate } = useLocale();
-  const [selected, setSelected] = useState(2);
-  const desktop = useRef<HTMLDivElement>(null);
-  const canvas = useRef<HTMLDivElement>(null);
-  const scale = useRef(1);
-  const [layers, setLayers] = useState([0, 1, 3, 4, 2]);
-  const select = (index: number) => {
-    const next = Math.max(0, Math.min(apps.length - 1, index));
-    setSelected(next);
-    setLayers((order) => [...order.filter((item) => item !== next), next]);
-  };
-  const windowDrag = useRef<{
-    x: number;
-    y: number;
-    left: number;
-    top: number;
-    node: HTMLElement;
-  } | null>(null);
-  useLayoutEffect(() => {
-    const node = desktop.current!;
-    const update = () => {
-      scale.current = node.clientWidth / 1440;
-      canvas.current?.style.setProperty(
-        "--desktop-scale",
-        String(scale.current),
-      );
-    };
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    update();
-    return () => observer.disconnect();
-  }, []);
-  const selection = useRef(selected);
-  selection.current = selected;
   useEffect(() => {
-    const wheel = canvas.current?.querySelector<HTMLElement>(".desktop-wheel");
-    if (!wheel) return;
-    let distance = 0;
-    const onWheel = (event: WheelEvent) => {
-      if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY))
-        return;
-      event.preventDefault();
-      distance +=
-        event.deltaY *
-        (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? 900 : 1);
-      if (Math.abs(distance) < 35) return;
-      const steps = Math.trunc(distance / 35);
-      distance -= steps * 35;
-      select(selection.current + steps);
+    const node = video.current;
+    if (!node) return;
+    let visible = false;
+    let automaticPause = false;
+    const update = () => {
+      if (!visible || document.hidden || reducedMotion) {
+        if (!node.paused) {
+          automaticPause = true;
+          node.pause();
+        }
+      } else if (!userPaused.current) {
+        void node.play().catch(() => {
+          // Native controls remain available when autoplay is blocked.
+        });
+      }
     };
-    wheel.addEventListener("wheel", onWheel, { passive: false });
-    return () => wheel.removeEventListener("wheel", onWheel);
-  }, []);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const swiped = useRef(false);
-  function keyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-    if (
-      ![
-        "ArrowDown",
-        "ArrowUp",
-        "ArrowRight",
-        "ArrowLeft",
-        "j",
-        "k",
-        "Home",
-        "End",
-      ].includes(event.key)
-    )
-      return;
-    event.preventDefault();
-    event.currentTarget.focus({ preventScroll: true });
-    if (event.key === "Home") return select(0);
-    if (event.key === "End") return select(apps.length - 1);
-    select(
-      (selected +
-        (["ArrowDown", "ArrowRight", "j"].includes(event.key) ? 1 : -1) +
-        apps.length) %
-        apps.length,
+    const onPause = () => {
+      if (automaticPause) automaticPause = false;
+      else userPaused.current = true;
+    };
+    const onPlay = () => {
+      userPaused.current = false;
+    };
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        visible = entry.isIntersecting && entry.intersectionRatio >= 0.2;
+        update();
+      },
+      { threshold: 0.2 },
     );
-  }
-  function endSwipe(event: PointerEvent<HTMLDivElement>) {
-    if (!touchStart.current) return;
-    const x = event.clientX - touchStart.current.x;
-    const y = event.clientY - touchStart.current.y;
-    touchStart.current = null;
-    if (Math.abs(x) > 38 && Math.abs(x) > Math.abs(y) * 1.3) {
-      swiped.current = true;
-      select(selected + (x < 0 ? 1 : -1));
-    }
-  }
+    node.addEventListener("pause", onPause);
+    node.addEventListener("play", onPlay);
+    document.addEventListener("visibilitychange", update);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      node.removeEventListener("pause", onPause);
+      node.removeEventListener("play", onPlay);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [reducedMotion]);
+
   return (
     <div className="product-demo">
       <div className="laptop">
@@ -545,170 +174,31 @@ function ProductDemo() {
           <div className="camera-notch" aria-hidden="true">
             <i />
           </div>
-          <div
-            className="mac-desktop"
-            ref={desktop}
-            id="demo"
-            tabIndex={0}
-            role="region"
-            aria-label={t("demo.label")}
-            onKeyDown={keyDown}
-            onPointerDown={(event) => {
-              swiped.current = false;
-              if (event.pointerType === "touch")
-                touchStart.current = { x: event.clientX, y: event.clientY };
-            }}
-            onClickCapture={(event) => {
-              if (swiped.current) {
-                event.preventDefault();
-                event.stopPropagation();
-                swiped.current = false;
-              }
-            }}
-            onPointerUp={endSwipe}
-            onPointerCancel={() => {
-              touchStart.current = null;
-            }}
-          >
-            <div className="desktop-canvas" ref={canvas}>
-              <Wallpaper />
-              <div className="menu-bar" aria-hidden="true">
-                <span>
-                  <span className="apple-menu"></span>　{" "}
-                  <b>{t(`apps.${apps[selected].id}.name`)}</b>　{" "}
-                  {t("demo.menu")}
-                </span>
-                <span>
-                  <span className="system-menu-icons">W　⌁　▰</span>　{" "}
-                  {formatDate(illustrationDate, {
-                    weekday: "short",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </div>
-              <div className="desktop-windows">
-                {apps.map((app, index) => (
-                  <div
-                    key={app.id}
-                    className={`desktop-live-window live-${app.id}${selected === index ? " is-focused" : ""}`}
-                    style={{ zIndex: layers.indexOf(index) + 1 }}
-                    onPointerDown={() => select(index)}
-                  >
-                    <div
-                      className="window-drag-region"
-                      aria-hidden="true"
-                      onPointerDown={(event) => {
-                        if (event.pointerType !== "mouse" || event.button !== 0)
-                          return;
-                        event.stopPropagation();
-                        event.preventDefault();
-                        select(index);
-                        const node = event.currentTarget.parentElement!;
-                        windowDrag.current = {
-                          x: event.clientX,
-                          y: event.clientY,
-                          left: node.offsetLeft,
-                          top: node.offsetTop,
-                          node,
-                        };
-                        event.currentTarget.setPointerCapture(event.pointerId);
-                      }}
-                      onPointerMove={(event) => {
-                        const drag = windowDrag.current;
-                        if (!drag) return;
-                        const left = Math.max(
-                          170,
-                          Math.min(
-                            1270,
-                            drag.left +
-                              (event.clientX - drag.x) / scale.current,
-                          ),
-                        );
-                        const top = Math.max(
-                          30,
-                          Math.min(
-                            770,
-                            drag.top + (event.clientY - drag.y) / scale.current,
-                          ),
-                        );
-                        drag.node.style.left = `${left}px`;
-                        drag.node.style.top = `${top}px`;
-                      }}
-                      onPointerUp={(event) => {
-                        windowDrag.current = null;
-                        if (
-                          event.currentTarget.hasPointerCapture(event.pointerId)
-                        )
-                          event.currentTarget.releasePointerCapture(
-                            event.pointerId,
-                          );
-                      }}
-                      onLostPointerCapture={() => {
-                        windowDrag.current = null;
-                      }}
-                    />
-                    <MacWindow index={index} />
-                  </div>
-                ))}
-              </div>
-              <div className="desktop-wheel">
-                {apps.map((app, index) => {
-                  const distance = index - selected;
-                  return (
-                    <button
-                      key={app.id}
-                      className={`thumbnail${distance === 0 ? " selected" : ""}`}
-                      style={
-                        {
-                          ...demoWheelPose(distance),
-                          zIndex: 10 - Math.abs(distance),
-                        } as CSSProperties
-                      }
-                      aria-label={t("demo.switch", {
-                        app: t(`apps.${app.id}.name`),
-                      })}
-                      aria-pressed={distance === 0}
-                      tabIndex={distance === 0 ? 0 : -1}
-                      onClick={() => select(index)}
-                    >
-                      <MacWindow index={index} />
-                      <AppBadge index={index} />
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="dock" role="group" aria-label={t("demo.dock")}>
-                {apps.map((app, index) => (
-                  <button
-                    key={app.id}
-                    onClick={() => select(index)}
-                    aria-label={t("demo.switch", {
-                      app: t(`apps.${app.id}.name`),
-                    })}
-                    aria-pressed={selected === index}
-                  >
-                    <AppBadge index={index} />
-                    <i />
-                  </button>
-                ))}
-                <span />
-                <img
-                  src={asset("whalu-icon.png")}
-                  alt="Whalu"
-                  draggable={false}
-                />
-              </div>
-            </div>
+          <div className="demo-screen" id="demo">
+            <video
+              ref={video}
+              className="demo-video"
+              width="1920"
+              height="1248"
+              controls
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              poster={asset("media/whalu-demo-poster.jpg")}
+              aria-label={t("demo.label")}
+            >
+              <source src={asset("media/whalu-demo.mp4")} type="video/mp4" />
+              <a href={asset("media/whalu-demo.mp4")}>
+                {t("demo.download")}
+              </a>
+            </video>
           </div>
         </div>
         <div className="laptop-base" aria-hidden="true">
           <span />
         </div>
       </div>
-      <span className="sr-only" role="status" aria-atomic="true">
-        {t(`apps.${apps[selected].id}.name`)}
-      </span>
     </div>
   );
 }
@@ -858,7 +348,7 @@ function Preview({ reducedMotion }: { reducedMotion: boolean }) {
     >
       <div className="preview-inner">
         <h2 id="preview-heading">{t("hero.learn")}</h2>
-        <ProductDemo />
+        <ProductDemo reducedMotion={reducedMotion} />
       </div>
     </section>
   );
