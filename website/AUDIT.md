@@ -1,6 +1,6 @@
 # Whalu landing page audit
 
-Verified November 3, 2026 after combining the English and Russian copy review with the complete shortcut guide. The existing product video and layout remain in place; publication remains deferred.
+Verified November 3, 2026 after combining the English and Russian copy review with the complete shortcut guide. The existing product video and layout remain in place. GitHub distribution results are recorded below.
 
 ## Copy and localization
 
@@ -65,3 +65,11 @@ The copy changes do not alter native behavior. The required release-app reinstal
 - The universal release package builds both architectures with a macOS 15 deployment target, verifies the archive after extraction, and produces a SHA-256 checksum. Stable tag releases require matching Cargo/bundle versions and a commit already in `main`. CI checks `develop` and `main`; Pages deploys only from `main`.
 - Reinstalled the locally built universal app after stopping Whalu, preserving the previous bundle/configuration/state at `~/Library/Application Support/Whalu/rollback/20261103-190901-github-releases/`. Reset only Whalu’s Accessibility, ScreenCapture, and ListenEvent registrations, confirmed stale entries absent, and re-added the installed bundle with fresh enabled entries. Strict signature and installed/build executable comparison pass.
 - The installed GUI captures real screenshot content for every overlapping fixture. Native focus, live selection, tiling/restore, Space transfer, event-tap creation, and non-key overview rendering pass; the combined suite later stops at the previously documented `No keyboard fixture focus`. Normal Whalu was relaunched through LaunchServices and reports `Whalu running` with one active trackpad listener. Real preview access and activation are complete.
+
+
+## Public GitHub distribution verification
+
+- Published the existing history to `danileph/whalu`, with `develop` as the GitHub default and local working branch. Both branches track `origin`; `main` publishes production changes. HTTPS fetches use the requested repository URL; pushes use the existing account’s SSH key via GitHub’s port-443 endpoint after verifying the host fingerprint.
+- The `v0.5.1` release workflow passed on GitHub and published `Whalu-macOS-universal.zip` plus its checksum. Downloaded the ZIP and checksum through the same public latest-release route used by the landing page: checksum verification, extracted signature verification, both architecture checks, and bundle version `0.5.1` all pass.
+- Development CI passed its complete website and macOS checks. The initial main CI’s website passed; GitHub could not assign its ARM Mac runner and canceled that job with a capacity annotation. A fresh main check was dispatched. The separate Intel release workflow passed all Rust checks and both release builds.
+- GitHub Pages is enabled with Actions as the build source and HTTPS enforced. Site builds pass. The first deployment timed out in `updating_pages`; its failed-job rerun became queued without jobs and GitHub refused force cancellation with HTTP 409. Fresh deployment attempts and a reset of the newly created Pages configuration were attempted. At this verification point the URL still returned HTTP 404, so public site availability is not claimed. A fresh documentation commit supplies a new deployment version for the next attempt.

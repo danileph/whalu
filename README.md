@@ -128,7 +128,7 @@ The [brand assets](assets/README.md) include the glass app icon, silver wordmark
 
 ## Landing page
 
-The React landing page lives in [website/](website/README.md), with a recorded product demo in a MacBook frame and a GitHub Pages deployment workflow. Run `npm ci` and `npm run dev` from that directory to preview it locally. The public site is [danileph.github.io/whalu](https://danileph.github.io/whalu/). GitHub Pages publishes changes from `main`; see the website README for details.
+The React landing page lives in [website/](website/README.md), with a recorded product demo in a MacBook frame and a GitHub Pages deployment workflow. Run `npm ci` and `npm run dev` from that directory to preview it locally. The configured site URL is [danileph.github.io/whalu](https://danileph.github.io/whalu/). GitHub Pages publishes changes from `main`; see the [deployment workflow](https://github.com/danileph/whalu/actions/workflows/pages.yml) for its current status and the website README for details.
 
 ## Development and releases
 
