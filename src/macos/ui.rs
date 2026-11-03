@@ -79,7 +79,7 @@ pub struct Ui {
     content: Retained<NSView>,
     wheel_content: Retained<NSView>,
     wheel_mask: Retained<CALayer>,
-    overflow: RefCell<BTreeMap<u64, Retained<NSImageView>>>,
+    overflow: RefCell<BTreeMap<u64, AppBadge>>,
     sources: RefCell<BTreeMap<u64, Source>>,
     icons: RefCell<BTreeMap<i32, Option<Retained<NSImage>>>>,
     cards: RefCell<BTreeMap<u64, Card>>,
@@ -350,8 +350,8 @@ impl Ui {
             card.view.removeFromSuperview();
         }
         self.cards.borrow_mut().clear();
-        for view in self.overflow.borrow_mut().values() {
-            view.removeFromSuperview();
+        for badge in self.overflow.borrow_mut().values() {
+            badge.view.removeFromSuperview();
         }
         self.overflow.borrow_mut().clear();
         self.reset_layout.set(true);
@@ -1337,29 +1337,29 @@ impl Ui {
         let icons = wheel.overflow(height, order.len(), selected);
         let hidden: BTreeSet<_> = icons.iter().map(|icon| order[icon.index]).collect();
         let mut overflow = self.overflow.borrow_mut();
-        overflow.retain(|id, view| {
+        overflow.retain(|id, badge| {
             if hidden.contains(id) {
                 true
             } else {
-                view.removeFromSuperview();
+                badge.view.removeFromSuperview();
                 false
             }
         });
         let sources = self.sources.borrow();
         for icon in icons {
             let id = order[icon.index];
-            let view = overflow.entry(id).or_insert_with(|| {
-                let view = NSImageView::initWithFrame(NSImageView::alloc(mtm), NSRect::ZERO);
-                view.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-                view.setWantsLayer(true);
-                view.setAccessibilityElement(true);
-                self.content.addSubview(&view);
-                view
+            let badge = overflow.entry(id).or_insert_with(|| {
+                let badge = AppBadge::new(mtm);
+                badge.view.setAccessibilityElement(true);
+                self.content.addSubview(&badge.view);
+                badge
             });
-            view.setFrame(rect(icon.x, icon.y, icon.size, icon.size));
-            view.setImage(sources.get(&id).and_then(|source| source.icon.as_deref()));
-            if view.image().is_none() {
-                view.setImage(
+            badge.place(rect(icon.x, icon.y, icon.size, icon.size));
+            badge
+                .icon
+                .setImage(sources.get(&id).and_then(|source| source.icon.as_deref()));
+            if badge.icon.image().is_none() {
+                badge.icon.setImage(
                     NSImage::imageNamed(&NSString::from_str("NSApplicationIcon")).as_deref(),
                 );
             }
@@ -1368,8 +1368,8 @@ impl Ui {
                     "{} — {} (outside thumbnail view)",
                     window.app_name, window.title
                 ));
-                view.setAccessibilityLabel(Some(&label));
-                view.setToolTip(Some(&label));
+                badge.view.setAccessibilityLabel(Some(&label));
+                badge.view.setToolTip(Some(&label));
             }
         }
         drop(sources);
@@ -1382,7 +1382,7 @@ impl Ui {
             card_bounds,
             icons: overflow
                 .iter()
-                .map(|(id, view)| (*id, view.layer().unwrap()))
+                .map(|(id, badge)| (*id, badge.view.layer().unwrap()))
                 .collect(),
             cards: cards
                 .iter()
@@ -1619,6 +1619,37 @@ impl ThumbnailClicks {
             .map(|(id, _)| (map.context, id, map.epoch))
     }
 }
+/// Shared badge styling for thumbnail cards and the hidden-window stacks.
+struct AppBadge {
+    view: Retained<NSView>,
+    icon: Retained<NSImageView>,
+}
+impl AppBadge {
+    fn new(mtm: MainThreadMarker) -> Self {
+        let view = NSView::initWithFrame(NSView::alloc(mtm), rect(0., 0., 28., 28.));
+        view.setWantsLayer(true);
+        let layer = view.layer().unwrap();
+        layer.setCornerRadius(9.);
+        layer.setZPosition(1.);
+        layer.setBackgroundColor(Some(&NSColor::colorWithWhite_alpha(0.96, 1.).CGColor()));
+        let icon = NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(2., 2., 24., 24.));
+        icon.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+        view.addSubview(&icon);
+        Self { view, icon }
+    }
+
+    fn place(&self, frame: NSRect) {
+        let scale = frame.size.width / 28.;
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.view.setFrame(frame);
+        self.view.layer().unwrap().setCornerRadius(9. * scale);
+        self.icon
+            .setFrame(rect(2. * scale, 2. * scale, 24. * scale, 24. * scale));
+        CATransaction::commit();
+    }
+}
+
 /// Views survive selection changes so Core Animation can retarget their live
 /// presentation layers during fast swipes and reversals.
 struct Card {
@@ -1667,15 +1698,8 @@ impl Card {
         body.addSubview(&image);
         view.addSubview(&body);
         // Badge belongs to the card, so it follows the same perspective and scale.
-        let badge = NSView::initWithFrame(NSView::alloc(mtm), rect(50., -12., 28., 28.));
-        badge.setWantsLayer(true);
-        let badge_layer = badge.layer().unwrap();
-        badge_layer.setCornerRadius(9.);
-        badge_layer.setZPosition(1.);
-        badge_layer.setBackgroundColor(Some(&NSColor::colorWithWhite_alpha(0.96, 1.).CGColor()));
-        let icon = NSImageView::initWithFrame(NSImageView::alloc(mtm), rect(2., 2., 24., 24.));
-        icon.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-        badge.addSubview(&icon);
+        let AppBadge { view: badge, icon } = AppBadge::new(mtm);
+        badge.setFrameOrigin(NSPoint::new(50., -12.));
         view.addSubview(&badge);
         CATransaction::commit();
         Self {

@@ -151,8 +151,8 @@ impl Wheel {
             return wheel;
         }
         loop {
-            let rows = count.saturating_sub(wheel.radius + 1).div_ceil(5).min(3);
-            let inset = (48. + rows as f64 * 28.).min(height / 4.).max(EDGE_INSET);
+            let rows = count.saturating_sub(wheel.radius + 1).div_ceil(3).min(3);
+            let inset = (48. + rows as f64 * 32.).min(height / 4.).max(EDGE_INSET);
             let mut next = Self::with_inset(height, inset, reduce_motion);
             next.overflow_height = (inset - 40.).min((height / 2. - 56.).max(0.));
             if next.radius == wheel.radius {
@@ -162,30 +162,33 @@ impl Wheel {
         }
     }
 
-    /// One icon per hidden window, in stack order, wrapping left to right.
-    /// Very long stacks use smaller icons within the same bounded edge bands.
+    /// The first hidden window stays at the badge column. New hidden windows
+    /// push onto the right end; reversing navigation pops the newest entry first.
     pub fn overflow(&self, height: f64, count: usize, selected: usize) -> Vec<OverflowIcon> {
         let start = selected.saturating_sub(self.radius);
         let end = (selected + self.radius + 1).min(count);
         let mut icons = Vec::with_capacity(start + count - end);
+        let anchor = self.pose(self.radius as f64).x;
+        let width = 168. - anchor;
         for (range, above) in [(0..start, true), (end..count, false)] {
             let count = range.len();
             if count == 0 {
                 continue;
             }
-            let columns =
-                ((count as f64 * 144. / self.overflow_height).sqrt().ceil() as usize).max(5);
+            let columns = ((count as f64 * (width + 14.) / self.overflow_height)
+                .sqrt()
+                .ceil() as usize)
+                .max(3);
             let rows = count.div_ceil(columns);
-            let step = (144. / columns as f64)
+            let step = (width / (columns as f64 - 0.5))
                 .min(self.overflow_height / rows as f64)
-                .min(28.);
-            for (slot, index) in range.enumerate() {
+                .min(32.);
+            for slot in 0..count {
+                let index = if above { slot } else { range.end - slot - 1 };
                 let row = slot / columns;
                 let column = slot % columns;
-                let row_count = (count - row * columns).min(columns);
-                let size = step * 24. / 28.;
-                let x =
-                    88. - row_count as f64 * step / 2. + column as f64 * step + (step - size) / 2.;
+                let size = step * 28. / 32.;
+                let x = anchor - size / 2. + column as f64 * step;
                 let top = if above {
                     height - (self.overflow_height - rows as f64 * step) / 2.
                 } else {
@@ -311,11 +314,11 @@ mod tests {
                         let represented: Vec<_> = icons.iter().map(|icon| icon.index).collect();
                         assert_eq!(
                             represented,
-                            (0..start).chain(end..count).collect::<Vec<_>>()
+                            (0..start).chain((end..count).rev()).collect::<Vec<_>>()
                         );
                         for icon in &icons {
-                            assert!(icon.size > 0. && icon.size <= 24.);
-                            assert!(icon.x >= 16. && icon.x + icon.size <= 160.);
+                            assert!(icon.size > 0. && icon.size <= 28.);
+                            assert!(icon.x >= 16. && icon.x + icon.size <= 168.);
                             let (low, high) = if icon.index < start {
                                 (height - wheel.overflow_height, height)
                             } else {
@@ -323,6 +326,13 @@ mod tests {
                             };
                             assert!(icon.y >= low - 1e-9);
                             assert!(icon.y + icon.size <= high + 1e-9);
+                        }
+                        for first in [icons.first(), icons.get(start)].into_iter().flatten() {
+                            assert!(
+                                (first.x + first.size / 2. - wheel.pose(wheel.radius as f64).x)
+                                    .abs()
+                                    < 1e-9
+                            );
                         }
                         for pair in icons.windows(2) {
                             let [a, b] = pair else { unreachable!() };
@@ -338,6 +348,36 @@ mod tests {
                             assert!(height / 2. + pose.y + min >= wheel.overflow_height);
                             assert!(height / 2. + pose.y + max <= height - wheel.overflow_height);
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_stacks_push_right_and_pop_the_newest_window_in_both_directions() {
+        for reduced in [false, true] {
+            for height in [132., 400., 787., 1400.] {
+                let count = 40;
+                let wheel = Wheel::for_windows(height, count, reduced);
+                let stacks = |selected: usize| {
+                    let icons = wheel.overflow(height, count, selected);
+                    let (above, below): (Vec<_>, Vec<_>) = icons
+                        .iter()
+                        .map(|icon| icon.index)
+                        .partition(|index| *index < selected);
+                    (above, below)
+                };
+                for selected in 0..count - 1 {
+                    let (above, below) = stacks(selected);
+                    let (next_above, next_below) = stacks(selected + 1);
+                    if selected >= wheel.radius {
+                        assert_eq!(next_above.last(), Some(&(selected - wheel.radius)));
+                        assert_eq!(&next_above[..next_above.len() - 1], above);
+                    }
+                    if !below.is_empty() {
+                        assert_eq!(below.last(), Some(&(selected + wheel.radius + 1)));
+                        assert_eq!(&below[..below.len() - 1], next_below);
                     }
                 }
             }
