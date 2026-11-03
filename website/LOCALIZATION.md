@@ -2,6 +2,10 @@
 
 The site ships with English and Russian. The header's native language selector works with a keyboard and screen reader, displays each language's own name, and switches content without remounting the video. All interface copy, accessible labels, and page metadata live in `src/i18n/messages/`.
 
+## Copy style
+
+Write each language as a complete page in its own voice. Keep claims concrete, instructions in the order users perform them, and button labels specific to the action. Russian need not follow English sentence structure or wording. Use “overview” / «обзор окон» for the window selector and “previews” / «миниатюры» for its images; avoid exposing the internal “stack” model. Retain recognizable macOS setting names, app names, and key labels. Check instructions against current behavior: navigation switches windows immediately; releasing the keys closes the overview. Review headings, metadata, accessible labels, success messages, and errors alongside the main copy.
+
 ## Add a language
 
 1. Copy `src/i18n/messages/en.ts` to a new catalog, export it under a new name, and use `satisfies Messages` as in `ru.ts`. English defines the message-key schema. TypeScript reports missing or unknown keys.

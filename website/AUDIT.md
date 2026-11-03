@@ -1,6 +1,14 @@
 # Whalu landing page audit
 
-Verified November 3, 2026 after completing the shortcut guide. Scope is the static website; publication remains deferred.
+Verified November 3, 2026 after combining the English and Russian copy review with the complete shortcut guide. The existing product video and layout remain in place; publication remains deferred.
+
+## Copy and localization
+
+- Reworked the headlines, descriptions, navigation, control instructions, shortcut labels, installation guide, permission explanations, copy feedback, motion settings, and accessible labels. Each language uses its own phrasing and consistent terms. Standard app names and familiar interface labels remain unchanged.
+- Split the arrow shortcuts into window navigation (up/down) and navigation within the current app (left/right). The instructions now explain immediate switching and overview dismissal rather than incorrectly promising a switch on release.
+- Kept the initial HTML title, description, and Open Graph copy aligned with the English catalog. Removed the outdated interactive-demo wording from the JavaScript fallback.
+- Production browser checks covered English and Russian at 320, 390, 768, and 1280 CSS pixels: no horizontal page overflow or overlapping shortcut labels. Reviewed the English controls and Russian installation layout visually, confirmed both languages’ copy-success feedback, and checked language switching and localized metadata. No browser console errors or warnings were recorded.
+- `npm run build` passes TypeScript, all eight localization tests, and production asset generation. `git diff --check` passes.
 
 ## Shortcut guide
 
@@ -27,4 +35,23 @@ Verified November 3, 2026 after completing the shortcut guide. Scope is the stat
 - Language switching updates the video label without replacing the video element or resetting its playback position.
 - The local video URL supports byte-range requests: a 1 KiB request returns HTTP 206 with 1 KiB of data.
 
-The native macOS app bundle, dependencies, permissions, and installed executable are unaffected by this website-only change.
+The copy changes do not alter native behavior. The required release-app reinstall and permission verification are recorded below.
+
+
+## Required native installation check
+
+- Rebuilt the release bundle with `./scripts/build-app.sh` and reinstalled `~/Applications/Whalu.app` after stopping the old process. The prior bundle, configuration, and state are preserved at `~/Library/Application Support/Whalu/rollback/20261103-180530-website-copy/`.
+- Strict signature verification and byte comparison of the installed and freshly built executable pass (SHA-256 `c2c254586eeaa879b374e22f0a46c1d0b04fd145141491106f91045d3393722f`).
+- Reset only Whalu’s Accessibility, ScreenCapture, and ListenEvent registrations. Confirmed stale entries were gone, re-added the installed bundle in all three panes, and verified each fresh entry enabled. The user completed the required Touch ID authentication. Whalu was stopped throughout registration; other applications’ grants were preserved.
+- The LaunchServices-launched installed GUI native smoke test captured real content from every overlapping fixture window, confirming preview authorization. Native focus, live selection, tiling/restore, adjacent-Space transfer, event-tap creation, and non-key overview rendering passed. The later keyboard-fixture check stopped at the previously documented `No keyboard fixture focus` failure; the complete native suite is not claimed as passed.
+- Relaunched normal Whalu through LaunchServices. Its own startup log reports `Whalu running` and one active trackpad listener. Final strict signature verification and comparison with the freshly built executable pass. Activation and real window-preview access are complete.
+
+
+## Integration into main
+
+- Preserved the complete shortcut guide from `a8abcf6` while integrating the copy review from `2af4387`. All shortcut definitions match the existing guide exactly; labels and descriptions use the revised terminology, including side-button navigation, preview dragging, native Window-menu support, and the Fn + Control + R restore alternative.
+- The merged website passes `npm run build` and all eight localization tests. Production browser checks in both languages at 320, 850, and 1280 CSS pixels confirm 22 shortcut rows and 38 key combinations, with no clipped rows/combinations or horizontal page overflow.
+- Rebuilt and reinstalled the release app from the main checkout. The previous bundle, configuration, and state are preserved at `~/Library/Application Support/Whalu/rollback/20261103-184905-merge-copy-main/`. Strict signature verification and executable comparison pass (SHA-256 `019383ad18078186f0a51f6d17a373e6712c7fbf02f6c09681c34a02f04175e6`).
+- Reset only Whalu’s Accessibility, ScreenCapture, and ListenEvent registrations, confirmed the stale entries were removed, and re-added the installed bundle with fresh enabled entries in all three panes. The macOS authentication prompt was completed before registration. Whalu was stopped throughout; other applications’ grants were preserved.
+- The installed GUI native smoke test captured real screenshot content for every overlapping fixture and passed enumeration, focus, live selection, and native left-half/restore checks. It then stopped at `Center retained the filled rectangle`; the full native suite is not claimed as passed. No native application code changed in this merge.
+- Normal Whalu was relaunched through LaunchServices and reports `Whalu running` with one active trackpad listener. Final strict signature verification and installed/build executable comparison pass; activation and window-preview access are complete.

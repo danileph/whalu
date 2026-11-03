@@ -67,11 +67,11 @@ test("unsupported or empty preferences safely fall back to English", () => {
 test("named interpolation translates labels without losing Unicode or parameter values", () => {
   assert.equal(
     createTranslator("ru")("demo.switch", { app: "Заметки" }),
-    "Переключиться на Заметки",
+    "Открыть окно Заметки",
   );
   assert.equal(
     createTranslator("en")("install.compatibility", { version: "0.5.1" }),
-    "macOS 15 or later · v0.5.1",
+    "Version 0.5.1 · macOS 15+",
   );
   assert.equal(
     formatMessage("{count} / {total}", { count: 0, total: 5 }),
