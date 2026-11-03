@@ -1,6 +1,6 @@
 # Whalu website
 
-A local, static React + TypeScript landing page built with Vite. Four sections cover the introduction, product demo, controls, and installation. The fixed header and hero share a black background. The first screen contains the title and install action over a silver-blue window-light effect. The MacBook preview begins below the fold and is reached by scrolling or the How it works button.
+A local, static React + TypeScript landing page built with Vite. Four sections cover the introduction, product demo, controls, and installation. The fixed header and hero share a black background. The first screen contains the title and install action over a silver-blue window-light effect. The MacBook preview begins below the fold and is reached by scrolling or the Watch the demo button.
 
 ## Work locally
 

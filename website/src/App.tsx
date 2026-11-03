@@ -347,7 +347,7 @@ function Preview({ reducedMotion }: { reducedMotion: boolean }) {
       aria-labelledby="preview-heading"
     >
       <div className="preview-inner">
-        <h2 id="preview-heading">{t("hero.learn")}</h2>
+        <h2 id="preview-heading">{t("demo.title")}</h2>
         <ProductDemo reducedMotion={reducedMotion} />
       </div>
     </section>
@@ -358,7 +358,8 @@ const shortcutGroups = [
   {
     id: "navigate",
     rows: [
-      ["shortcuts.previousNext", ["⌃", "⌥", "↑ ↓ ← →"]],
+      ["shortcuts.previousNext", ["⌃", "⌥", "↑ ↓"]],
+      ["shortcuts.sameApp", ["⌃", "⌥", "← →"]],
       ["shortcuts.next", ["⌘", "Tab"]],
       ["shortcuts.previous", ["⌘", "`"]],
     ],
