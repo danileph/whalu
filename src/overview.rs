@@ -59,6 +59,16 @@ impl Pose {
 pub struct Wheel {
     pub radius: usize,
     positions: Vec<f64>,
+    /// Space reserved for compact icons at each end, in display points.
+    pub overflow_height: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OverflowIcon {
+    pub index: usize,
+    pub x: f64,
+    pub y: f64,
+    pub size: f64,
 }
 
 /// Provisional drag order. Commit only on a valid drop; cancellation is free.
@@ -95,7 +105,7 @@ impl ReorderDrag {
     /// Pointer y increases downward, in logical points within the overview.
     pub fn update(&mut self, y: f64) {
         self.y = y;
-        let wheel = Wheel::new(self.height, self.reduce_motion);
+        let wheel = Wheel::for_windows(self.height, self.original.len(), self.reduce_motion);
         let start = self.center.saturating_sub(wheel.radius);
         let end = (self.center + wheel.radius + 1).min(self.original.len());
         self.destination = (start..end)
@@ -130,13 +140,77 @@ impl ReorderDrag {
 
 impl Wheel {
     pub fn new(height: f64, reduce_motion: bool) -> Self {
+        Self::with_inset(height, EDGE_INSET, reduce_motion)
+    }
+
+    /// Reserve compact rows only when the stack exceeds the full thumbnail set.
+    /// Use the worst-case end of the stack so navigation never changes capacity.
+    pub fn for_windows(height: f64, count: usize, reduce_motion: bool) -> Self {
+        let mut wheel = Self::new(height, reduce_motion);
+        if count <= wheel.radius + 1 {
+            return wheel;
+        }
+        loop {
+            let rows = count.saturating_sub(wheel.radius + 1).div_ceil(5).min(3);
+            let inset = (48. + rows as f64 * 28.).min(height / 4.).max(EDGE_INSET);
+            let mut next = Self::with_inset(height, inset, reduce_motion);
+            next.overflow_height = (inset - 40.).min((height / 2. - 56.).max(0.));
+            if next.radius == wheel.radius {
+                return next;
+            }
+            wheel = next;
+        }
+    }
+
+    /// One icon per hidden window, in stack order, wrapping left to right.
+    /// Very long stacks use smaller icons within the same bounded edge bands.
+    pub fn overflow(&self, height: f64, count: usize, selected: usize) -> Vec<OverflowIcon> {
+        let start = selected.saturating_sub(self.radius);
+        let end = (selected + self.radius + 1).min(count);
+        let mut icons = Vec::with_capacity(start + count - end);
+        for (range, above) in [(0..start, true), (end..count, false)] {
+            let count = range.len();
+            if count == 0 {
+                continue;
+            }
+            let columns =
+                ((count as f64 * 144. / self.overflow_height).sqrt().ceil() as usize).max(5);
+            let rows = count.div_ceil(columns);
+            let step = (144. / columns as f64)
+                .min(self.overflow_height / rows as f64)
+                .min(28.);
+            for (slot, index) in range.enumerate() {
+                let row = slot / columns;
+                let column = slot % columns;
+                let row_count = (count - row * columns).min(columns);
+                let size = step * 24. / 28.;
+                let x =
+                    88. - row_count as f64 * step / 2. + column as f64 * step + (step - size) / 2.;
+                let top = if above {
+                    height - (self.overflow_height - rows as f64 * step) / 2.
+                } else {
+                    (self.overflow_height + rows as f64 * step) / 2.
+                };
+                icons.push(OverflowIcon {
+                    index,
+                    x,
+                    y: top - (row + 1) as f64 * step + (step - size) / 2.,
+                    size,
+                });
+            }
+        }
+        icons
+    }
+
+    fn with_inset(height: f64, inset: f64, reduce_motion: bool) -> Self {
         // Keep the working set based on logical display height, independently
         // of Retina density or the system motion preference.
-        let available = (height / 2. - EDGE_INSET).max(0.);
+        let available = (height / 2. - inset).max(0.);
         let radius = (available / (CARD_HEIGHT * MEAN_SCALE + CAPACITY_GAP)).floor() as usize;
         let mut wheel = Self {
             radius,
             positions: vec![0.; radius + 2],
+            overflow_height: 0.,
         };
         if radius > 0 {
             let mut slots = Vec::with_capacity(radius);
@@ -225,10 +299,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn overflow_represents_each_hidden_window_without_covering_thumbnails() {
+        for reduced in [false, true] {
+            for height in [132., 240., 400., 787., 800., 1400., 3440.] {
+                for count in [1, 2, 4, 7, 10, 15, 40, 100, 1000] {
+                    let wheel = Wheel::for_windows(height, count, reduced);
+                    for selected in [0, count / 2, count - 1] {
+                        let icons = wheel.overflow(height, count, selected);
+                        let start = selected.saturating_sub(wheel.radius);
+                        let end = (selected + wheel.radius + 1).min(count);
+                        let represented: Vec<_> = icons.iter().map(|icon| icon.index).collect();
+                        assert_eq!(
+                            represented,
+                            (0..start).chain(end..count).collect::<Vec<_>>()
+                        );
+                        for icon in &icons {
+                            assert!(icon.size > 0. && icon.size <= 24.);
+                            assert!(icon.x >= 16. && icon.x + icon.size <= 160.);
+                            let (low, high) = if icon.index < start {
+                                (height - wheel.overflow_height, height)
+                            } else {
+                                (0., wheel.overflow_height)
+                            };
+                            assert!(icon.y >= low - 1e-9);
+                            assert!(icon.y + icon.size <= high + 1e-9);
+                        }
+                        for pair in icons.windows(2) {
+                            let [a, b] = pair else { unreachable!() };
+                            assert!(
+                                a.x + a.size <= b.x + 1e-9
+                                    || b.y + b.size <= a.y + 1e-9
+                                    || a.y + a.size <= b.y + 1e-9
+                            );
+                        }
+                        for index in start..end {
+                            let pose = wheel.pose(index as f64 - selected as f64);
+                            let (min, max) = bounds_with_badge(pose, reduced);
+                            assert!(height / 2. + pose.y + min >= wheel.overflow_height);
+                            assert!(height / 2. + pose.y + max <= height - wheel.overflow_height);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn drag_inserts_in_both_directions_without_mutating_original() {
         let order = [1, 2, 3, 4];
         let mut drag = ReorderDrag::new(&order, 2, Some(2), 800., false).unwrap();
-        let wheel = Wheel::new(800., false);
+        let wheel = Wheel::for_windows(800., order.len(), false);
         drag.update(400. - wheel.pose(2.).y);
         assert_eq!(drag.order(), [1, 3, 4, 2]);
         drag.update(400. - wheel.pose(-1.).y);
@@ -242,7 +362,7 @@ mod tests {
         let order: Vec<_> = (1..=40).collect();
         for reduce_motion in [false, true] {
             for height in [132., 400., 787., 1400., 3440.] {
-                let wheel = Wheel::new(height, reduce_motion);
+                let wheel = Wheel::for_windows(height, order.len(), reduce_motion);
                 for center in [0, 20, 39] {
                     let mut drag = ReorderDrag::new(
                         &order,

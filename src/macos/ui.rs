@@ -13,7 +13,7 @@ use objc2_quartz_core::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -77,6 +77,9 @@ pub struct Ui {
     pub delegate: Retained<Delegate>,
     panel: Retained<HudPanel>,
     content: Retained<NSView>,
+    wheel_content: Retained<NSView>,
+    wheel_mask: Retained<CALayer>,
+    overflow: RefCell<BTreeMap<u64, Retained<NSImageView>>>,
     sources: RefCell<BTreeMap<u64, Source>>,
     icons: RefCell<BTreeMap<i32, Option<Retained<NSImage>>>>,
     cards: RefCell<BTreeMap<u64, Card>>,
@@ -111,6 +114,12 @@ impl Ui {
             content.setWantsLayer(true);
             content.setClipsToBounds(false);
             panel.setContentView(Some(&content));
+            let wheel_content = NSView::initWithFrame(NSView::alloc(mtm), content.bounds());
+            wheel_content.setWantsLayer(true);
+            let wheel_mask = CALayer::new();
+            wheel_mask.setBackgroundColor(Some(&NSColor::blackColor().CGColor()));
+            wheel_content.layer().unwrap().setMask(Some(&wheel_mask));
+            content.addSubview(&wheel_content);
             let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.);
             if let Some(button) = status.button(mtm) {
                 button.setTitle(&NSString::from_str("W"));
@@ -147,6 +156,9 @@ impl Ui {
                 delegate,
                 panel,
                 content,
+                wheel_content,
+                wheel_mask,
+                overflow: RefCell::new(BTreeMap::new()),
                 sources: RefCell::new(BTreeMap::new()),
                 icons: RefCell::new(BTreeMap::new()),
                 cards: RefCell::new(BTreeMap::new()),
@@ -338,6 +350,10 @@ impl Ui {
             card.view.removeFromSuperview();
         }
         self.cards.borrow_mut().clear();
+        for view in self.overflow.borrow_mut().values() {
+            view.removeFromSuperview();
+        }
+        self.overflow.borrow_mut().clear();
         self.reset_layout.set(true);
     }
     pub fn show(&self, engine: &Engine) {
@@ -624,6 +640,7 @@ impl Ui {
             let height = (bounds.size.height - 16.).max(132.);
             let wheel = Wheel::new(height, reduce_motion());
             let count = 2 * wheel.radius + 3;
+            let wheel = Wheel::for_windows(height, count, reduce_motion());
             let display = discovery::display_id(&screen);
             let mut sample = Engine::new(8.);
             let mut ids: Vec<_> = (1..=count as u64).collect();
@@ -656,7 +673,8 @@ impl Ui {
                 176.,
                 height,
             );
-            if self.panel.frame() != expected || self.cards.borrow().len() != count {
+            let expected_cards = count.min(2 * wheel.radius + 3);
+            if self.panel.frame() != expected || self.cards.borrow().len() != expected_cards {
                 return Err(
                     "Overview did not fit the focused display's current usable frame".into(),
                 );
@@ -793,6 +811,17 @@ impl Ui {
                 if !contains(frame, NSPoint::new(point.x, desktop_top - point.y)) {
                     continue;
                 }
+                let targets = self.clicks.targets.borrow();
+                let map = targets.as_ref().unwrap();
+                let root =
+                    unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+                let layer = self.cards.borrow()[&id].view.layer().unwrap();
+                let visible = unsafe { layer.presentationLayer() }.unwrap_or(layer);
+                let clipped = visible.convertPoint_toLayer(local, Some(&root));
+                if !contains(map.card_bounds, clipped) {
+                    continue;
+                }
+                drop(targets);
                 let actual = self.clicks.route(1, point);
                 if actual
                     != (ClickRoute::Pointer {
@@ -834,6 +863,7 @@ impl Ui {
                 }
             }
         }
+        self.verify_overflow_clicks()?;
         let frame = self.panel.frame();
         let top = NSScreen::screens(self.panel.mtm())
             .firstObject()
@@ -853,6 +883,36 @@ impl Ui {
         println!(
             "PASS: animated thumbnail/badge hit testing, empty-area passthrough and complete click ownership"
         );
+        Ok(())
+    }
+
+    fn verify_overflow_clicks(&self) -> Result<(), String> {
+        let targets = self.clicks.targets.borrow();
+        let map = targets.as_ref().ok_or("Overview is hidden")?;
+        let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+        for (id, layer) in &map.icons {
+            let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
+            let bounds = visible.bounds();
+            let local = NSPoint::new(bounds.size.width / 2., bounds.size.height / 2.);
+            let point = visible.convertPoint_toLayer(local, Some(&root));
+            let point = NSPoint::new(
+                point.x + map.frame.origin.x,
+                map.desktop_top - point.y - map.frame.origin.y,
+            );
+            if self.clicks.hit(point) != Some((map.context, *id, map.epoch)) {
+                return Err(format!("Hidden-window icon {id} did not select its window"));
+            }
+            self.clicks.route(1, point);
+            if self.clicks.route(2, point)
+                != (ClickRoute::Select {
+                    context: map.context,
+                    window: *id,
+                    epoch: map.epoch,
+                })
+            {
+                return Err("Hidden-window icon click was not completed".into());
+            }
+        }
         Ok(())
     }
     pub fn sync_sources(&self, discovery: &Discovery) {
@@ -986,6 +1046,9 @@ impl Ui {
         if kind == 1 {
             let targets = self.clicks.targets.borrow();
             let map = targets.as_ref()?;
+            if map.icons.iter().any(|(id, _)| *id == window) {
+                return None;
+            }
             let (_, layer) = map.cards.iter().find(|(id, _)| *id == window)?;
             let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
             let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
@@ -1073,7 +1136,7 @@ impl Ui {
         let height = (b.size.height - 16.).max(132.);
         // Layout and rendering must use the same system motion preference.
         let reduce_motion = reduce_motion();
-        let wheel = Wheel::new(height, reduce_motion);
+        let wheel = Wheel::for_windows(height, order.len(), reduce_motion);
         let focused = selection
             .filter(|id| ctx.order.contains(id))
             .or(ctx.focused);
@@ -1098,6 +1161,17 @@ impl Ui {
         let animate = self.panel.isVisible() && self.panel.frame() == frame && !reset_layout;
         self.panel.setFrame_display(frame, false);
         self.content.setFrame(rect(0., 0., 176., height));
+        self.wheel_content.setFrame(self.content.bounds());
+        let card_bounds = rect(
+            0.,
+            wheel.overflow_height,
+            176.,
+            height - 2. * wheel.overflow_height,
+        );
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        self.wheel_mask.setFrame(card_bounds);
+        CATransaction::commit();
         let mut cards = self.cards.borrow_mut();
         let direction = cards
             .iter()
@@ -1165,7 +1239,7 @@ impl Ui {
             let fresh = !cards.contains_key(id);
             let card = cards.entry(*id).or_insert_with(|| {
                 let mut card = Card::new(mtm);
-                self.content.addSubview(&card.view);
+                self.wheel_content.addSubview(&card.view);
                 // Start newly entering cards just outside the visible wheel.
                 let entrance = if animate {
                     wheel.pose(
@@ -1260,12 +1334,56 @@ impl Ui {
             source.updated = None;
         }
         drop(sources);
+        let icons = wheel.overflow(height, order.len(), selected);
+        let hidden: BTreeSet<_> = icons.iter().map(|icon| order[icon.index]).collect();
+        let mut overflow = self.overflow.borrow_mut();
+        overflow.retain(|id, view| {
+            if hidden.contains(id) {
+                true
+            } else {
+                view.removeFromSuperview();
+                false
+            }
+        });
+        let sources = self.sources.borrow();
+        for icon in icons {
+            let id = order[icon.index];
+            let view = overflow.entry(id).or_insert_with(|| {
+                let view = NSImageView::initWithFrame(NSImageView::alloc(mtm), NSRect::ZERO);
+                view.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+                view.setWantsLayer(true);
+                view.setAccessibilityElement(true);
+                self.content.addSubview(&view);
+                view
+            });
+            view.setFrame(rect(icon.x, icon.y, icon.size, icon.size));
+            view.setImage(sources.get(&id).and_then(|source| source.icon.as_deref()));
+            if view.image().is_none() {
+                view.setImage(
+                    NSImage::imageNamed(&NSString::from_str("NSApplicationIcon")).as_deref(),
+                );
+            }
+            if let Some(window) = engine.windows.get(&id) {
+                let label = NSString::from_str(&format!(
+                    "{} — {} (outside thumbnail view)",
+                    window.app_name, window.title
+                ));
+                view.setAccessibilityLabel(Some(&label));
+                view.setToolTip(Some(&label));
+            }
+        }
+        drop(sources);
         *self.clicks.targets.borrow_mut() = Some(ClickMap {
             context: engine.current,
             epoch: self.visibility_epoch(),
             frame,
             desktop_top,
             root: self.content.layer().unwrap(),
+            card_bounds,
+            icons: overflow
+                .iter()
+                .map(|(id, view)| (*id, view.layer().unwrap()))
+                .collect(),
             cards: cards
                 .iter()
                 .filter(|(_, card)| card.retiring.is_none())
@@ -1347,6 +1465,8 @@ struct ClickMap {
     desktop_top: f64,
     root: Retained<CALayer>,
     cards: Vec<(u64, Retained<CALayer>)>,
+    card_bounds: NSRect,
+    icons: Vec<(u64, Retained<CALayer>)>,
 }
 impl ClickMap {
     fn local(&self, point: NSPoint) -> NSPoint {
@@ -1474,6 +1594,16 @@ impl ThumbnailClicks {
             return None;
         }
         let root = unsafe { map.root.presentationLayer() }.unwrap_or_else(|| map.root.clone());
+        for (id, layer) in &map.icons {
+            let visible = unsafe { layer.presentationLayer() }.unwrap_or_else(|| layer.clone());
+            let local = visible.convertPoint_fromLayer(point, Some(&root));
+            if contains(visible.bounds(), local) {
+                return Some((map.context, *id, map.epoch));
+            }
+        }
+        if !contains(map.card_bounds, point) {
+            return None;
+        }
         map.cards
             .iter()
             .filter_map(|(id, layer)| {
