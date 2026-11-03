@@ -4,6 +4,8 @@
 
 # Whalu
 
+[Website](https://danileph.github.io/whalu/) · [Download for Mac](https://github.com/danileph/whalu/releases/latest/download/Whalu-macOS-universal.zip) · [Release notes](https://github.com/danileph/whalu/releases/latest)
+
 Whalu provides individual-window navigation, a temporary overview, stack reordering, and shortcuts for native macOS window tiling. macOS owns window sizes, tiling margins, multi-window arrangements, and previous-size restoration. Whalu never automatically repositions background windows.
 
 Every window has its own entry in a Space-local stack. Reordering changes that list without changing focus or window geometry. The focused window can also move to the previous or next regular desktop on its display, and the desktop follows the window.
@@ -46,6 +48,12 @@ Hover at the left edge of any screen to open its Windows overview without changi
 Holding the mouse button in another app temporarily hides the overview and suspends window discovery and focus changes. Releasing it refreshes the window list after 90 ms. This keeps synchronous Accessibility queries out of native window dragging; dragging thumbnails inside the overview still reorders the stack.
 
 ## Install and run
+
+Download the [latest universal ZIP](https://github.com/danileph/whalu/releases/latest/download/Whalu-macOS-universal.zip), open it, move Whalu to Applications, and launch it. It supports Apple silicon and Intel Macs on macOS 15 or later. Quit Whalu before replacing an existing installation.
+
+Release builds are ad-hoc signed, without Apple notarization. If macOS blocks the app, review [Apple’s instructions for opening an unnotarized app](https://support.apple.com/102445). The release includes a SHA-256 checksum. Whalu guides you through its permissions after opening; updates can require removing and re-adding its entries.
+
+To build from source, install Rust and Apple’s Command Line Tools, clone this repository, and run:
 
 ```sh
 ./scripts/install.sh
@@ -120,7 +128,17 @@ The [brand assets](assets/README.md) include the glass app icon, silver wordmark
 
 ## Landing page
 
-The React landing page lives in [website/](website/README.md), with a recorded product demo in a MacBook frame and a GitHub Pages deployment workflow. Run `npm ci` and `npm run dev` from that directory to preview it locally. Publishing can be configured later; see the website README for the steps.
+The React landing page lives in [website/](website/README.md), with a recorded product demo in a MacBook frame and a GitHub Pages deployment workflow. Run `npm ci` and `npm run dev` from that directory to preview it locally. The public site is [danileph.github.io/whalu](https://danileph.github.io/whalu/). GitHub Pages publishes changes from `main`; see the website README for details.
+
+## Development and releases
+
+Use `develop` for ongoing work. It is the repository’s default branch; `main` holds published changes. CI checks the website, Rust formatting, tests, Clippy, and the macOS build on both branches and their pull requests. GitHub Pages deploys only from `main`.
+
+To publish a stable app release, update the version in `Cargo.toml` and `assets/Info.plist` on `develop`, increment `CFBundleVersion`, run the required checks, and merge the changes into `main`. Push `main`, then create and push an annotated `vX.Y.Z` tag at that commit. `.github/workflows/release.yml` rejects tags outside `main` or with mismatched versions, builds both Mac architectures, verifies the signed universal archive, and publishes the ZIP and checksum to GitHub Releases. The landing page’s `/releases/latest/download/Whalu-macOS-universal.zip` link follows new stable releases automatically.
+
+For a local release archive, install both Rust targets with `~/.cargo/bin/rustup target add aarch64-apple-darwin x86_64-apple-darwin`, then run `RELEASE_TAG=vX.Y.Z ./scripts/package-release.sh` with the current version. Archives are written to `dist/`. The ordinary `./scripts/build-app.sh` remains a build for the current Mac; `--universal` builds both architectures.
+
+These builds use ad-hoc signing. Developer ID signing and Apple notarization are not configured; adding them requires the maintainer’s Apple credentials and a separate signing setup.
 
 ## Verification
 

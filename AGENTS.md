@@ -1,5 +1,11 @@
 # Agent instructions
 
+## Branches
+
+- Use `develop` for ongoing development. Start feature branches from `develop` and merge them back there.
+- Keep `main` for published changes. Promote `develop` to `main` when the user requests a release or publication; GitHub Pages deploys only from `main`.
+- Stable releases use `vX.Y.Z` tags on commits already in `main`. Keep `Cargo.toml` and `assets/Info.plist` versions aligned before tagging.
+
 ## Apply each development iteration
 
 - After every iteration that changes application code, dependencies, bundled assets, or build configuration, run the appropriate checks, rebuild the release app with `./scripts/build-app.sh`, and reinstall it at `~/Applications/Whalu.app` before reporting completion.

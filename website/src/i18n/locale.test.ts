@@ -70,8 +70,8 @@ test("named interpolation translates labels without losing Unicode or parameter 
     "Открыть окно Заметки",
   );
   assert.equal(
-    createTranslator("en")("install.compatibility", { version: "0.5.1" }),
-    "Version 0.5.1 · macOS 15+",
+    formatMessage("Version {version}", { version: "0.5.1" }),
+    "Version 0.5.1",
   );
   assert.equal(
     formatMessage("{count} / {total}", { count: 0, total: 5 }),

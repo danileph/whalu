@@ -528,6 +528,30 @@ kbd {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+.download-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px 20px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.install-guide .download-actions .button {
+  color: #fff;
+  background: #111;
+  text-decoration: none;
+}
+.install-guide .download-signing {
+  font-size: 12px;
+}
+.source-build {
+  margin-top: 24px;
+}
+.source-build summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
 .install-command {
   display: flex;
   align-items: center;
