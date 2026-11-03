@@ -6,8 +6,11 @@ import { catalogs, supportedLocales } from "./i18n/catalogs";
 import type { Locale } from "./i18n/catalogs";
 
 const repository = (
-  import.meta.env.VITE_REPOSITORY_URL as string | undefined
-)?.replace(/\/$/, "");
+  (import.meta.env.VITE_REPOSITORY_URL as string | undefined) ||
+  "https://github.com/danileph/whalu"
+).replace(/\/$/, "");
+const latestRelease = `${repository}/releases/latest`;
+const download = `${latestRelease}/download/Whalu-macOS-universal.zip`;
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
 
 function Icon({
@@ -471,43 +474,57 @@ function Install() {
   return (
     <section className="install-section section-pad" id="get-whalu">
       <div className="install-heading">
-        <h2>{t("nav.get")}</h2>
+        <h2>{t("install.title")}</h2>
         <span className="compatibility">
-          {t("install.compatibility", { version: "0.5.1" })}
+          {t("install.compatibility")}
         </span>
       </div>
       <div className="install-guide">
         <div>
-          <h3>{t("install.build")}</h3>
-          <p>
-            {repository ? (
-              <>
-                {t("install.cloneBefore")}{" "}
-                <a href={repository} target="_blank" rel="noreferrer">
-                  {t("install.repository")}
-                </a>{" "}
-                {t("install.cloneAfter")}
-              </>
-            ) : (
-              t("install.local")
-            )}
-          </p>
-          <div className="install-command">
-            <code>./scripts/install.sh</code>
-            <button
-              onClick={copy}
-              aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
-            >
-              <Icon name={copied ? "check" : "copy"} />
-            </button>
+          <h3>{t("download.title")}</h3>
+          <p>{t("download.instructions")}</p>
+          <div className="download-actions">
+            <a className="button" href={download}>{t("nav.get")}</a>
+            <a href={latestRelease}>{t("download.releases")}</a>
           </div>
-          <small role="status">
-            {copied
-              ? t("install.copied")
-              : error
-                ? t("install.copyError")
-                : t("install.requires")}
-          </small>
+          <p className="download-signing">
+            {t("download.signing")} {" "}
+            <a href="https://support.apple.com/102445" target="_blank" rel="noreferrer">
+              {t("download.appleHelp")}
+            </a>
+          </p>
+          <details className="source-build">
+            <summary>{t("install.build")}</summary>
+            <p>
+              {repository ? (
+                <>
+                  {t("install.cloneBefore")}{" "}
+                  <a href={repository} target="_blank" rel="noreferrer">
+                    {t("install.repository")}
+                  </a>{" "}
+                  {t("install.cloneAfter")}
+                </>
+              ) : (
+                t("install.local")
+              )}
+            </p>
+            <div className="install-command">
+              <code>./scripts/install.sh</code>
+              <button
+                onClick={copy}
+                aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
+              >
+                <Icon name={copied ? "check" : "copy"} />
+              </button>
+            </div>
+            <small role="status">
+              {copied
+                ? t("install.copied")
+                : error
+                  ? t("install.copyError")
+                  : t("install.requires")}
+            </small>
+          </details>
         </div>
         <div>
           <h3>{t("install.permissions")}</h3>
@@ -595,7 +612,7 @@ function ProductNav() {
             )}
           </nav>
           <LanguageSelector />
-          <a className="button button-small" href="#get-whalu">
+          <a className="button button-small" href={download}>
             {t("nav.get")}
           </a>
         </div>
@@ -645,7 +662,7 @@ export function App() {
               </h1>
               <p className="hero-description">{t("hero.description")}</p>
               <div className="hero-actions">
-                <a className="button" href="#get-whalu">
+                <a className="button" href={download}>
                   {t("nav.get")}
                 </a>
                 <a className="text-link" href="#how-it-works">
