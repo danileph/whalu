@@ -1913,7 +1913,7 @@ fn overview_buttons(runtime: &mut Runtime, tx: &Sender<Event>, ids: &[u64]) -> R
         runtime.render();
         runtime.ui.verify_onscreen()?;
         let epoch = runtime.ui.visibility_epoch();
-        for (button, expected) in [(4, ids[2]), (3, ids[1])] {
+        for (button, expected) in [(3, ids[2]), (4, ids[1])] {
             if !route(&mut tap, 25, button) || !route(&mut tap, 25, button) {
                 return Err(format!(
                     "{source} overview did not capture side-button down"

@@ -6,7 +6,7 @@ use whalu::{
 #[test]
 fn back_and_forward_navigate_once_only_when_overview_is_visible() {
     let mut buttons = OverviewButtons::default();
-    for (button, command) in [(3, Command::FocusPrevious), (4, Command::FocusNext)] {
+    for (button, command) in [(3, Command::FocusNext), (4, Command::FocusPrevious)] {
         assert_eq!(buttons.route(false, 25, button), ButtonRoute::Pass);
         assert_eq!(buttons.route(false, 26, button), ButtonRoute::Pass);
         assert_eq!(
@@ -24,7 +24,7 @@ fn ownership_follows_button_down_through_dismissal_and_reopening() {
     let mut buttons = OverviewButtons::default();
     assert_eq!(
         buttons.route(true, 25, 3),
-        ButtonRoute::Consume(Some(Command::FocusPrevious))
+        ButtonRoute::Consume(Some(Command::FocusNext))
     );
     assert_eq!(buttons.route(false, 27, 3), ButtonRoute::Consume(None));
     assert_eq!(buttons.route(false, 26, 3), ButtonRoute::Consume(None));
@@ -34,7 +34,7 @@ fn ownership_follows_button_down_through_dismissal_and_reopening() {
     assert_eq!(buttons.route(true, 26, 4), ButtonRoute::Pass);
     assert_eq!(
         buttons.route(true, 25, 4),
-        ButtonRoute::Consume(Some(Command::FocusNext))
+        ButtonRoute::Consume(Some(Command::FocusPrevious))
     );
 }
 

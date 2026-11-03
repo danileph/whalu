@@ -69,8 +69,8 @@ pub struct OverviewButtons {
 impl OverviewButtons {
     pub fn route(&mut self, visible: bool, kind: u32, button: i64) -> ButtonRoute {
         let (index, command) = match button {
-            3 => (0, Command::FocusPrevious),
-            4 => (1, Command::FocusNext),
+            3 => (0, Command::FocusNext),
+            4 => (1, Command::FocusPrevious),
             _ => return ButtonRoute::Pass,
         };
         match kind {
