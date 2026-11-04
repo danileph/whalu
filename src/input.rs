@@ -116,6 +116,9 @@ impl ShortcutRouter {
     pub fn key(&mut self, bindings: &[Binding], key: u16, flags: u64, down: bool) -> KeyRoute {
         // Keep the original mapping through repeat/release, even if modifiers
         // are released first or configuration is reloaded while a key is held.
+        if down && self.held.get(&key) == Some(&Command::FocusRecent) {
+            return KeyRoute::Consume(None);
+        }
         let command = if down {
             self.held.get(&key).copied().or_else(|| {
                 if flags & (1 << 23) != 0 && ![123, 124, 125, 126].contains(&key) {

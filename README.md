@@ -18,6 +18,7 @@ Every window has its own entry in a Space-local stack. Reordering changes that l
 | --- | --- | --- |
 | Focus previous / next window | Control + Option + Up / Down | Control + Option + K / J |
 | Focus next / previous window | Command + Tab / grave accent (`) | — |
+| Switch to the last used window | Command + Esc | — |
 | Focus previous / next window of the active app | Control + Option + Left / Right | Control + Option + H / L |
 | Move focused window up in stack | Control + Option + Command + Up | Control + Option + Command + K |
 | Move focused window down in stack | Control + Option + Command + Down | Control + Option + Command + J |
@@ -38,6 +39,8 @@ Every window has its own entry in a Space-local stack. Reordering changes that l
 Hold Control + Option to show the overview; release either modifier to dismiss. Click a thumbnail or app badge, use Control + Option + mouse wheel, or swipe with three fingers to navigate. Vertical swipes select individual windows; horizontal swipes do not switch windows. Control + Option + arrows and H/J/K/L navigate windows; adding Command keeps the separate stack-edit and Space-transfer actions. Command + Tab moves down the window stack; Command + grave accent (`) moves up, replacing the native actions for those exact combinations. The overview opens immediately and stays visible while Command or either navigation key remains held. After a quick press and release, it stays visible for 650 ms, matching short three-finger swipes. Rapid separate presses navigate immediately, keep the same overview open, and restart that delay after the final release. Mouse-wheel navigation works while the shortcut session is held. The old mode-toggle shortcut is no longer captured. Control + arrows, two-finger scrolling outside overview navigation, and native four-finger gestures remain available.
 
 Center first restores macOS’s pre-tiling size, then centers the window, so a filled window does not stay desktop-sized.
+
+Command + Esc toggles between the two most recently focused windows in the active display and Space. It works across apps and between windows of the same app, skips windows that are no longer visible, and does not open the overview.
 
 Tiling shortcuts directly invoke the foreground app's native Window-menu leaf actions through Accessibility, locating their Fn + Control key equivalents (with Shift for arrangements). The menu bar and submenus stay closed. Actions are cached per process, and stale references are rediscovered after failures. A bounded background queue performs lookup and invocation so a busy target app cannot block Whalu’s input loop; requests are discarded if their focused window changes. Whalu does not synthesize Fn events or compute window rectangles. Native Fn + Control + R remains available alongside the custom Control + Command + N restore alias. Apps must support the corresponding native command. Repeating a half shortcut keeps that native half; the former quarter-cycling behavior is removed. See [Apple's native tiling shortcuts](https://support.apple.com/en-gb/guide/mac-help/mchl9674d0b0/26/mac/26).
 
@@ -100,7 +103,7 @@ Legacy `overlay_brightness`, `gap`, and `magnetic` values are accepted and ignor
 
 Set `gestures = false` for overview and modifier-wheel operation without three-finger navigation.
 
-Bindings use physical macOS keycodes and exact modifier combinations. A supplied `bindings` array replaces the defaults. Removed actions (`group_next`, `group_previous`, and the former group-local `left`, `down`, `up`, `right`) must be removed from older custom configurations. Generate and check the current schema with:
+Bindings use physical macOS keycodes and exact modifier combinations. A supplied `bindings` array replaces the defaults. To add Command + Esc to a custom array, bind action `recent` to keycode `53` with `command = true`. Removed actions (`group_next`, `group_previous`, and the former group-local `left`, `down`, `up`, `right`) must be removed from older custom configurations. Generate and check the current schema with:
 
 ```sh
 ~/.cargo/bin/cargo run -- --print-config > whalu.example.toml

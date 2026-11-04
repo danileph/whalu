@@ -12,6 +12,29 @@ const SHIFT: u64 = 1 << 17;
 const FN: u64 = 1 << 23;
 
 #[test]
+fn command_escape_switches_once_per_press_without_opening_the_overview() {
+    let config = Config::default();
+    let mut router = ShortcutRouter::default();
+    let command = Modifiers::from_flags(COMMAND);
+    for flags in [0, COMMAND | SHIFT, COMMAND | OPTION, COMMAND | FN] {
+        assert_eq!(
+            router.key(&config.bindings, 53, flags, true),
+            KeyRoute::Pass
+        );
+    }
+    for _ in 0..2 {
+        assert_eq!(
+            router.key(&config.bindings, 53, COMMAND, true),
+            KeyRoute::Consume(Some(Command::FocusRecent))
+        );
+        assert!(!router.overview_held(command, config.overlay_modifiers));
+        assert_eq!(router.key(&[], 53, COMMAND, true), KeyRoute::Consume(None));
+        assert_eq!(router.key(&[], 53, 0, false), KeyRoute::Consume(None));
+    }
+    assert_eq!(router.key(&[], 53, COMMAND, true), KeyRoute::Pass);
+}
+
+#[test]
 fn command_switching_owns_repeat_release_overview_and_wheel_navigation() {
     use whalu::scroll::{WheelRoute, WheelRouter};
 
@@ -100,7 +123,7 @@ fn overview_ownership_preserves_custom_bindings_modifiers_and_simultaneous_keys(
 fn screenshot_shortcuts_route_to_stack_spaces_and_native_tiling() {
     let config = Config::default();
     config.validate().unwrap();
-    assert_eq!(config.bindings.len(), 37);
+    assert_eq!(config.bindings.len(), 38);
     for (keys, command) in [
         (&[126, 40][..], Command::StackUp),
         (&[125, 38][..], Command::StackDown),
@@ -227,6 +250,31 @@ fn engine() -> Engine {
     }
     engine.set_display_visible(1, 1, &[1, 2, 3, 4], Some(3));
     engine
+}
+
+#[test]
+fn recent_window_switching_follows_focus_instead_of_stack_order() {
+    let mut engine = engine();
+    let visible = [1, 2, 3, 4];
+    assert!(engine.command(Command::FocusRecent).is_empty());
+
+    // Focus changes can be observed from the OS or accepted from Whalu.
+    engine.set_display_visible(1, 1, &visible, Some(1));
+    engine.set_display_visible(1, 1, &visible, Some(4));
+    engine.focus(4);
+    assert!(engine.reorder(1, 2));
+    assert_eq!(engine.command(Command::FocusRecent), [Effect::Focus(1)]);
+    engine.focus(1);
+    assert_eq!(engine.command(Command::FocusRecent), [Effect::Focus(4)]);
+
+    // Skip a minimized window and a closed window, then stay in the new Space.
+    engine.set_display_visible(1, 1, &[1, 2, 3], Some(1));
+    assert_eq!(engine.command(Command::FocusRecent), [Effect::Focus(3)]);
+    engine.windows.remove(&3);
+    engine.set_display_visible(1, 1, &[1, 2], Some(1));
+    assert!(engine.command(Command::FocusRecent).is_empty());
+    engine.set_display_visible(1, 2, &[1, 2], Some(2));
+    assert!(engine.command(Command::FocusRecent).is_empty());
 }
 
 #[test]

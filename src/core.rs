@@ -29,11 +29,31 @@ pub struct Context {
     pub focused: Option<WindowId>,
     pub last_focused: Option<WindowId>,
     pub history: Vec<WindowId>,
+    #[serde(skip)]
+    recent_focus: Vec<WindowId>,
+}
+impl Context {
+    fn record_focus(&mut self, id: WindowId) {
+        self.focused = Some(id);
+        self.last_focused = Some(id);
+        if self.recent_focus.last() != Some(&id) {
+            self.recent_focus.retain(|entry| *entry != id);
+            self.recent_focus.push(id);
+        }
+    }
+    fn recent_target(&self) -> Option<WindowId> {
+        self.recent_focus
+            .iter()
+            .rev()
+            .copied()
+            .find(|id| Some(*id) != self.focused && self.order.contains(id))
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     FocusNext,
     FocusPrevious,
+    FocusRecent,
     AppNext,
     AppPrevious,
     ToggleMode,
@@ -95,6 +115,7 @@ impl Engine {
             .collect();
         let ctx = self.contexts.entry(context).or_default();
         ctx.history.retain(|id| self.windows.contains_key(id));
+        ctx.recent_focus.retain(|id| self.windows.contains_key(id));
         for id in ids {
             if live.contains(id) && !ctx.history.contains(id) {
                 ctx.history.push(*id);
@@ -108,7 +129,7 @@ impl Engine {
             .collect();
         ctx.focused = focused.filter(|id| live.contains(id));
         if let Some(id) = ctx.focused {
-            ctx.last_focused = Some(id);
+            ctx.record_focus(id);
         }
     }
     pub fn focus(&mut self, id: WindowId) {
@@ -118,8 +139,7 @@ impl Engine {
         if !ctx.order.contains(&id) {
             return;
         }
-        ctx.focused = Some(id);
-        ctx.last_focused = Some(id);
+        ctx.record_focus(id);
     }
     /// Move one visible window, preserving hidden history entries and native focus.
     pub fn reorder(&mut self, id: WindowId, destination: usize) -> bool {
@@ -158,6 +178,7 @@ impl Engine {
             Command::FocusPrevious | Command::AppPrevious => {
                 remembered.or(ctx.order.last().copied())
             }
+            Command::FocusRecent => ctx.recent_target(),
             _ => None,
         };
         target.map(|id| vec![Effect::Focus(id)]).unwrap_or_default()
@@ -174,6 +195,7 @@ impl Engine {
         };
         let ctx = self.context().unwrap();
         let target = match cmd {
+            Command::FocusRecent => ctx.recent_target(),
             Command::FocusNext | Command::FocusPrevious => {
                 step(&ctx.order, id, matches!(cmd, Command::FocusNext))
             }

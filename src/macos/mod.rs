@@ -858,6 +858,8 @@ impl Runtime {
         self.navigation_display = discovery::pointer_display(self.mtm);
     }
     fn prepare_command(&mut self, command: Command) {
+        let recent = command == Command::FocusRecent;
+        let pinned = self.navigation_display.is_some();
         let navigation = matches!(
             command,
             Command::FocusNext | Command::FocusPrevious | Command::AppNext | Command::AppPrevious
@@ -875,10 +877,10 @@ impl Runtime {
                 return;
             }
         } else {
-            // Stack edits and Space transfers act on the actual focused window.
+            // Recent-window switching, stack edits, and Space transfers use the focused display.
             self.navigation_display = None;
         }
-        if (navigation || matches!(command, Command::Native(_)))
+        if (navigation || (recent && !pinned) || matches!(command, Command::Native(_)))
             && !self.modal
             && self.refresh_navigation_focus()
         {

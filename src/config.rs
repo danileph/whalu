@@ -35,6 +35,7 @@ pub struct Binding {
 pub enum Action {
     Next,
     Previous,
+    Recent,
     AppNext,
     AppPrevious,
     ToggleMode,
@@ -59,6 +60,7 @@ impl Action {
         match self {
             Self::Next => Command::FocusNext,
             Self::Previous => Command::FocusPrevious,
+            Self::Recent => Command::FocusRecent,
             Self::AppNext => Command::AppNext,
             Self::AppPrevious => Command::AppPrevious,
             Self::StackUp => Command::StackUp,
@@ -100,24 +102,15 @@ impl Default for Config {
             shift: true,
             ..positioning
         };
+        let command = Modifiers {
+            command: true,
+            ..Default::default()
+        };
         let mut bindings = vec![];
         for (keys, action, modifiers) in [
-            (
-                &[48][..],
-                Action::Next,
-                Modifiers {
-                    command: true,
-                    ..Default::default()
-                },
-            ),
-            (
-                &[50][..],
-                Action::Previous,
-                Modifiers {
-                    command: true,
-                    ..Default::default()
-                },
-            ),
+            (&[48][..], Action::Next, command),
+            (&[50][..], Action::Previous, command),
+            (&[53][..], Action::Recent, command),
             (&[126, 40][..], Action::Previous, base),
             (&[125, 38][..], Action::Next, base),
             (&[123, 4][..], Action::AppPrevious, base),
