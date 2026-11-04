@@ -513,15 +513,16 @@ kbd {
   font-size: 12px;
 }
 .install-guide {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 36px;
+  max-width: 520px;
 }
 .install-guide p {
   margin-top: 12px;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+.install-guide > p:first-child {
+  margin-top: 0;
 }
 .install-guide a {
   color: var(--ink);
@@ -591,23 +592,6 @@ kbd {
   color: var(--muted);
   font-size: 11px;
 }
-.install-guide .privacy-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  font-size: 11px;
-  margin-top: 17px;
-}
-.privacy-note svg {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-}
-.install-section > .text-link {
-  grid-column: 2;
-  justify-self: start;
-  font-size: 12px;
-}
 .site-footer {
   max-width: 1120px;
   padding: 22px 40px;
@@ -652,9 +636,6 @@ kbd {
     grid-template-columns: 190px minmax(0, 1fr);
     gap: 28px;
   }
-  .install-guide {
-    gap: 24px;
-  }
 }
 @media (max-width: 850px) {
   .shortcut-sheet {
@@ -676,12 +657,6 @@ kbd {
   }
   .install-section {
     grid-template-columns: 1fr;
-  }
-  .install-section > .text-link {
-    grid-column: 1;
-  }
-  .install-guide {
-    gap: 36px;
   }
   .control-methods {
     gap: 22px;
@@ -828,10 +803,6 @@ kbd {
   }
   .install-section {
     gap: 26px;
-  }
-  .install-guide {
-    grid-template-columns: 1fr;
-    gap: 28px;
   }
   .site-footer {
     padding: 22px 24px;

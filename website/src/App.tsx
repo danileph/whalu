@@ -24,7 +24,6 @@ function Icon({
     | "keyboard"
     | "trackpad"
     | "mouse"
-    | "shield"
     | "globe";
 }) {
   const paths: Record<string, ReactNode> = {
@@ -59,12 +58,6 @@ function Icon({
       <>
         <rect x="6" y="2" width="12" height="20" rx="6" />
         <path d="M12 2v8M6 10h12" />
-      </>
-    ),
-    shield: (
-      <>
-        <path d="m12 2 8 3v6c0 5-8 11-8 11S4 16 4 11V5Z" />
-        <path d="m8 11 3 3 5-6" />
       </>
     ),
   };
@@ -480,71 +473,39 @@ function Install() {
         </span>
       </div>
       <div className="install-guide">
-        <div>
-          <h3>{t("download.title")}</h3>
-          <p>{t("download.instructions")}</p>
-          <div className="download-actions">
-            <a className="button" href={download}>{t("nav.get")}</a>
-            <a href={latestRelease}>{t("download.releases")}</a>
-          </div>
-          <p className="download-signing">
-            {t("download.signing")} {" "}
-            <a href="https://support.apple.com/102445" target="_blank" rel="noreferrer">
-              {t("download.appleHelp")}
+        <p>{t("download.instructions")}</p>
+        <div className="download-actions">
+          <a className="button" href={download}>{t("nav.get")}</a>
+          <a href={latestRelease}>{t("download.releases")}</a>
+        </div>
+        <p className="download-signing">{t("download.signing")}</p>
+        <details className="source-build">
+          <summary>{t("install.build")}</summary>
+          <p>
+            {t("install.cloneBefore")}{" "}
+            <a href={repository} target="_blank" rel="noreferrer">
+              {t("install.repository")}
             </a>
+            {" "}{t("install.cloneAfter")}
           </p>
-          <details className="source-build">
-            <summary>{t("install.build")}</summary>
-            <p>
-              {repository ? (
-                <>
-                  {t("install.cloneBefore")}{" "}
-                  <a href={repository} target="_blank" rel="noreferrer">
-                    {t("install.repository")}
-                  </a>{" "}
-                  {t("install.cloneAfter")}
-                </>
-              ) : (
-                t("install.local")
-              )}
-            </p>
-            <div className="install-command">
-              <code>./scripts/install.sh</code>
-              <button
-                onClick={copy}
-                aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
-              >
-                <Icon name={copied ? "check" : "copy"} />
-              </button>
-            </div>
-            <small role="status">
-              {copied
-                ? t("install.copied")
-                : error
-                  ? t("install.copyError")
-                  : t("install.requires")}
-            </small>
-          </details>
-        </div>
-        <div>
-          <h3>{t("install.permissions")}</h3>
-          <p>{t("install.permissionsText")}</p>
-          <p className="privacy-note">
-            <Icon name="shield" />
-            {t("privacy.description")}
-          </p>
-        </div>
+          <div className="install-command">
+            <code>./scripts/install.sh</code>
+            <button
+              onClick={copy}
+              aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
+            >
+              <Icon name={copied ? "check" : "copy"} />
+            </button>
+          </div>
+          <small role="status">
+            {copied
+              ? t("install.copied")
+              : error
+                ? t("install.copyError")
+                : t("install.requires")}
+          </small>
+        </details>
       </div>
-      {repository && (
-        <a
-          className="text-link"
-          href={repository}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {t("install.source")} <Icon name="chevron" />
-        </a>
-      )}
     </section>
   );
 }
