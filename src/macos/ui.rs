@@ -6,7 +6,7 @@ use objc2::{
 };
 use objc2_app_kit::*;
 use objc2_foundation::{
-    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    NSData, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
 };
 use objc2_quartz_core::{
     CABasicAnimation, CALayer, CAMediaTiming, CAMediaTimingFunction, CATransaction, CATransform3D,
@@ -27,6 +27,16 @@ const SLIDE_DURATION: f64 = 0.18;
 const MOVE_DURATION: f64 = 0.18;
 
 const SLIDE_DISTANCE: f64 = 24.;
+
+pub(super) fn status_image() -> Retained<NSImage> {
+    let data = NSData::with_bytes(include_bytes!("../../assets/Whalu-menu-bar.png"));
+    let image =
+        NSImage::initWithData(NSImage::alloc(), &data).expect("valid Whalu menu bar artwork");
+    image.setSize(NSSize::new(18., 16.));
+    image.setTemplate(true);
+    image.setAccessibilityDescription(Some(&NSString::from_str("Whalu")));
+    image
+}
 
 define_class!(
     #[unsafe(super=NSObject)]
@@ -122,7 +132,7 @@ impl Ui {
             content.addSubview(&wheel_content);
             let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.);
             if let Some(button) = status.button(mtm) {
-                button.setTitle(&NSString::from_str("W"));
+                button.setImage(Some(&status_image()));
                 button.setToolTip(Some(&NSString::from_str("Whalu Window Manager")));
             }
             let menu = NSMenu::new(mtm);

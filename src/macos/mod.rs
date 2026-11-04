@@ -2399,7 +2399,7 @@ pub fn run(config: Config, config_path: std::path::PathBuf) -> Result<(), String
         runtime.ui.gesture_status(runtime.gestures.is_some());
         runtime.reconcile(false);
         eprintln!(
-            "Whalu running. Hold Control + Option to navigate; use the W menu to refresh or quit."
+            "Whalu running. Hold Control + Option to navigate; use the Whalu menu to refresh or quit."
         );
         app.run();
         *DISPATCH.lock().unwrap() = None;

@@ -4,6 +4,7 @@ Whalu uses a dark graphite panel with a centered, compact symbol of three froste
 
 - `Whalu.png`: 1024×1024 opaque, square app-icon master. The graphite background reaches all four edges; the panes and orbit occupy about 56% of the width.
 - `Whalu.icns`: macOS icon containing standard and Retina representations from 16 to 1024 pixels. Used by the app bundle and setup window.
+- `Whalu-menu-bar.png` is a transparent, monochrome trace of the panes and orbit. AppKit displays the 36×32 image at 18×16 points and tints it for the menu bar.
 - `Whalu-wordmark.png`: horizontal icon and silver Whalu wordmark on charcoal, used in the project README.
 
 Keep the app-icon master fully opaque and square, without an inset rounded tile, external margin, or pale backing. macOS applies the icon mask. The previous transparent artwork caused macOS to place the icon inside an additional pale rounded square. See [Apple’s app-icon guidance](https://developer.apple.com/design/human-interface-guidelines/app-icons).

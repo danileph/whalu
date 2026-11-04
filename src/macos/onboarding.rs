@@ -127,7 +127,9 @@ pub fn wait(mtm: MainThreadMarker, mask: u64) -> Option<Owned> {
         }
         let status = NSStatusBar::systemStatusBar().statusItemWithLength(-1.);
         if let Some(button) = status.button(mtm) {
-            button.setTitle(&NSString::from_str("W •"));
+            button.setTitle(&NSString::from_str("•"));
+            button.setImage(Some(&super::ui::status_image()));
+            button.setImagePosition(NSCellImagePosition::ImageLeading);
             button.setToolTip(Some(&NSString::from_str("Whalu: permission required")));
         }
         let menu = NSMenu::new(mtm);
