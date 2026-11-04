@@ -509,6 +509,25 @@ function Install() {
           {t("download.github")}
         </a>
       </div>
+      <div className="install-brew">
+        <div className="install-command">
+          <code>{brewInstall}</code>
+          <button
+            type="button"
+            onClick={copy}
+            aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
+            aria-describedby="homebrew-availability"
+          >
+            <Icon name={copied ? "check" : "copy"} />
+          </button>
+        </div>
+        <span className="homebrew-status" id="homebrew-availability">
+          {t("install.brewSoon")}
+        </span>
+      </div>
+      <p className="copy-status" role="status">
+        {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
+      </p>
       <ul className="download-facts" role="list">
         <li><Icon name="chip" /> {t("install.compatibility")}</li>
         <li><Icon name="archive" /> {t("download.format")}</li>
@@ -530,25 +549,6 @@ function Install() {
       </div>
       <div className="install-guide" id="install-guide" hidden={!guideOpen}>
         <p>{t("download.instructions")}</p>
-        <div className="install-brew">
-          <div className="install-command">
-            <code>{brewInstall}</code>
-            <button
-              type="button"
-              onClick={copy}
-              aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
-              aria-describedby="homebrew-availability"
-            >
-              <Icon name={copied ? "check" : "copy"} />
-            </button>
-          </div>
-          <span className="homebrew-status" id="homebrew-availability">
-            {t("install.brewSoon")}
-          </span>
-        </div>
-        <p className="copy-status" role="status">
-          {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
-        </p>
       </div>
     </section>
   );

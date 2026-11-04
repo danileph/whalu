@@ -493,18 +493,18 @@ kbd {
 }
 .install-section {
   max-width: none;
-  padding-block: clamp(44px, 6vw, 76px);
+  padding-block: clamp(34px, 4vw, 52px);
   background: var(--surface);
   text-align: center;
 }
 .install-section h2 {
-  font-size: clamp(38px, 5vw, 60px);
+  font-size: clamp(30px, 3.5vw, 44px);
   font-weight: 700;
 }
 .download-intro {
-  margin-top: 12px;
+  margin-top: 8px;
   color: var(--muted);
-  font-size: clamp(17px, 2.25vw, 25px);
+  font-size: clamp(15px, 1.5vw, 18px);
 }
 .download-actions,
 .download-facts,
@@ -517,18 +517,18 @@ kbd {
 }
 .download-actions {
   align-items: stretch;
-  gap: 14px 36px;
-  margin-top: clamp(24px, 3.25vw, 42px);
+  gap: 10px 18px;
+  margin-top: 22px;
 }
 .download-actions .button {
-  min-height: clamp(58px, 7vw, 88px);
-  padding: 12px clamp(22px, 3vw, 40px);
+  min-height: 56px;
+  padding: 8px clamp(18px, 2.25vw, 28px);
   border-radius: 999px;
-  font-size: clamp(16px, 1.85vw, 23px);
-  gap: clamp(12px, 1.5vw, 20px);
+  font-size: clamp(15px, 1.5vw, 17px);
+  gap: 10px;
 }
 .download-actions svg {
-  width: clamp(22px, 3vw, 34px);
+  width: 22px;
   height: auto;
 }
 .download-button {
@@ -553,35 +553,35 @@ kbd {
   background: var(--paper);
 }
 .download-facts {
-  margin: clamp(26px, 3.5vw, 44px) 0 0;
+  margin: 22px 0 0;
   padding: 0;
   list-style: none;
   color: var(--muted);
-  font-size: clamp(14px, 1.5vw, 18px);
+  font-size: 14px;
 }
 .download-facts li {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding-inline: clamp(12px, 3vw, 42px);
+  gap: 8px;
+  padding-inline: clamp(10px, 2vw, 22px);
 }
 .download-facts li + li {
   border-inline-start: 1px solid var(--line);
 }
 .download-facts svg {
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
 }
 .install-links {
-  gap: 8px clamp(18px, 4vw, 54px);
-  margin-top: clamp(24px, 5vw, 58px);
+  gap: 8px 24px;
+  margin-top: 12px;
 }
 .install-links .text-link {
   min-height: 44px;
   padding: 0;
   gap: 10px;
   color: var(--ink);
-  font-size: clamp(14px, 1.5vw, 18px);
+  font-size: 14px;
   font-weight: 600;
 }
 .install-guide-toggle {
@@ -599,17 +599,12 @@ kbd {
   font-size: 14px;
 }
 .install-brew {
-  gap: 8px 12px;
-  margin-top: 14px;
-  color: var(--ink);
+  gap: 6px 10px;
+  margin-top: 12px;
+  color: var(--muted);
 }
 .homebrew-status {
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--paper);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
 }
 .install-command {
   display: flex;
@@ -617,10 +612,9 @@ kbd {
   justify-content: space-between;
   gap: 4px;
   max-width: 100%;
-  padding: 4px 4px 4px 10px;
+  padding-inline: 10px 2px;
   border: 1px solid #dcdce0;
   border-radius: 8px;
-  background: var(--surface);
 }
 .install-command code {
   font-family: var(--mono);
@@ -634,8 +628,8 @@ kbd {
   color: var(--muted);
   display: grid;
   place-items: center;
-  flex: 0 0 36px;
-  height: 36px;
+  flex: 0 0 32px;
+  height: 32px;
   border-radius: 4px;
 }
 .install-command button:hover {
@@ -647,7 +641,8 @@ kbd {
   height: 16px;
 }
 .copy-status:not(:empty) {
-  margin-top: 8px;
+  margin-top: 4px;
+  color: var(--muted);
   font-size: 12px;
 }
 .site-footer {
@@ -857,7 +852,7 @@ kbd {
     align-items: center;
   }
   .download-actions .button {
-    width: min(100%, 270px);
+    width: min(100%, 224px);
   }
   .download-facts {
     gap: 10px 18px;
@@ -868,10 +863,6 @@ kbd {
   }
   .download-facts li + li {
     border-inline-start: 0;
-  }
-  .download-facts svg {
-    width: 18px;
-    height: 18px;
   }
   .site-footer {
     padding: 22px 24px;
