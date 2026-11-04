@@ -118,13 +118,12 @@ export const ru = {
   "shortcuts.note":
     "Сочетания клавиш можно изменить в файле настроек. Изменение размера и размещение работают, если приложение поддерживает нужные команды в меню «Окно». Fn + Control + R также восстанавливает прежний размер. В macOS выберите четыре пальца для переключения рабочих столов и Mission Control и отключите перетягивание тремя пальцами.",
   "install.title": "Установка Whalu",
-  "download.title": "Универсальный ZIP",
   "download.instructions":
     "Распакуйте ZIP, перенесите Whalu в «Программы» и откройте. Перед обновлением закройте Whalu.",
   "download.releases": "Что нового",
   "download.signing": "Сборка без нотарификации Apple.",
   "install.compatibility": "macOS 15+ · Apple silicon и Intel",
-  "install.brewSoon": "Скоро",
+  "install.brewSoon": "Скоро в Homebrew",
   "install.copy": "Скопировать команду Homebrew",
   "install.copiedLabel": "Команда скопирована",
   "install.copied": "Команда скопирована.",

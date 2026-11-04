@@ -496,49 +496,40 @@ kbd {
   background: var(--surface);
   padding-block: 56px;
 }
-.install-content {
-  max-width: 1040px;
+.install-panel {
+  max-width: 800px;
   margin-inline: auto;
-}
-.install-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px 24px;
-  margin-bottom: 24px;
-}
-.compatibility {
-  color: var(--muted);
-  font-size: 13px;
-}
-.install-options {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
-  gap: 16px;
-}
-.install-card {
-  padding: clamp(16px, 3vw, 28px);
+  padding: clamp(16px, 4vw, 40px);
   border: 1px solid #dcdce0;
   border-radius: 16px;
   background: var(--paper);
+  text-align: center;
 }
-.install-card h3 {
-  font-size: 18px;
+.compatibility {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
 }
-.install-card p {
+.install-instructions,
+.download-signing,
+.copy-status {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
 }
-.install-card h3 + p {
-  margin-top: 6px;
+.install-instructions {
+  margin-top: 18px;
+}
+.download-actions,
+.install-meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 .download-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 18px;
+  margin-top: 22px;
 }
 .download-actions .button {
   padding-inline: 14px;
@@ -556,19 +547,17 @@ kbd {
 .github-button:hover {
   background: var(--surface);
 }
-.release-link {
+.install-meta {
+  gap: 8px 16px;
   margin-top: 12px;
+}
+.release-link,
+.download-signing,
+.copy-status {
   font-size: 12px;
 }
-.install-card .download-signing {
-  margin-top: 8px;
-  font-size: 12px;
-}
-.homebrew-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 12px;
+.download-signing {
+  margin-top: 4px;
 }
 .homebrew-status {
   padding: 3px 9px;
@@ -582,9 +571,9 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 5px 5px 5px 12px;
-  margin-top: 18px;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 4px 4px 10px;
   border: 1px solid #dcdce0;
   border-radius: 8px;
   background: var(--surface);
@@ -592,6 +581,8 @@ kbd {
 .install-command code {
   font-family: var(--mono);
   font-size: 12px;
+  letter-spacing: normal;
+  text-align: start;
   overflow-wrap: anywhere;
 }
 .install-command button {
@@ -611,10 +602,8 @@ kbd {
   width: 16px;
   height: 16px;
 }
-.install-card .copy-status {
-  min-height: 1.6em;
+.copy-status:not(:empty) {
   margin-top: 8px;
-  font-size: 12px;
 }
 .site-footer {
   max-width: 1120px;
@@ -820,10 +809,6 @@ kbd {
   }
   .install-section {
     padding-block: 40px;
-  }
-  .install-options {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
   }
   .site-footer {
     padding: 22px 24px;

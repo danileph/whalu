@@ -117,13 +117,12 @@ export const en = {
   "shortcuts.note":
     "You can change shortcuts in the configuration file. Sizing and arrangements require the current app’s native Window-menu support. Fn + Control + R also restores the previous size. In macOS, use four fingers for Spaces and Mission Control and turn off three-finger dragging.",
   "install.title": "Install Whalu",
-  "download.title": "Universal ZIP",
   "download.instructions":
     "Unzip Whalu, move it to Applications, and open it. Quit Whalu before updating.",
   "download.releases": "Release notes",
   "download.signing": "This build ships without Apple notarization.",
   "install.compatibility": "macOS 15+ · Apple silicon and Intel",
-  "install.brewSoon": "Coming soon",
+  "install.brewSoon": "Homebrew coming soon",
   "install.copy": "Copy Homebrew command",
   "install.copiedLabel": "Command copied",
   "install.copied": "Copied to clipboard.",
