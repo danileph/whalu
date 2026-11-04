@@ -22,6 +22,11 @@ function Icon({
     | "chevron"
     | "copy"
     | "check"
+    | "download"
+    | "github"
+    | "chip"
+    | "archive"
+    | "shield"
     | "keyboard"
     | "trackpad"
     | "mouse"
@@ -43,6 +48,23 @@ function Icon({
       </>
     ),
     check: <path d="m5 12 4 4L19 6" />,
+    download: <path d="M12 3v12m-5-5 5 5 5-5M3 16v4a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-4" />,
+    github: (
+      <path
+        fill="currentColor"
+        stroke="none"
+        transform="scale(1.5)"
+        d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+      />
+    ),
+    chip: (
+      <>
+        <rect x="5" y="5" width="14" height="14" rx="2" />
+        <path d="M8 2v3m4-3v3m4-3v3M8 19v3m4-3v3m4-3v3M2 8h3m-3 4h3m-3 4h3m14-8h3m-3 4h3m-3 4h3" />
+      </>
+    ),
+    archive: <path d="M6 3h9l4 4v14H5V4a1 1 0 0 1 1-1Zm6 0v8m-2 0h4m-5 5h6" />,
+    shield: <path d="m12 2 8 3v6c0 5-4 8-8 11-4-3-8-6-8-11V5l8-3Zm-3 10 2 2 4-4" />,
     keyboard: (
       <>
         <rect x="2" y="5" width="20" height="14" rx="2" />
@@ -450,6 +472,7 @@ function Controls() {
 
 function Install() {
   const { t } = useLocale();
+  const [guideOpen, setGuideOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -471,16 +494,43 @@ function Install() {
       id="get-whalu"
       aria-labelledby="install-title"
     >
-      <div className="install-panel">
-        <h2 id="install-title">{t("install.title")}</h2>
-        <p className="compatibility">{t("install.compatibility")}</p>
-        <div className="download-actions">
-          <a className="button download-button" href={download}>
+      <h2 id="install-title">{t("install.title")}</h2>
+      <p className="download-intro">{t("download.intro")}</p>
+      <div className="download-actions">
+        <a className="button download-button" href={download}>
+          <Icon name="download" />
+          <span>
             {t("nav.get")}
-          </a>
-          <a className="button github-button" href={repository}>
-            GitHub
-          </a>
+            <small>macOS 15+</small>
+          </span>
+        </a>
+        <a className="button github-button" href={repository}>
+          <Icon name="github" />
+          {t("download.github")}
+        </a>
+      </div>
+      <ul className="download-facts" role="list">
+        <li><Icon name="chip" /> {t("install.compatibility")}</li>
+        <li><Icon name="archive" /> {t("download.format")}</li>
+        <li><Icon name="shield" /> {t("download.signing")}</li>
+      </ul>
+      <div className="install-links">
+        <a className="text-link" href={latestRelease}>
+          {t("download.releases")} <Icon name="chevron" />
+        </a>
+        <button
+          className="text-link install-guide-toggle"
+          type="button"
+          aria-expanded={guideOpen}
+          aria-controls="install-guide"
+          onClick={() => setGuideOpen(!guideOpen)}
+        >
+          {t("install.guide")} <Icon name="chevron" />
+        </button>
+      </div>
+      <div className="install-guide" id="install-guide" hidden={!guideOpen}>
+        <p>{t("download.instructions")}</p>
+        <div className="install-brew">
           <div className="install-command">
             <code>{brewInstall}</code>
             <button
@@ -492,11 +542,6 @@ function Install() {
               <Icon name={copied ? "check" : "copy"} />
             </button>
           </div>
-        </div>
-        <div className="install-meta">
-          <a className="text-link release-link" href={latestRelease}>
-            {t("download.releases")} <Icon name="chevron" />
-          </a>
           <span className="homebrew-status" id="homebrew-availability">
             {t("install.brewSoon")}
           </span>
@@ -504,8 +549,6 @@ function Install() {
         <p className="copy-status" role="status">
           {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
         </p>
-        <p className="install-instructions">{t("download.instructions")}</p>
-        <p className="download-signing">{t("download.signing")}</p>
       </div>
     </section>
   );
