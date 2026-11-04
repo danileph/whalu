@@ -11,6 +11,7 @@ const repository = (
 ).replace(/\/$/, "");
 const latestRelease = `${repository}/releases/latest`;
 const download = `${latestRelease}/download/Whalu-macOS-universal.zip`;
+const brewInstall = "brew install --cask whalu";
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
 
 function Icon({
@@ -449,62 +450,62 @@ function Controls() {
 
 function Install() {
   const { t } = useLocale();
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   async function copy() {
     try {
-      await navigator.clipboard.writeText("./scripts/install.sh");
-      setCopied(true);
-      setError(false);
+      await navigator.clipboard.writeText(brewInstall);
       clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 2500);
+      setCopyStatus("copied");
+      timer.current = setTimeout(() => setCopyStatus("idle"), 2500);
     } catch {
-      setError(true);
+      clearTimeout(timer.current);
+      setCopyStatus("error");
     }
   }
+  const copied = copyStatus === "copied";
   return (
-    <section className="install-section section-pad" id="get-whalu">
-      <div className="install-heading">
-        <h2>{t("install.title")}</h2>
-        <span className="compatibility">
-          {t("install.compatibility")}
-        </span>
-      </div>
-      <div className="install-guide">
-        <p>{t("download.instructions")}</p>
-        <div className="download-actions">
-          <a className="button" href={download}>{t("nav.get")}</a>
-          <a href={latestRelease}>{t("download.releases")}</a>
+    <section className="install-section section-pad" id="get-whalu" aria-labelledby="install-title">
+      <div className="install-content">
+        <div className="install-heading">
+          <h2 id="install-title">{t("install.title")}</h2>
+          <p className="compatibility">{t("install.compatibility")}</p>
         </div>
-        <p className="download-signing">{t("download.signing")}</p>
-        <details className="source-build">
-          <summary>{t("install.build")}</summary>
-          <p>
-            {t("install.cloneBefore")}{" "}
-            <a href={repository} target="_blank" rel="noreferrer">
-              {t("install.repository")}
+        <div className="install-options">
+          <div className="install-card">
+            <h3>{t("download.title")}</h3>
+            <p>{t("download.instructions")}</p>
+            <div className="download-actions">
+              <a className="button download-button" href={download}>{t("nav.get")}</a>
+              <a className="button github-button" href={repository}>GitHub</a>
+            </div>
+            <a className="text-link release-link" href={latestRelease}>
+              {t("download.releases")} <Icon name="chevron" />
             </a>
-            {" "}{t("install.cloneAfter")}
-          </p>
-          <div className="install-command">
-            <code>./scripts/install.sh</code>
-            <button
-              onClick={copy}
-              aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
-            >
-              <Icon name={copied ? "check" : "copy"} />
-            </button>
+            <p className="download-signing">{t("download.signing")}</p>
           </div>
-          <small role="status">
-            {copied
-              ? t("install.copied")
-              : error
-                ? t("install.copyError")
-                : t("install.requires")}
-          </small>
-        </details>
+          <div className="install-card">
+            <div className="homebrew-heading">
+              <h3>Homebrew</h3>
+              <span className="homebrew-status" id="homebrew-availability">{t("install.brewSoon")}</span>
+            </div>
+            <div className="install-command">
+              <code>{brewInstall}</code>
+              <button
+                type="button"
+                onClick={copy}
+                aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
+                aria-describedby="homebrew-availability"
+              >
+                <Icon name={copied ? "check" : "copy"} />
+              </button>
+            </div>
+            <p className="copy-status" role="status">
+              {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
+            </p>
+          </div>
+        </div>
       </div>
     </section>
   );

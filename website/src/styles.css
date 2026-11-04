@@ -119,7 +119,6 @@ main:focus {
   height: 14px;
 }
 .text-link:hover,
-.install-guide a:hover,
 .footer-bottom a:hover {
   text-decoration: underline;
   text-underline-offset: 4px;
@@ -495,102 +494,127 @@ kbd {
 .install-section {
   max-width: none;
   background: var(--surface);
-  display: grid;
-  grid-template-columns: 240px minmax(0, 760px);
-  justify-content: center;
-  gap: 40px;
-  padding-top: 48px;
-  padding-bottom: 48px;
+  padding-block: 56px;
 }
-.install-heading .eyebrow {
-  margin-bottom: 13px;
-  letter-spacing: 0;
+.install-content {
+  max-width: 1040px;
+  margin-inline: auto;
+}
+.install-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-bottom: 24px;
 }
 .compatibility {
-  display: block;
-  margin-top: 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
-.install-guide {
-  max-width: 520px;
+.install-options {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+  gap: 16px;
 }
-.install-guide p {
-  margin-top: 12px;
+.install-card {
+  padding: clamp(16px, 3vw, 28px);
+  border: 1px solid #dcdce0;
+  border-radius: 16px;
+  background: var(--paper);
+}
+.install-card h3 {
+  font-size: 18px;
+}
+.install-card p {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
 }
-.install-guide > p:first-child {
-  margin-top: 0;
-}
-.install-guide a {
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.install-card h3 + p {
+  margin-top: 6px;
 }
 .download-actions {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 14px 20px;
+  gap: 8px;
   margin-top: 18px;
-  font-size: 12px;
 }
-.install-guide .download-actions .button {
+.download-actions .button {
+  padding-inline: 14px;
+}
+.download-button {
   color: #fff;
   background: #111;
-  text-decoration: none;
 }
-.install-guide .download-signing {
+.download-button:hover {
+  background: #303035;
+}
+.github-button {
+  border: 1px solid #dcdce0;
+}
+.github-button:hover {
+  background: var(--surface);
+}
+.release-link {
+  margin-top: 12px;
   font-size: 12px;
 }
-.source-build {
-  margin-top: 24px;
+.install-card .download-signing {
+  margin-top: 8px;
+  font-size: 12px;
 }
-.source-build summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+.homebrew-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.homebrew-status {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 .install-command {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px 6px 14px;
-  margin-top: 16px;
+  gap: 8px;
+  padding: 5px 5px 5px 12px;
+  margin-top: 18px;
   border: 1px solid #dcdce0;
   border-radius: 8px;
-  background: white;
+  background: var(--surface);
 }
 .install-command code {
   font-family: var(--mono);
   font-size: 12px;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .install-command button {
   background: transparent;
   color: var(--muted);
   display: grid;
   place-items: center;
-  min-width: 36px;
-  min-height: 36px;
+  flex: 0 0 36px;
+  height: 36px;
   border-radius: 4px;
 }
 .install-command button:hover {
   color: var(--ink);
-  background: var(--surface);
+  background: var(--paper);
 }
 .install-command svg {
   width: 16px;
   height: 16px;
 }
-.install-guide small {
-  display: block;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 11px;
+.install-card .copy-status {
+  min-height: 1.6em;
+  margin-top: 8px;
+  font-size: 12px;
 }
 .site-footer {
   max-width: 1120px;
@@ -632,10 +656,6 @@ kbd {
   .hero-actions {
     gap: 16px;
   }
-  .install-section {
-    grid-template-columns: 190px minmax(0, 1fr);
-    gap: 28px;
-  }
 }
 @media (max-width: 850px) {
   .shortcut-sheet {
@@ -654,9 +674,6 @@ kbd {
   .hero-actions {
     justify-content: center;
     margin-top: 22px;
-  }
-  .install-section {
-    grid-template-columns: 1fr;
   }
   .control-methods {
     gap: 22px;
@@ -802,7 +819,11 @@ kbd {
     font-size: 12px;
   }
   .install-section {
-    gap: 26px;
+    padding-block: 40px;
+  }
+  .install-options {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
   .site-footer {
     padding: 22px 24px;
