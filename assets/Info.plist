@@ -6,8 +6,8 @@
 <key>CFBundleIdentifier</key><string>dev.danileph.whalu</string>
 <key>CFBundleExecutable</key><string>whalu</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.1</string>
-<key>CFBundleVersion</key><string>59</string>
+<key>CFBundleShortVersionString</key><string>0.6.0</string>
+<key>CFBundleVersion</key><string>60</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>CFBundleIconFile</key><string>Whalu</string>
 <key>LSUIElement</key><true/>

@@ -383,6 +383,7 @@ const shortcutGroups = [
       ["shortcuts.appNext", [["⌃", "⌥", "→"], ["⌃", "⌥", "L"]]],
       ["shortcuts.next", [["⌘", "Tab"]]],
       ["shortcuts.previous", [["⌘", "`"]]],
+      ["shortcuts.lastUsed", [["⌘", "Esc"]]],
     ],
   },
   {

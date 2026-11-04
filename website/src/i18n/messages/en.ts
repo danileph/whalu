@@ -96,6 +96,7 @@ export const en = {
   "shortcuts.overview": "Show overview (hold)",
   "shortcuts.next": "Next window",
   "shortcuts.previous": "Previous window",
+  "shortcuts.lastUsed": "Last used window",
   "shortcuts.appPrevious": "Previous window of the active app",
   "shortcuts.appNext": "Next window of the active app",
   "shortcuts.stackUp": "Move window up in the list",

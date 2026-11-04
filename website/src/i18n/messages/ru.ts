@@ -97,6 +97,7 @@ export const ru = {
   "shortcuts.overview": "Показать обзор (удерживать)",
   "shortcuts.next": "Следующее окно",
   "shortcuts.previous": "Предыдущее окно",
+  "shortcuts.lastUsed": "Последнее активное окно",
   "shortcuts.appPrevious": "Предыдущее окно текущего приложения",
   "shortcuts.appNext": "Следующее окно текущего приложения",
   "shortcuts.stackUp": "Поднять окно в списке",
