@@ -618,8 +618,15 @@ impl Runtime {
                             }
                         }
                     }
+                    let before = self.engine.focused();
                     let effects = self.engine.command(cmd);
                     self.apply(effects);
+                    if cmd == Command::FocusRecent
+                        && self.config.overlay
+                        && self.engine.focused() != before
+                    {
+                        self.linger_until = Some(Instant::now() + OVERVIEW_FEEDBACK);
+                    }
                     self.render();
                     self.save();
                 }

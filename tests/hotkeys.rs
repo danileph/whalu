@@ -12,7 +12,7 @@ const SHIFT: u64 = 1 << 17;
 const FN: u64 = 1 << 23;
 
 #[test]
-fn command_escape_switches_once_per_press_without_opening_the_overview() {
+fn command_escape_switches_once_per_press_without_starting_an_overview_hold() {
     let config = Config::default();
     let mut router = ShortcutRouter::default();
     let command = Modifiers::from_flags(COMMAND);

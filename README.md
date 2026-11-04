@@ -40,7 +40,7 @@ Hold Control + Option to show the overview; release either modifier to dismiss. 
 
 Center first restores macOS’s pre-tiling size, then centers the window, so a filled window does not stay desktop-sized.
 
-Command + Esc toggles between the two most recently focused windows in the active display and Space. It works across apps and between windows of the same app, skips windows that are no longer visible, and does not open the overview.
+Command + Esc toggles between the two most recently focused windows in the active display and Space. It works across apps and between windows of the same app, and skips windows that are no longer visible. Each successful switch shows the overview for 650 ms when the overview is enabled.
 
 Tiling shortcuts directly invoke the foreground app's native Window-menu leaf actions through Accessibility, locating their Fn + Control key equivalents (with Shift for arrangements). The menu bar and submenus stay closed. Actions are cached per process, and stale references are rediscovered after failures. A bounded background queue performs lookup and invocation so a busy target app cannot block Whalu’s input loop; requests are discarded if their focused window changes. Whalu does not synthesize Fn events or compute window rectangles. Native Fn + Control + R remains available alongside the custom Control + Command + N restore alias. Apps must support the corresponding native command. Repeating a half shortcut keeps that native half; the former quarter-cycling behavior is removed. See [Apple's native tiling shortcuts](https://support.apple.com/en-gb/guide/mac-help/mchl9674d0b0/26/mac/26).
 
