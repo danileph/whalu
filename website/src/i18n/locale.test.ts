@@ -5,7 +5,7 @@ import {
   createTranslator,
   formatMessage,
   matchLocale,
-  resolveLocale,
+  resolveLanguage,
 } from "./locale.ts";
 
 test("every registered language has every message and the same named placeholders", () => {
@@ -48,20 +48,34 @@ test("registered languages have valid Intl locales and discoverable native names
 });
 
 test("an explicit supported URL language takes precedence over saved and browser languages", () => {
-  assert.equal(resolveLocale("ru", "en", ["en-US"]), "ru");
+  assert.deepEqual(resolveLanguage("ru", "en", ["en-US"]), { locale: "ru", preference: "ru" });
 });
 
 test("a saved choice takes precedence over browser language", () => {
-  assert.equal(resolveLocale(null, "en", ["ru-RU"]), "en");
+  assert.deepEqual(resolveLanguage(null, "en", ["ru-RU"]), { locale: "en", preference: "en" });
 });
 
 test("unknown URL and stored values do not prevent browser-language detection", () => {
-  assert.equal(resolveLocale("xx", "zz", ["de-DE", "ru-RU", "en"]), "ru");
+  assert.deepEqual(resolveLanguage("xx", "zz", ["de-DE", "ru-RU", "en"]), {
+    locale: "ru",
+    preference: "auto",
+  });
+});
+
+test("automatic selection follows the first supported language regardless of region", () => {
+  assert.deepEqual(resolveLanguage(null, null, ["en-RU", "ru-US"]), {
+    locale: "en",
+    preference: "auto",
+  });
+  assert.deepEqual(resolveLanguage(null, null, ["ru-US", "en-RU"]), {
+    locale: "ru",
+    preference: "auto",
+  });
 });
 
 test("unsupported or empty preferences safely fall back to English", () => {
-  assert.equal(resolveLocale(null, null, ["de-DE"]), "en");
-  assert.equal(resolveLocale(null, null, []), "en");
+  assert.deepEqual(resolveLanguage(null, null, ["de-DE"]), { locale: "en", preference: "auto" });
+  assert.deepEqual(resolveLanguage(null, null, []), { locale: "en", preference: "auto" });
 });
 
 test("named interpolation translates labels without losing Unicode or parameter values", () => {

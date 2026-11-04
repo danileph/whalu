@@ -6,6 +6,7 @@ export const en = {
     "Navigate windows, change their order, and tile them with macOS shortcuts. Whalu is free and open source.",
   "scrollbar.label": "Scroll page",
   "language.label": "Language",
+  "language.browser": "Browser language",
   "nav.home": "Whalu homepage",
   "nav.label": "Main navigation",
   "nav.controls": "Controls",

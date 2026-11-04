@@ -13,13 +13,15 @@ import type { Locale } from "./catalogs.ts";
 import {
   createTranslator,
   LANGUAGE_STORAGE_KEY,
-  resolveLocale,
+  resolveLanguage,
 } from "./locale.ts";
+import type { LanguagePreference, LanguageSelection } from "./locale.ts";
 import type { Translator } from "./types.ts";
 
 interface I18nContextValue {
   locale: Locale;
-  setLocale: (locale: Locale) => void;
+  preference: LanguagePreference;
+  setPreference: (preference: LanguagePreference) => void;
   t: Translator;
   formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string;
   formatDate: (value: Date, options: Intl.DateTimeFormatOptions) => string;
@@ -27,39 +29,60 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-function readLocale(): Locale {
+function browserLanguages(): readonly string[] {
+  return navigator.languages?.length ? navigator.languages : [navigator.language];
+}
+
+function readLanguage(): LanguageSelection {
   let saved: string | null = null;
   try {
     saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
   } catch {
     /* Storage can be unavailable in private contexts. */
   }
-  return resolveLocale(
+  return resolveLanguage(
     new URL(location.href).searchParams.get("lang"),
     saved,
-    navigator.languages,
+    browserLanguages(),
   );
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, updateLocale] = useState(readLocale);
+  const [{ locale, preference }, updateLanguage] = useState(readLanguage);
   const t = useMemo(() => createTranslator(locale), [locale]);
-  const setLocale = useCallback((next: Locale) => {
-    updateLocale(next);
+  const setPreference = useCallback((next: LanguagePreference) => {
+    const url = new URL(location.href);
+    if (next === "auto") {
+      url.searchParams.delete("lang");
+    } else {
+      url.searchParams.set("lang", next);
+    }
     try {
-      localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
+      if (next === "auto") {
+        localStorage.removeItem(LANGUAGE_STORAGE_KEY);
+      } else {
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
+      }
     } catch {
       /* Keep the choice for this visit. */
     }
-    const url = new URL(location.href);
-    url.searchParams.set("lang", next);
     history.replaceState(history.state, "", url);
+    updateLanguage(resolveLanguage(url.searchParams.get("lang"), null, browserLanguages()));
   }, []);
 
   useEffect(() => {
-    const onPopState = () => updateLocale(readLocale());
+    const onPopState = () => updateLanguage(readLanguage());
+    const onLanguageChange = () => {
+      updateLanguage((current) =>
+        current.preference === "auto" ? resolveLanguage(null, null, browserLanguages()) : current,
+      );
+    };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener("languagechange", onLanguageChange);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("languagechange", onLanguageChange);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -80,7 +103,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const value = useMemo<I18nContextValue>(
     () => ({
       locale,
-      setLocale,
+      preference,
+      setPreference,
       t,
       formatNumber: (number, options) =>
         new Intl.NumberFormat(catalogs[locale].intlLocale, options).format(
@@ -92,7 +116,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
           ...options,
         }).format(date),
     }),
-    [locale, setLocale, t],
+    [locale, preference, setPreference, t],
   );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

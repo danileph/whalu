@@ -3,6 +3,12 @@ import type { Locale } from "./catalogs.ts";
 import type { MessageParameters, Translator } from "./types.ts";
 
 export const LANGUAGE_STORAGE_KEY = "whalu-language";
+export type LanguagePreference = Locale | "auto";
+
+export interface LanguageSelection {
+  locale: Locale;
+  preference: LanguagePreference;
+}
 
 export function matchLocale(
   value: string | null | undefined,
@@ -18,18 +24,18 @@ export function matchLocale(
   return undefined;
 }
 
-export function resolveLocale(
+export function resolveLanguage(
   query: string | null,
   saved: string | null,
   preferred: readonly string[],
-): Locale {
+): LanguageSelection {
   const explicit = matchLocale(query) ?? matchLocale(saved);
-  if (explicit) return explicit;
+  if (explicit) return { locale: explicit, preference: explicit };
   for (const language of preferred) {
     const match = matchLocale(language);
-    if (match) return match;
+    if (match) return { locale: match, preference: "auto" };
   }
-  return defaultLocale;
+  return { locale: defaultLocale, preference: "auto" };
 }
 
 export function formatMessage(

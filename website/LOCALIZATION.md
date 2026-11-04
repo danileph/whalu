@@ -36,12 +36,12 @@ The initial choice follows this order:
 
 1. A supported `?lang=` URL parameter.
 2. The saved `whalu-language` local-storage preference.
-3. The first supported language in `navigator.languages`.
+3. The first supported language in the browser's ordered preferences. If the browser supplies only one language, use `navigator.language`.
 4. English.
 
-Regional variants are matched to supported parent tags (`ru-RU` matches `ru`). Unknown values fall through to the next preference. Storage failures do not prevent rendering or switching languages.
+The language part of each tag determines the match. For example, `ru-US` matches Russian and `en-RU` matches English. Unknown values fall through to the next preference. Storage failures do not prevent rendering or switching languages.
 
-Selecting a language saves it and replaces the current URL's `lang` parameter while preserving the path, other query parameters, and section hash. For example, `/whalu/?lang=ru#controls` works on GitHub Pages without server routing. Browser history navigation re-resolves the language. A URL override alone does not overwrite a saved preference; changing the selector does.
+Selecting a language saves it and replaces the current URL's `lang` parameter while preserving the path, other query parameters, and section hash. For example, `/whalu/?lang=ru#controls` works on GitHub Pages without server routing. A URL override alone does not overwrite a saved preference. Selecting **Browser language** clears the saved choice and the URL override. In that mode, the page also follows browser language changes. Browser history navigation re-resolves the language.
 
 The provider updates `html.lang`, `html.dir`, the title, description, and Open Graph title, description, and locale. This is a static client-rendered site: HTML and social previews for crawlers that do not execute JavaScript remain English. Localized server-rendered previews and search-engine language routes would require a separate prerendering step.
 

@@ -539,7 +539,7 @@ function Install() {
 }
 
 function LanguageSelector() {
-  const { locale, setLocale, t } = useLocale();
+  const { locale, preference, setPreference, t } = useLocale();
   const language = catalogs[locale];
   const [open, setOpen] = useState(false);
   const menuId = useId();
@@ -620,20 +620,20 @@ function LanguageSelector() {
         aria-label={t("language.label")}
         hidden={!open}
       >
-        {supportedLocales.map((code) => (
+        {(["auto", ...supportedLocales] as const).map((code) => (
           <button
             className="language-option"
             type="button"
             key={code}
-            lang={code}
-            aria-pressed={locale === code}
+            lang={code === "auto" ? locale : code}
+            aria-pressed={preference === code}
             onClick={() => {
-              setLocale(code);
+              setPreference(code);
               closeAndFocusTrigger();
             }}
           >
-            {catalogs[code].nativeName}
-            {locale === code && <Icon name="check" />}
+            {code === "auto" ? t("language.browser") : catalogs[code].nativeName}
+            {preference === code && <Icon name="check" />}
           </button>
         ))}
       </div>
