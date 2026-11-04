@@ -585,27 +585,25 @@ kbd {
   font-size: 12px;
 }
 .install-command {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) 46px;
   max-width: 100%;
   border: 1px solid var(--line);
 }
 .install-command code {
-  flex: 1 1 auto;
   align-self: center;
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 11px;
   letter-spacing: normal;
   text-align: start;
   white-space: nowrap;
-  overflow-x: auto;
 }
 .install-command button {
   background: transparent;
   color: var(--muted);
   display: grid;
   place-items: center;
-  flex: 0 0 46px;
   border-inline-start: 1px solid var(--line);
   border-start-end-radius: 999px;
   border-end-end-radius: 999px;
@@ -832,9 +830,6 @@ kbd {
   .download-actions .button,
   .install-command {
     width: min(100%, 260px);
-  }
-  .install-command code {
-    font-size: 12px;
   }
   .download-facts {
     gap: 10px 18px;
