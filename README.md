@@ -6,6 +6,8 @@
 
 [Website](https://danileph.github.io/whalu/) · [Download for Mac](https://github.com/danileph/whalu/releases/latest/download/Whalu-macOS-universal.zip) · [Release notes](https://github.com/danileph/whalu/releases/latest)
 
+Whalu's code is licensed under the [MIT License](LICENSE). See the [third-party notices](THIRD_PARTY_NOTICES.md) and the [demo icon credits](website/public/app-icons/README.md) for separately licensed material.
+
 Whalu provides individual-window navigation, a temporary overview, stack reordering, and shortcuts for native macOS window tiling. macOS owns window sizes, tiling margins, multi-window arrangements, and previous-size restoration. Whalu never automatically repositions background windows.
 
 Every window has its own entry in a Space-local stack. Reordering changes that list without changing focus or window geometry. The focused window can also move to the previous or next regular desktop on its display, and the desktop follows the window.
