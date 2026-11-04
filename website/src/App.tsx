@@ -504,12 +504,6 @@ function Install() {
             <small>macOS 15+</small>
           </span>
         </a>
-        <a className="button github-button" href={repository}>
-          <Icon name="github" />
-          {t("download.github")}
-        </a>
-      </div>
-      <div className="install-brew">
         <div className="install-command">
           <code>{brewInstall}</code>
           <button
@@ -521,10 +515,10 @@ function Install() {
             <Icon name={copied ? "check" : "copy"} />
           </button>
         </div>
-        <span className="homebrew-status" id="homebrew-availability">
-          {t("install.brewSoon")}
-        </span>
       </div>
+      <p className="homebrew-status" id="homebrew-availability">
+        {t("install.brewSoon")}
+      </p>
       <p className="copy-status" role="status">
         {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
       </p>
@@ -546,6 +540,10 @@ function Install() {
         >
           {t("install.guide")} <Icon name="chevron" />
         </button>
+        <a className="text-link" href={repository}>
+          <Icon name="github" />
+          {t("download.github")}
+        </a>
       </div>
       <div className="install-guide" id="install-guide" hidden={!guideOpen}>
         <p>{t("download.instructions")}</p>
