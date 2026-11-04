@@ -1,9 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { ReactNode, SVGProps } from "react";
+import type { KeyboardEvent, ReactNode, SVGProps } from "react";
 import { ScrollThumb } from "./ScrollThumb";
 import { useLocale } from "./i18n/I18nProvider";
 import { catalogs, supportedLocales } from "./i18n/catalogs";
-import type { Locale } from "./i18n/catalogs";
 
 const repository = (
   (import.meta.env.VITE_REPOSITORY_URL as string | undefined) ||
@@ -542,31 +541,102 @@ function Install() {
 function LanguageSelector() {
   const { locale, setLocale, t } = useLocale();
   const language = catalogs[locale];
+  const [open, setOpen] = useState(false);
+  const menuId = useId();
+  const picker = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (open) {
+      const selected = menu.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
+      selected?.focus({ preventScroll: true });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      const node = picker.current;
+      if (node && !event.composedPath().includes(node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  function closeAndFocusTrigger() {
+    setOpen(false);
+    trigger.current?.focus({ preventScroll: true });
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      closeAndFocusTrigger();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+
+    event.preventDefault();
+    if (!open) {
+      setOpen(true);
+      return;
+    }
+    const options = Array.from(menu.current?.querySelectorAll("button") ?? []);
+    const current = options.findIndex((option) => option === event.target);
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const next = current === -1 ? 0 : (current + direction + options.length) % options.length;
+    options[next]?.focus({ preventScroll: true });
+  }
+
   return (
-    <div className="language-switcher">
-      <Icon name="globe" />
-      <span className="language-name" aria-hidden="true">
-        {language.nativeName}
-      </span>
-      <span className="language-code" aria-hidden="true">
-        {language.shortName}
-      </span>
-      <Icon name="chevron" className="language-chevron" />
-      <select
-        value={locale}
+    <div
+      className="language-switcher"
+      ref={picker}
+      onKeyDown={onKeyDown}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        className="language-trigger"
+        type="button"
+        ref={trigger}
+        aria-label={`${t("language.label")}, ${language.nativeName}`}
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="globe" />
+        <span className="language-name" aria-hidden="true">{language.nativeName}</span>
+        <span className="language-code" aria-hidden="true">{language.shortName}</span>
+        <Icon name="chevron" className="language-chevron" />
+      </button>
+      <div
+        className="language-menu"
+        id={menuId}
+        ref={menu}
+        role="group"
         aria-label={t("language.label")}
-        title={t("language.label")}
-        onChange={(event) => {
-          const value = event.currentTarget.value as Locale;
-          if (supportedLocales.includes(value)) setLocale(value);
-        }}
+        hidden={!open}
       >
         {supportedLocales.map((code) => (
-          <option key={code} value={code} lang={code}>
+          <button
+            className="language-option"
+            type="button"
+            key={code}
+            lang={code}
+            aria-pressed={locale === code}
+            onClick={() => {
+              setLocale(code);
+              closeAndFocusTrigger();
+            }}
+          >
             {catalogs[code].nativeName}
-          </option>
+            {locale === code && <Icon name="check" />}
+          </button>
         ))}
-      </select>
+      </div>
     </div>
   );
 }

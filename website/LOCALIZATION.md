@@ -1,6 +1,6 @@
 # Website localization
 
-The site ships with English and Russian. The header's native language selector works with a keyboard and screen reader, displays each language's own name, and switches content without remounting the video. All interface copy, accessible labels, and page metadata live in `src/i18n/messages/`.
+The site ships with English and Russian. The header's language menu shows each language by its own name and marks the current choice. Use the arrow keys to move between options, Enter to select, and Escape to close. Switching languages preserves the video element. All interface copy, accessible labels, and page metadata live in `src/i18n/messages/`.
 
 ## Copy style
 
