@@ -49,7 +49,13 @@ Holding the mouse button in another app temporarily hides the overview and suspe
 
 ## Install and run
 
-Download the [latest universal ZIP](https://github.com/danileph/whalu/releases/latest/download/Whalu-macOS-universal.zip), open it, move Whalu to Applications, and launch it. It supports Apple silicon and Intel Macs on macOS 15 or later. Quit Whalu before replacing an existing installation.
+Install Whalu with Homebrew, then open it from Applications.
+
+```sh
+brew install --cask danileph/whalu/whalu
+```
+
+You can also download the [latest universal ZIP](https://github.com/danileph/whalu/releases/latest/download/Whalu-macOS-universal.zip), open it, and move Whalu to Applications. Whalu supports Apple silicon and Intel Macs on macOS 15 or later. Quit Whalu before replacing an existing installation.
 
 Release builds are ad-hoc signed, without Apple notarization. If macOS blocks the app, review [Apple’s instructions for opening an unnotarized app](https://support.apple.com/102445). The release includes a SHA-256 checksum. Whalu guides you through its permissions after opening; updates can require removing and re-adding its entries.
 
@@ -135,6 +141,8 @@ The React landing page lives in [website/](website/README.md), with a recorded p
 Use `develop` for ongoing work. It is the repository’s default branch; `main` holds published changes. CI checks the website, Rust formatting, tests, Clippy, and the macOS build on both branches and their pull requests. GitHub Pages deploys only from `main`.
 
 To publish a stable app release, update the version in `Cargo.toml` and `assets/Info.plist` on `develop`, increment `CFBundleVersion`, run the required checks, and merge the changes into `main`. Push `main`, then create and push an annotated `vX.Y.Z` tag at that commit. `.github/workflows/release.yml` rejects tags outside `main` or with mismatched versions, builds both Mac architectures, verifies the signed universal archive, and publishes the ZIP and checksum to GitHub Releases. The landing page’s `/releases/latest/download/Whalu-macOS-universal.zip` link follows new stable releases automatically.
+
+After the GitHub release is live, update the Homebrew cask using the instructions in the [Whalu tap repository](https://github.com/danileph/homebrew-whalu). The updater verifies the published ZIP against its checksum and pins the cask to that release.
 
 For a local release archive, install both Rust targets with `~/.cargo/bin/rustup target add aarch64-apple-darwin x86_64-apple-darwin`, then run `RELEASE_TAG=vX.Y.Z ./scripts/package-release.sh` with the current version. Archives are written to `dist/`. The ordinary `./scripts/build-app.sh` remains a build for the current Mac; `--universal` builds both architectures.
 

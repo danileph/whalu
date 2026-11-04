@@ -10,7 +10,7 @@ const repository = (
 ).replace(/\/$/, "");
 const latestRelease = `${repository}/releases/latest`;
 const download = `${latestRelease}/download/Whalu-macOS-universal.zip`;
-const brewInstall = "brew install --cask whalu";
+const brewInstall = "brew install --cask danileph/whalu/whalu";
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
 
 function Icon({
@@ -508,15 +508,11 @@ function Install() {
             type="button"
             onClick={copy}
             aria-label={t(copied ? "install.copiedLabel" : "install.copy")}
-            aria-describedby="homebrew-availability"
           >
             <Icon name={copied ? "check" : "copy"} />
           </button>
         </div>
       </div>
-      <p className="homebrew-status" id="homebrew-availability">
-        {t("install.brewSoon")}
-      </p>
       <p className="copy-status" role="status">
         {copied ? t("install.copied") : copyStatus === "error" ? t("install.copyError") : ""}
       </p>

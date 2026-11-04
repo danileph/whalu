@@ -124,7 +124,6 @@ export const en = {
   "download.releases": "Release notes",
   "download.signing": "No Apple notarization",
   "install.compatibility": "Apple silicon and Intel",
-  "install.brewSoon": "Homebrew coming soon",
   "install.copy": "Copy Homebrew command",
   "install.copiedLabel": "Command copied",
   "install.copied": "Copied to clipboard.",

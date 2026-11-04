@@ -125,7 +125,6 @@ export const ru = {
   "download.releases": "Что нового",
   "download.signing": "Без нотарификации Apple",
   "install.compatibility": "Apple silicon и Intel",
-  "install.brewSoon": "Скоро в Homebrew",
   "install.copy": "Скопировать команду Homebrew",
   "install.copiedLabel": "Команда скопирована",
   "install.copied": "Команда скопирована.",
