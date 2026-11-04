@@ -472,7 +472,6 @@ function Controls() {
 
 function Install() {
   const { t } = useLocale();
-  const [guideOpen, setGuideOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -529,24 +528,12 @@ function Install() {
       </ul>
       <div className="install-links">
         <a className="text-link" href={latestRelease}>
-          {t("download.releases")} <Icon name="chevron" />
+          {t("download.releases")}
         </a>
-        <button
-          className="text-link install-guide-toggle"
-          type="button"
-          aria-expanded={guideOpen}
-          aria-controls="install-guide"
-          onClick={() => setGuideOpen(!guideOpen)}
-        >
-          {t("install.guide")} <Icon name="chevron" />
-        </button>
         <a className="text-link" href={repository}>
           <Icon name="github" />
           {t("download.github")}
         </a>
-      </div>
-      <div className="install-guide" id="install-guide" hidden={!guideOpen}>
-        <p>{t("download.instructions")}</p>
       </div>
     </section>
   );
@@ -665,7 +652,7 @@ export function App() {
               </h1>
               <p className="hero-description">{t("hero.description")}</p>
               <div className="hero-actions">
-                <a className="button" href={download}>
+                <a className="button" href="#get-whalu">
                   {t("nav.get")}
                 </a>
                 <a className="text-link" href="#how-it-works">

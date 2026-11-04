@@ -120,12 +120,9 @@ export const en = {
   "download.intro": "Get the latest version for macOS.",
   "download.github": "View on GitHub",
   "download.format": "ZIP archive",
-  "download.instructions":
-    "Unzip Whalu, move it to Applications, and open it. Quit Whalu before updating.",
   "download.releases": "Release notes",
   "download.signing": "No Apple notarization",
   "install.compatibility": "Apple silicon and Intel",
-  "install.guide": "Installation guide",
   "install.brewSoon": "Homebrew coming soon",
   "install.copy": "Copy Homebrew command",
   "install.copiedLabel": "Command copied",

@@ -121,12 +121,9 @@ export const ru = {
   "download.intro": "Последняя версия для macOS.",
   "download.github": "Открыть на GitHub",
   "download.format": "Архив ZIP",
-  "download.instructions":
-    "Распакуйте ZIP, перенесите Whalu в «Программы» и откройте. Перед обновлением закройте Whalu.",
   "download.releases": "Что нового",
   "download.signing": "Без нотарификации Apple",
   "install.compatibility": "Apple silicon и Intel",
-  "install.guide": "Как установить",
   "install.brewSoon": "Скоро в Homebrew",
   "install.copy": "Скопировать команду Homebrew",
   "install.copiedLabel": "Команда скопирована",
